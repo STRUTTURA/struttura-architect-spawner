@@ -60,20 +60,31 @@ public class WireframeRenderer {
 
         poseStack.pushPose();
 
-        // Renderizza overlay sui blocchi (prima, sotto il wireframe)
+        // Renderizza wireframe per i blocchi overlay
         if (constructionData.active && hasBlocks) {
-            renderBlockOverlays(poseStack, lineBuffer, cameraPos);
+            for (BlockPos pos : blockPositions) {
+                AABB box = new AABB(
+                    pos.getX() + BLOCK_INSET, pos.getY() + BLOCK_INSET, pos.getZ() + BLOCK_INSET,
+                    pos.getX() + 1 - BLOCK_INSET, pos.getY() + 1 - BLOCK_INSET, pos.getZ() + 1 - BLOCK_INSET
+                );
+                VoxelShape shape = Shapes.create(box);
+                ShapeRenderer.renderShape(
+                    poseStack, lineBuffer, shape,
+                    -cameraPos.x, -cameraPos.y, -cameraPos.z,
+                    CONSTRUCTION_COLOR, 1.0f
+                );
+            }
         }
 
         // Renderizza wireframe costruzione (se attivo)
         if (constructionData.active) {
             BlockPos min = constructionData.min;
             BlockPos max = constructionData.max;
-            // Crea VoxelShape dal box
-            VoxelShape shape = Shapes.create(new AABB(
+            AABB box = new AABB(
                 min.getX(), min.getY(), min.getZ(),
                 max.getX() + 1, max.getY() + 1, max.getZ() + 1
-            ));
+            );
+            VoxelShape shape = Shapes.create(box);
             ShapeRenderer.renderShape(
                 poseStack, lineBuffer, shape,
                 -cameraPos.x, -cameraPos.y, -cameraPos.z,
@@ -85,17 +96,17 @@ public class WireframeRenderer {
         if (selectionData.active && selectionData.hasPos1 && selectionData.hasPos2) {
             BlockPos pos1 = selectionData.pos1;
             BlockPos pos2 = selectionData.pos2;
-            // Calcola min/max
             int minX = Math.min(pos1.getX(), pos2.getX());
             int minY = Math.min(pos1.getY(), pos2.getY());
             int minZ = Math.min(pos1.getZ(), pos2.getZ());
             int maxX = Math.max(pos1.getX(), pos2.getX());
             int maxY = Math.max(pos1.getY(), pos2.getY());
             int maxZ = Math.max(pos1.getZ(), pos2.getZ());
-            VoxelShape shape = Shapes.create(new AABB(
+            AABB box = new AABB(
                 minX, minY, minZ,
                 maxX + 1, maxY + 1, maxZ + 1
-            ));
+            );
+            VoxelShape shape = Shapes.create(box);
             ShapeRenderer.renderShape(
                 poseStack, lineBuffer, shape,
                 -cameraPos.x, -cameraPos.y, -cameraPos.z,
@@ -104,23 +115,6 @@ public class WireframeRenderer {
         }
 
         poseStack.popPose();
-    }
-
-    /**
-     * Renderizza overlay su ogni blocco della costruzione.
-     */
-    private static void renderBlockOverlays(PoseStack poseStack, VertexConsumer buffer, Vec3 cameraPos) {
-        for (BlockPos pos : blockPositions) {
-            VoxelShape shape = Shapes.create(new AABB(
-                pos.getX() + BLOCK_INSET, pos.getY() + BLOCK_INSET, pos.getZ() + BLOCK_INSET,
-                pos.getX() + 1 - BLOCK_INSET, pos.getY() + 1 - BLOCK_INSET, pos.getZ() + 1 - BLOCK_INSET
-            ));
-            ShapeRenderer.renderShape(
-                poseStack, buffer, shape,
-                -cameraPos.x, -cameraPos.y, -cameraPos.z,
-                CONSTRUCTION_COLOR, 1.0f
-            );
-        }
     }
 
     /**

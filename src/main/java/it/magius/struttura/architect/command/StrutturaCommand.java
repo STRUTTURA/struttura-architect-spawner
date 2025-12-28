@@ -55,6 +55,7 @@ public class StrutturaCommand {
             Commands.literal("struttura")
                 .then(Commands.literal("enter")
                     .then(Commands.argument("id", StringArgumentType.string())
+                        .suggests(CONSTRUCTION_ID_SUGGESTIONS)
                         .executes(StrutturaCommand::executeEnter)
                     )
                 )
@@ -76,11 +77,9 @@ public class StrutturaCommand {
                     .executes(StrutturaCommand::executeList)
                 )
                 .then(Commands.literal("tp")
-                    .then(Commands.argument("player", EntityArgument.player())
-                        .then(Commands.argument("id", StringArgumentType.string())
-                            .suggests(CONSTRUCTION_ID_SUGGESTIONS)
-                            .executes(StrutturaCommand::executeTp)
-                        )
+                    .then(Commands.argument("id", StringArgumentType.string())
+                        .suggests(CONSTRUCTION_ID_SUGGESTIONS)
+                        .executes(StrutturaCommand::executeTp)
                     )
                 )
                 .then(Commands.literal("remove")
@@ -127,21 +126,12 @@ public class StrutturaCommand {
         );
     }
 
-    // Suggerimenti per gli ID dei blocchi (comuni + quelli nella costruzione corrente)
+    // Suggerimenti per gli ID dei blocchi (solo quelli presenti nella costruzione corrente)
     private static final SuggestionProvider<CommandSourceStack> BLOCK_ID_SUGGESTIONS =
         (context, builder) -> {
             java.util.Set<String> suggestions = new java.util.LinkedHashSet<>();
 
-            // Aggiungi blocchi comuni
-            suggestions.add("minecraft:air");
-            suggestions.add("minecraft:stone");
-            suggestions.add("minecraft:dirt");
-            suggestions.add("minecraft:grass_block");
-            suggestions.add("minecraft:water");
-            suggestions.add("minecraft:sand");
-            suggestions.add("minecraft:gravel");
-
-            // Se in editing, aggiungi i tipi di blocco presenti nella costruzione
+            // Suggerisci solo i tipi di blocco presenti nella costruzione corrente
             if (context.getSource().getEntity() instanceof ServerPlayer player) {
                 EditingSession session = EditingSession.getSession(player);
                 if (session != null) {
@@ -396,64 +386,68 @@ public class StrutturaCommand {
     private static int executeTp(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
 
-        // Per i messaggi, usa la lingua di chi esegue il comando (se player)
-        ServerPlayer executor = source.getEntity() instanceof ServerPlayer sp ? sp : null;
-
-        try {
-            ServerPlayer targetPlayer = EntityArgument.getPlayer(ctx, "player");
-            String id = StringArgumentType.getString(ctx, "id");
-
-            // Verifica che la costruzione esista (incluse quelle in editing)
-            if (!constructionExistsIncludingEditing(id)) {
-                if (executor != null) {
-                    source.sendFailure(Component.literal(I18n.tr(executor, "tp.not_found", id)));
-                } else {
-                    source.sendFailure(Component.literal(I18n.tr("tp.not_found", id)));
-                }
-                return 0;
-            }
-
-            // Ottieni la posizione (incluse quelle in editing)
-            BlockPos pos = getConstructionPosition(id);
-            if (pos == null) {
-                if (executor != null) {
-                    source.sendFailure(Component.literal(I18n.tr(executor, "tp.no_position", id)));
-                } else {
-                    source.sendFailure(Component.literal(I18n.tr("tp.no_position", id)));
-                }
-                return 0;
-            }
-
-            // Teleporta il giocatore (aggiungi 1 alla Y per non finire dentro i blocchi)
-            targetPlayer.teleportTo(
-                pos.getX() + 0.5,
-                pos.getY() + 1,
-                pos.getZ() + 0.5
-            );
-
-            Architect.LOGGER.info("Teleported {} to construction {} at {}",
-                targetPlayer.getName().getString(), id, pos);
-
-            if (executor != null) {
-                source.sendSuccess(() -> Component.literal(
-                    I18n.tr(executor, "tp.success", targetPlayer.getName().getString(), id, pos.getX(), pos.getY(), pos.getZ())
-                ), true);
-            } else {
-                source.sendSuccess(() -> Component.literal(
-                    I18n.tr("tp.success", targetPlayer.getName().getString(), id, pos.getX(), pos.getY(), pos.getZ())
-                ), true);
-            }
-
-            return 1;
-
-        } catch (Exception e) {
-            if (executor != null) {
-                source.sendFailure(Component.literal(I18n.tr(executor, "tp.error", e.getMessage())));
-            } else {
-                source.sendFailure(Component.literal(I18n.tr("tp.error", e.getMessage())));
-            }
+        // Solo i giocatori possono usare questo comando
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
             return 0;
         }
+
+        String id = StringArgumentType.getString(ctx, "id");
+
+        // Verifica che la costruzione esista (incluse quelle in editing)
+        if (!constructionExistsIncludingEditing(id)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "tp.not_found", id)));
+            return 0;
+        }
+
+        // Ottieni la costruzione per avere accesso ai bounds
+        Construction construction = getConstructionIncludingEditing(id);
+        if (construction == null || !construction.getBounds().isValid()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "tp.no_position", id)));
+            return 0;
+        }
+
+        // Calcola il centro della costruzione
+        BlockPos center = construction.getBounds().getCenter();
+        double centerX = center.getX() + 0.5;
+        double centerY = center.getY() + 0.5;
+        double centerZ = center.getZ() + 0.5;
+
+        // Posizione di teleport (sul bordo della costruzione, lato sud)
+        BlockPos min = construction.getBounds().getMin();
+        double tpX = centerX;
+        double tpY = min.getY();
+        double tpZ = construction.getBounds().getMax().getZ() + 2; // 2 blocchi fuori dal bordo sud
+
+        // Calcola yaw per guardare verso il centro (nord = verso -Z)
+        double dx = centerX - tpX;
+        double dz = centerZ - tpZ;
+        float yaw = (float) (Math.atan2(-dx, dz) * 180.0 / Math.PI);
+
+        // Calcola pitch per guardare verso il centro
+        double dy = centerY - (tpY + 1.6); // 1.6 = altezza occhi
+        double horizontalDist = Math.sqrt(dx * dx + dz * dz);
+        float pitch = (float) (-Math.atan2(dy, horizontalDist) * 180.0 / Math.PI);
+
+        // Teleporta con rotazione
+        player.teleportTo(
+            (net.minecraft.server.level.ServerLevel) player.level(),
+            tpX, tpY, tpZ,
+            java.util.Set.of(), // No relative flags
+            yaw, pitch,
+            false // Non forzare il dismount
+        );
+
+        BlockPos pos = new BlockPos((int) tpX, (int) tpY, (int) tpZ);
+
+        Architect.LOGGER.info("Teleported {} to construction {} at [{}, {}, {}] facing center",
+            player.getName().getString(), id, pos.getX(), pos.getY(), pos.getZ());
+
+        source.sendSuccess(() -> Component.literal(
+            I18n.tr(player, "tp.success_self", id, pos.getX(), pos.getY(), pos.getZ())
+        ), false);
+
+        return 1;
     }
 
     private static int executeRemoveBlockType(CommandContext<CommandSourceStack> ctx) {
