@@ -527,12 +527,41 @@ public class StrutturaCommand {
             return 0;
         }
 
-        // Calcola l'offset: posizione player - posizione minima della costruzione
+        // Ottieni dimensioni della costruzione
+        var bounds = construction.getBounds();
+        int sizeX = bounds.getSizeX();
+        int sizeZ = bounds.getSizeZ();
+
+        // Ottieni la direzione in cui il player sta guardando (solo asse orizzontale)
+        float yaw = player.getYRot();
+        // Normalizza yaw a 0-360
+        yaw = ((yaw % 360) + 360) % 360;
+
+        // Determina la direzione cardinale principale
+        // yaw: 0 = sud (+Z), 90 = ovest (-X), 180 = nord (-Z), 270 = est (+X)
+        int offsetX, offsetZ;
         BlockPos playerPos = player.blockPosition();
-        BlockPos constructionMin = construction.getBounds().getMin();
-        int offsetX = playerPos.getX() - constructionMin.getX();
-        int offsetY = playerPos.getY() - constructionMin.getY();
-        int offsetZ = playerPos.getZ() - constructionMin.getZ();
+
+        if (yaw >= 315 || yaw < 45) {
+            // Sud (+Z): costruzione davanti al player, player sul lato -Z
+            offsetX = playerPos.getX() - bounds.getMinX() - (sizeX / 2); // Centra su X
+            offsetZ = playerPos.getZ() + 1 - bounds.getMinZ(); // Davanti al player
+        } else if (yaw >= 45 && yaw < 135) {
+            // Ovest (-X): costruzione davanti al player, player sul lato +X
+            offsetX = playerPos.getX() - 1 - bounds.getMaxX(); // Davanti al player (verso -X)
+            offsetZ = playerPos.getZ() - bounds.getMinZ() - (sizeZ / 2); // Centra su Z
+        } else if (yaw >= 135 && yaw < 225) {
+            // Nord (-Z): costruzione davanti al player, player sul lato +Z
+            offsetX = playerPos.getX() - bounds.getMinX() - (sizeX / 2); // Centra su X
+            offsetZ = playerPos.getZ() - 1 - bounds.getMaxZ(); // Davanti al player (verso -Z)
+        } else {
+            // Est (+X): costruzione davanti al player, player sul lato -X
+            offsetX = playerPos.getX() + 1 - bounds.getMinX(); // Davanti al player (verso +X)
+            offsetZ = playerPos.getZ() - bounds.getMinZ() - (sizeZ / 2); // Centra su Z
+        }
+
+        // Offset Y: la costruzione parte dal livello del player
+        int offsetY = playerPos.getY() - bounds.getMinY();
 
         ServerLevel level = (ServerLevel) player.level();
         int placedCount = 0;
@@ -550,12 +579,15 @@ public class StrutturaCommand {
             placedCount++;
         }
 
+        // Calcola la posizione effettiva dove è stata spawnata (per il messaggio)
+        BlockPos spawnMin = bounds.getMin().offset(offsetX, offsetY, offsetZ);
+
         final int finalCount = placedCount;
         Architect.LOGGER.info("Player {} spawned construction {} at {} ({} blocks)",
-            player.getName().getString(), id, playerPos, finalCount);
+            player.getName().getString(), id, spawnMin, finalCount);
 
         source.sendSuccess(() -> Component.literal(
-            I18n.tr(player, "spawn.success", id, finalCount, playerPos.getX(), playerPos.getY(), playerPos.getZ())
+            I18n.tr(player, "spawn.success", id, finalCount, spawnMin.getX(), spawnMin.getY(), spawnMin.getZ())
         ), true);
 
         return 1;
@@ -994,7 +1026,7 @@ public class StrutturaCommand {
 
     /**
      * Ottiene la posizione del blocco su cui il giocatore sta guardando.
-     * Se non sta guardando un blocco, usa la posizione del giocatore.
+     * Se non sta guardando un blocco, usa il blocco sotto i piedi del giocatore.
      */
     private static BlockPos getTargetBlockPos(ServerPlayer player) {
         // Raycast per trovare il blocco su cui sta guardando
@@ -1005,8 +1037,9 @@ public class StrutturaCommand {
             return blockHit.getBlockPos();
         }
 
-        // Fallback: posizione del giocatore
-        return player.blockPosition();
+        // Fallback: blocco sotto i piedi del giocatore
+        // player.blockPosition() e' la posizione dei piedi (aria), below() e' il blocco solido
+        return player.blockPosition().below();
     }
 
     /**
