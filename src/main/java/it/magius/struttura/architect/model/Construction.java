@@ -78,9 +78,14 @@ public class Construction {
 
     /**
      * Rimuove un blocco dalla costruzione.
+     * Ricalcola i bounds automaticamente dopo la rimozione.
      */
     public boolean removeBlock(BlockPos pos) {
-        return blocks.remove(pos) != null;
+        boolean removed = blocks.remove(pos) != null;
+        if (removed) {
+            recalculateBounds();
+        }
+        return removed;
     }
 
     /**

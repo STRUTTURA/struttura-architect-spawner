@@ -2,6 +2,7 @@ package it.magius.struttura.architect.session;
 
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EditMode;
+import it.magius.struttura.architect.network.NetworkHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.state.BlockState;
@@ -86,6 +87,8 @@ public class EditingSession {
     public void onBlockPlaced(BlockPos pos, BlockState state) {
         if (mode == EditMode.ADD) {
             construction.addBlock(pos, state);
+            // Aggiorna il wireframe (i bounds potrebbero essere cambiati)
+            NetworkHandler.sendWireframeSync(player);
         }
         // In mode REMOVE il piazzamento non fa nulla di speciale
     }
@@ -97,9 +100,13 @@ public class EditingSession {
         if (mode == EditMode.ADD) {
             // In ADD, rompere un blocco aggiunge aria alla costruzione
             construction.addBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            // Aggiorna il wireframe (i bounds potrebbero essere cambiati)
+            NetworkHandler.sendWireframeSync(player);
         } else {
             // In REMOVE, rompere un blocco lo rimuove dalla costruzione
             construction.removeBlock(pos);
+            // Aggiorna il wireframe (i bounds sono stati ricalcolati)
+            NetworkHandler.sendWireframeSync(player);
         }
     }
 

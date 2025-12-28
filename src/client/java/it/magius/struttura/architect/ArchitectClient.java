@@ -29,10 +29,8 @@ public class ArchitectClient implements ClientModInitializer {
             });
         });
 
-        // TODO: Registrare rendering quando l'API sarà implementata
-        // Le WorldRenderEvents sono state reimplementate in Fabric API 0.140+
-        // nel nuovo package: net.fabricmc.fabric.api.client.rendering.v1.world
-        // L'evento BEFORE_DEBUG_RENDER o AFTER_ENTITIES sono adatti per wireframe
+        // Inizializza il renderer wireframe (registra WorldRenderEvents)
+        WireframeRenderer.init();
 
         // Pulisci i dati quando ci disconnettiamo
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
