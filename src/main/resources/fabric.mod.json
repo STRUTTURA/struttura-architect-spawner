@@ -1,0 +1,39 @@
+{
+	"schemaVersion": 1,
+	"id": "architect",
+	"version": "${version}",
+	"name": "STRUTTURA - Architect",
+	"description": "Create and share your Minecraft structures with the world. Part of the STRUTTURA ecosystem.",
+	"authors": [
+		"MagiusCHE"
+	],
+	"contact": {
+		"homepage": "https://struttura.magius.it",
+		"sources": "https://github.com/MagiusCHE/struttura",
+		"email": "magiusche@magius.it"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/architect/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"it.magius.struttura.architect.Architect"
+		],
+		"client": [
+			"it.magius.struttura.architect.ArchitectClient"
+		]
+	},
+	"mixins": [
+		"architect.mixins.json",
+		{
+			"config": "architect.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.18.2",
+		"minecraft": "~1.21.11",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}

@@ -1,0 +1,11 @@
+{
+	"required": true,
+	"package": "it.magius.struttura.architect.mixin.client",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"ArchitectClientMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

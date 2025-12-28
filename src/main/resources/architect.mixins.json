@@ -1,0 +1,16 @@
+{
+	"required": true,
+	"package": "it.magius.struttura.architect.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"mixins": [
+		"ArchitectMixin",
+		"ServerPlayerGameModeMixin",
+		"ServerPlayerMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}
