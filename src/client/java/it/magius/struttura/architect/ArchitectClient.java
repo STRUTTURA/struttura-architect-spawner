@@ -1,6 +1,7 @@
 package it.magius.struttura.architect;
 
 import it.magius.struttura.architect.client.WireframeRenderer;
+import it.magius.struttura.architect.network.BlockPositionsSyncPacket;
 import it.magius.struttura.architect.network.WireframeSyncPacket;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
@@ -26,6 +27,15 @@ public class ArchitectClient implements ClientModInitializer {
                 WireframeRenderer.setSelectionData(packet.getSelectionWireframe());
                 Architect.LOGGER.debug("Received wireframe sync: construction={}, selection={}",
                     packet.constructionActive(), packet.selectionActive());
+            });
+        });
+
+        // Registra il receiver per le posizioni dei blocchi
+        ClientPlayNetworking.registerGlobalReceiver(BlockPositionsSyncPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                WireframeRenderer.setBlockPositions(packet.solidBlocks(), packet.airBlocks());
+                Architect.LOGGER.debug("Received block positions: {} solid, {} air",
+                    packet.solidBlocks().size(), packet.airBlocks().size());
             });
         });
 

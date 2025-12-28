@@ -13,6 +13,9 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Renderizza i wireframe per costruzioni e selezioni.
  * Usa WorldRenderEvents.BEFORE_DEBUG_RENDER per disegnare i box wireframe.
@@ -25,9 +28,15 @@ public class WireframeRenderer {
     // Colore ciano per il wireframe selezione (packed ARGB)
     private static final int SELECTION_COLOR = 0xFF00FFFF;
 
+    // Inset per l'overlay dei blocchi (per non sovrapporsi al wireframe)
+    private static final double BLOCK_INSET = 0.01;
+
     // Dati correnti (aggiornati dal packet)
     private static WireframeData.ConstructionWireframe constructionData = WireframeData.ConstructionWireframe.empty();
     private static WireframeData.SelectionWireframe selectionData = WireframeData.SelectionWireframe.empty();
+
+    // Posizioni dei blocchi per l'overlay (tutti i blocchi, senza distinzione)
+    private static List<BlockPos> blockPositions = new ArrayList<>();
 
     /**
      * Inizializza il renderer registrando l'evento di rendering.
@@ -38,17 +47,23 @@ public class WireframeRenderer {
 
     private static void onWorldRender(WorldRenderContext context) {
         // Non renderizzare se non ci sono dati
-        if (!constructionData.active && !selectionData.active) {
+        boolean hasBlocks = !blockPositions.isEmpty();
+        if (!constructionData.active && !selectionData.active && !hasBlocks) {
             return;
         }
 
         PoseStack poseStack = context.matrices();
-        VertexConsumer buffer = context.consumers().getBuffer(RenderTypes.lines());
+        VertexConsumer lineBuffer = context.consumers().getBuffer(RenderTypes.lines());
 
         // Ottieni la posizione della camera dal cameraRenderState
         Vec3 cameraPos = context.worldState().cameraRenderState.pos;
 
         poseStack.pushPose();
+
+        // Renderizza overlay sui blocchi (prima, sotto il wireframe)
+        if (constructionData.active && hasBlocks) {
+            renderBlockOverlays(poseStack, lineBuffer, cameraPos);
+        }
 
         // Renderizza wireframe costruzione (se attivo)
         if (constructionData.active) {
@@ -60,7 +75,7 @@ public class WireframeRenderer {
                 max.getX() + 1, max.getY() + 1, max.getZ() + 1
             ));
             ShapeRenderer.renderShape(
-                poseStack, buffer, shape,
+                poseStack, lineBuffer, shape,
                 -cameraPos.x, -cameraPos.y, -cameraPos.z,
                 CONSTRUCTION_COLOR, 1.0f
             );
@@ -82,13 +97,30 @@ public class WireframeRenderer {
                 maxX + 1, maxY + 1, maxZ + 1
             ));
             ShapeRenderer.renderShape(
-                poseStack, buffer, shape,
+                poseStack, lineBuffer, shape,
                 -cameraPos.x, -cameraPos.y, -cameraPos.z,
                 SELECTION_COLOR, 1.0f
             );
         }
 
         poseStack.popPose();
+    }
+
+    /**
+     * Renderizza overlay su ogni blocco della costruzione.
+     */
+    private static void renderBlockOverlays(PoseStack poseStack, VertexConsumer buffer, Vec3 cameraPos) {
+        for (BlockPos pos : blockPositions) {
+            VoxelShape shape = Shapes.create(new AABB(
+                pos.getX() + BLOCK_INSET, pos.getY() + BLOCK_INSET, pos.getZ() + BLOCK_INSET,
+                pos.getX() + 1 - BLOCK_INSET, pos.getY() + 1 - BLOCK_INSET, pos.getZ() + 1 - BLOCK_INSET
+            ));
+            ShapeRenderer.renderShape(
+                poseStack, buffer, shape,
+                -cameraPos.x, -cameraPos.y, -cameraPos.z,
+                CONSTRUCTION_COLOR, 1.0f
+            );
+        }
     }
 
     /**
@@ -120,10 +152,21 @@ public class WireframeRenderer {
     }
 
     /**
+     * Imposta le posizioni dei blocchi per l'overlay.
+     */
+    public static void setBlockPositions(List<BlockPos> solid, List<BlockPos> air) {
+        // Combina tutti i blocchi in una sola lista
+        blockPositions = new ArrayList<>(solid.size() + air.size());
+        blockPositions.addAll(solid);
+        blockPositions.addAll(air);
+    }
+
+    /**
      * Resetta tutti i dati.
      */
     public static void reset() {
         constructionData = WireframeData.ConstructionWireframe.empty();
         selectionData = WireframeData.SelectionWireframe.empty();
+        blockPositions = new ArrayList<>();
     }
 }

@@ -1,6 +1,7 @@
 package it.magius.struttura.architect.network;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
@@ -8,6 +9,11 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.state.BlockState;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Gestisce la registrazione e l'invio dei packet di rete.
@@ -20,6 +26,8 @@ public class NetworkHandler {
     public static void registerServer() {
         // Registra il packet per la sincronizzazione wireframe (S2C = Server to Client)
         PayloadTypeRegistry.playS2C().register(WireframeSyncPacket.TYPE, WireframeSyncPacket.STREAM_CODEC);
+        // Registra il packet per le posizioni dei blocchi (S2C)
+        PayloadTypeRegistry.playS2C().register(BlockPositionsSyncPacket.TYPE, BlockPositionsSyncPacket.STREAM_CODEC);
         Architect.LOGGER.info("Registered network packets");
     }
 
@@ -33,6 +41,9 @@ public class NetworkHandler {
 
         WireframeSyncPacket packet = buildPacket(session, selection);
         ServerPlayNetworking.send(player, packet);
+
+        // Invia anche le posizioni dei blocchi per l'overlay
+        sendBlockPositions(player);
 
         Architect.LOGGER.debug("Sent wireframe sync to {}: construction={}, selection={}",
             player.getName().getString(),
@@ -85,6 +96,39 @@ public class NetworkHandler {
      */
     public static void sendEmptyWireframe(ServerPlayer player) {
         ServerPlayNetworking.send(player, WireframeSyncPacket.empty());
+        ServerPlayNetworking.send(player, BlockPositionsSyncPacket.empty());
         Architect.LOGGER.debug("Sent empty wireframe sync to {}", player.getName().getString());
+    }
+
+    /**
+     * Invia le posizioni dei blocchi della costruzione in editing.
+     */
+    public static void sendBlockPositions(ServerPlayer player) {
+        EditingSession session = EditingSession.getSession(player);
+
+        if (session == null) {
+            ServerPlayNetworking.send(player, BlockPositionsSyncPacket.empty());
+            return;
+        }
+
+        Construction construction = session.getConstruction();
+        Map<BlockPos, BlockState> blocks = construction.getBlocks();
+
+        List<BlockPos> solidBlocks = new ArrayList<>();
+        List<BlockPos> airBlocks = new ArrayList<>();
+
+        for (Map.Entry<BlockPos, BlockState> entry : blocks.entrySet()) {
+            if (entry.getValue().isAir()) {
+                airBlocks.add(entry.getKey());
+            } else {
+                solidBlocks.add(entry.getKey());
+            }
+        }
+
+        BlockPositionsSyncPacket packet = new BlockPositionsSyncPacket(solidBlocks, airBlocks);
+        ServerPlayNetworking.send(player, packet);
+
+        Architect.LOGGER.debug("Sent block positions to {}: {} solid, {} air",
+            player.getName().getString(), solidBlocks.size(), airBlocks.size());
     }
 }
