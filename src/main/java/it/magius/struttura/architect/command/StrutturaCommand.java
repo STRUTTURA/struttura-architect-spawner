@@ -5,6 +5,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.network.NetworkHandler;
@@ -121,6 +122,12 @@ public class StrutturaCommand {
                     )
                     .then(Commands.literal("info")
                         .executes(StrutturaCommand::executeSelectInfo)
+                    )
+                )
+                .then(Commands.literal("push")
+                    .then(Commands.argument("id", StringArgumentType.string())
+                        .suggests(CONSTRUCTION_ID_SUGGESTIONS)
+                        .executes(StrutturaCommand::executePush)
                     )
                 )
         );
@@ -813,6 +820,84 @@ public class StrutturaCommand {
         }
 
         return null;
+    }
+
+    // ===== Comando Push =====
+
+    private static int executePush(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        String id = StringArgumentType.getString(ctx, "id");
+
+        // Verifica che la costruzione NON sia in modalità editing
+        if (isConstructionBeingEdited(id)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "push.in_editing", id)));
+            return 0;
+        }
+
+        // Verifica che la costruzione esista nel registry
+        ConstructionRegistry registry = ConstructionRegistry.getInstance();
+        if (!registry.exists(id)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "push.not_found", id)));
+            return 0;
+        }
+
+        // Verifica che non ci sia già una richiesta in corso
+        if (ApiClient.isRequestInProgress()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "push.request_in_progress")));
+            return 0;
+        }
+
+        Construction construction = registry.get(id);
+        if (construction == null || construction.getBlockCount() == 0) {
+            source.sendFailure(Component.literal(I18n.tr(player, "push.empty", id)));
+            return 0;
+        }
+
+        // Messaggio di invio
+        source.sendSuccess(() -> Component.literal(
+            I18n.tr(player, "push.sending", id, construction.getBlockCount())
+        ), false);
+
+        Architect.LOGGER.info("Player {} pushing construction {} ({} blocks)",
+            player.getName().getString(), id, construction.getBlockCount());
+
+        // Cattura il server per il callback sul main thread
+        var server = ((ServerLevel) player.level()).getServer();
+
+        // Esegui push asincrono
+        boolean started = ApiClient.pushConstruction(construction, response -> {
+            // Callback viene eseguito su thread async, schedula sul main thread
+            if (server != null) {
+                server.execute(() -> {
+                    if (response.success()) {
+                        player.sendSystemMessage(Component.literal(
+                            I18n.tr(player, "push.success", id, response.statusCode(), response.message())
+                        ));
+                        Architect.LOGGER.info("Push successful for {}: {} - {}",
+                            id, response.statusCode(), response.message());
+                    } else {
+                        player.sendSystemMessage(Component.literal(
+                            I18n.tr(player, "push.failed", id, response.statusCode(), response.message())
+                        ));
+                        Architect.LOGGER.warn("Push failed for {}: {} - {}",
+                            id, response.statusCode(), response.message());
+                    }
+                });
+            }
+        });
+
+        if (!started) {
+            source.sendFailure(Component.literal(I18n.tr(player, "push.request_in_progress")));
+            return 0;
+        }
+
+        return 1;
     }
 
     // ===== Comandi Select =====

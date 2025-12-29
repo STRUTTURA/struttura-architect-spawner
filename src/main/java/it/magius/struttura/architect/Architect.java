@@ -1,6 +1,7 @@
 package it.magius.struttura.architect;
 
 import it.magius.struttura.architect.command.StrutturaCommand;
+import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
@@ -20,6 +21,9 @@ public class Architect implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		LOGGER.info("STRUTTURA: Architect v{} initializing...", MOD_VERSION);
+
+		// Carica la configurazione
+		ArchitectConfig.getInstance();
 
 		// Inizializza il sistema i18n
 		I18n.init();

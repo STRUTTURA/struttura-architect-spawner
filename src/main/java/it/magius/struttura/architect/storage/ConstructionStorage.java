@@ -247,7 +247,6 @@ public class ConstructionStorage {
         json.addProperty("authorId", construction.getAuthorId().toString());
         json.addProperty("authorName", construction.getAuthorName());
         json.addProperty("createdAt", construction.getCreatedAt().toString());
-        json.addProperty("version", construction.getVersion());
         json.addProperty("blockCount", construction.getBlockCount());
         json.addProperty("solidBlockCount", construction.getSolidBlockCount());
 
@@ -284,9 +283,8 @@ public class ConstructionStorage {
             UUID authorId = UUID.fromString(json.get("authorId").getAsString());
             String authorName = json.get("authorName").getAsString();
             Instant createdAt = Instant.parse(json.get("createdAt").getAsString());
-            int version = json.get("version").getAsInt();
 
-            return new Construction(id, authorId, authorName, createdAt, version);
+            return new Construction(id, authorId, authorName, createdAt);
         }
     }
 

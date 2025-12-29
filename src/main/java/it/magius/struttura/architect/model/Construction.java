@@ -26,9 +26,6 @@ public class Construction {
     // Timestamp creazione
     private final Instant createdAt;
 
-    // Versione (incrementata ad ogni push)
-    private int version = 1;
-
     // Blocchi tracciati: posizione -> stato blocco
     private final Map<BlockPos, BlockState> blocks = new HashMap<>();
 
@@ -42,12 +39,11 @@ public class Construction {
         this.createdAt = Instant.now();
     }
 
-    public Construction(String id, UUID authorId, String authorName, Instant createdAt, int version) {
+    public Construction(String id, UUID authorId, String authorName, Instant createdAt) {
         this.id = id;
         this.authorId = authorId;
         this.authorName = authorName;
         this.createdAt = createdAt;
-        this.version = version;
     }
 
     /**
@@ -182,9 +178,6 @@ public class Construction {
     public UUID getAuthorId() { return authorId; }
     public String getAuthorName() { return authorName; }
     public Instant getCreatedAt() { return createdAt; }
-    public int getVersion() { return version; }
     public Map<BlockPos, BlockState> getBlocks() { return blocks; }
     public ConstructionBounds getBounds() { return bounds; }
-
-    public void incrementVersion() { version++; }
 }
