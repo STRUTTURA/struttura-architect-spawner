@@ -3,7 +3,8 @@
 	"package": "it.magius.struttura.architect.mixin.client",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
-		"ArchitectClientMixin"
+		"ArchitectClientMixin",
+		"HammerGuiMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

@@ -81,6 +81,13 @@ public class I18n {
     }
 
     /**
+     * Ottiene il codice lingua del giocatore.
+     */
+    public static String getPlayerLanguage(ServerPlayer player) {
+        return PlayerLanguageTracker.getInstance().getSimpleLanguageCode(player);
+    }
+
+    /**
      * Traduce una chiave per un giocatore specifico.
      * Usa la lingua del client Minecraft del giocatore.
      *

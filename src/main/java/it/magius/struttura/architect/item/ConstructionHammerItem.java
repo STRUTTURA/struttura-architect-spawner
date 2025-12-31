@@ -44,27 +44,8 @@ public class ConstructionHammerItem extends Item {
 
     @Override
     public InteractionResult use(Level level, Player player, InteractionHand hand) {
-        if (level.isClientSide()) {
-            return InteractionResult.SUCCESS;
-        }
-
-        ServerPlayer serverPlayer = (ServerPlayer) player;
-        EditingSession session = EditingSession.getSession(player.getUUID());
-
-        if (player.isShiftKeyDown() && session == null) {
-            // Shift + Click destro in aria (non in editing): apri GUI nuova costruzione
-            // TODO: Aprire GUI nuova costruzione (Fase 2)
-            serverPlayer.sendSystemMessage(Component.literal("§e[Struttura] §fGUI Nuova Costruzione - Coming soon..."));
-        } else {
-            // Click destro in aria: apri GUI principale
-            // TODO: Aprire GUI principale (Fase 2)
-            if (session != null) {
-                serverPlayer.sendSystemMessage(Component.literal("§e[Struttura] §fGUI Info Costruzione - Coming soon..."));
-            } else {
-                serverPlayer.sendSystemMessage(Component.literal("§e[Struttura] §fGUI Principale - Coming soon..."));
-            }
-        }
-
+        // Right-click in air: GUI is handled client-side via mixin
+        // Server just acknowledges the interaction
         return InteractionResult.SUCCESS;
     }
 
@@ -106,10 +87,8 @@ public class ConstructionHammerItem extends Item {
             }
         }
 
-        // Blocco normale: apri GUI principale
-        // TODO: Aprire GUI principale (Fase 2)
-        player.sendSystemMessage(Component.literal("§e[Struttura] §fGUI Principale - Coming soon..."));
-        return InteractionResult.SUCCESS;
+        // Blocco normale: no action needed (clicking on regular blocks does nothing when not editing)
+        return InteractionResult.PASS;
     }
 
     private InteractionResult handleClickInEditing(ServerPlayer player, BlockPos clickedPos,
@@ -183,6 +162,7 @@ public class ConstructionHammerItem extends Item {
 
         EditingSession session = EditingSession.startSession(player, construction);
         NetworkHandler.sendWireframeSync(player);
+        NetworkHandler.sendEditingInfo(player);
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "enter.success", id)));

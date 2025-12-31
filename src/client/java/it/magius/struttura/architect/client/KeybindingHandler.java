@@ -1,6 +1,8 @@
 package it.magius.struttura.architect.client;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.client.gui.PanelManager;
+import it.magius.struttura.architect.network.GuiActionPacket;
 import it.magius.struttura.architect.network.SelectionKeyPacket;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -22,9 +24,21 @@ public class KeybindingHandler {
             return;
         }
 
-        // Non processare i tasti se una GUI è aperta
+        // Non processare i tasti se una GUI vanilla è aperta
         if (client.screen != null) {
             return;
+        }
+
+        // Controlla il keybinding per il toggle GUI (sempre attivo)
+        while (ModKeybindings.TOGGLE_GUI.consumeClick()) {
+            PanelManager pm = PanelManager.getInstance();
+            pm.toggleMainPanel();
+
+            // Se stiamo aprendo il pannello, richiedi la lista costruzioni
+            if (pm.isMainPanelOpen()) {
+                ClientPlayNetworking.send(new GuiActionPacket("request_list", "", ""));
+            }
+            Architect.LOGGER.debug("Toggle GUI: {}", pm.isMainPanelOpen() ? "open" : "closed");
         }
 
         // Controlla se siamo in editing (wireframe attivo)
@@ -32,7 +46,7 @@ public class KeybindingHandler {
             return;
         }
 
-        // Controlla i keybindings
+        // Controlla i keybindings di selezione
         while (ModKeybindings.SELECT_POS1.consumeClick()) {
             sendSelectionAction(SelectionKeyPacket.Action.POS1);
         }

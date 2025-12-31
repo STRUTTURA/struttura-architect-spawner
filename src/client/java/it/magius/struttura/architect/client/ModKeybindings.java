@@ -28,6 +28,9 @@ public class ModKeybindings {
     public static KeyMapping SELECT_APPLY;
     public static KeyMapping SELECT_APPLYALL;
 
+    // Keybinding per la GUI
+    public static KeyMapping TOGGLE_GUI;
+
     /**
      * Registra tutti i keybindings della mod.
      */
@@ -64,6 +67,13 @@ public class ModKeybindings {
             "key.struttura.select_applyall",
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_B,
+            CATEGORY
+        ));
+
+        TOGGLE_GUI = KeyBindingHelper.registerKeyBinding(new KeyMapping(
+            "key.struttura.toggle_gui",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_G,
             CATEGORY
         ));
     }

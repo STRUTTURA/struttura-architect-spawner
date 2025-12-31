@@ -89,6 +89,8 @@ public class EditingSession {
             construction.addBlock(pos, state);
             // Aggiorna il wireframe (i bounds potrebbero essere cambiati)
             NetworkHandler.sendWireframeSync(player);
+            // Aggiorna info editing per la GUI
+            NetworkHandler.sendEditingInfo(player);
         }
         // In mode REMOVE il piazzamento non fa nulla di speciale
     }
@@ -102,11 +104,15 @@ public class EditingSession {
             construction.addBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
             // Aggiorna il wireframe (i bounds potrebbero essere cambiati)
             NetworkHandler.sendWireframeSync(player);
+            // Aggiorna info editing per la GUI
+            NetworkHandler.sendEditingInfo(player);
         } else {
             // In REMOVE, rompere un blocco lo rimuove dalla costruzione
             construction.removeBlock(pos);
             // Aggiorna il wireframe (i bounds sono stati ricalcolati)
             NetworkHandler.sendWireframeSync(player);
+            // Aggiorna info editing per la GUI
+            NetworkHandler.sendEditingInfo(player);
         }
     }
 

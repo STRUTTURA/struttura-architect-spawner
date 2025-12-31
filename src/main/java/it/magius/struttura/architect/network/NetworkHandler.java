@@ -6,6 +6,8 @@ import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EditMode;
+import it.magius.struttura.architect.registry.ConstructionRegistry;
+import it.magius.struttura.architect.registry.ModItems;
 import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
@@ -14,16 +16,25 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Gestisce la registrazione e l'invio dei packet di rete.
  */
 public class NetworkHandler {
+
+    // Mappa per memorizzare i blocchi originali del mondo quando si usa "show"
+    private static final Map<String, Map<BlockPos, BlockState>> ORIGINAL_WORLD_BLOCKS = new HashMap<>();
+    private static final Set<String> VISIBLE_CONSTRUCTIONS = new HashSet<>();
 
     /**
      * Registra i payload types lato server.
@@ -39,11 +50,17 @@ public class NetworkHandler {
         PayloadTypeRegistry.playC2S().register(ScreenshotDataPacket.TYPE, ScreenshotDataPacket.STREAM_CODEC);
         // Registra il packet per le azioni di selezione via keybinding (C2S)
         PayloadTypeRegistry.playC2S().register(SelectionKeyPacket.TYPE, SelectionKeyPacket.STREAM_CODEC);
+        // Registra i nuovi packet GUI
+        PayloadTypeRegistry.playC2S().register(GuiActionPacket.TYPE, GuiActionPacket.STREAM_CODEC);
+        PayloadTypeRegistry.playS2C().register(EditingInfoPacket.TYPE, EditingInfoPacket.STREAM_CODEC);
+        PayloadTypeRegistry.playS2C().register(ConstructionListPacket.TYPE, ConstructionListPacket.STREAM_CODEC);
 
         // Registra il receiver per i dati dello screenshot
         ServerPlayNetworking.registerGlobalReceiver(ScreenshotDataPacket.TYPE, NetworkHandler::handleScreenshotData);
         // Registra il receiver per le azioni di selezione via keybinding
         ServerPlayNetworking.registerGlobalReceiver(SelectionKeyPacket.TYPE, NetworkHandler::handleSelectionKey);
+        // Registra il receiver per le azioni GUI
+        ServerPlayNetworking.registerGlobalReceiver(GuiActionPacket.TYPE, NetworkHandler::handleGuiAction);
 
         Architect.LOGGER.info("Registered network packets");
     }
@@ -292,7 +309,21 @@ public class NetworkHandler {
             case CLEAR -> handleClear(player);
             case APPLY -> handleApply(player, session, false);
             case APPLYALL -> handleApply(player, session, true);
+            case MODE_TOGGLE -> handleModeToggle(player, session);
         }
+    }
+
+    private static void handleModeToggle(ServerPlayer player, EditingSession session) {
+        EditMode currentMode = session.getMode();
+        EditMode newMode = currentMode == EditMode.ADD ? EditMode.REMOVE : EditMode.ADD;
+        session.setMode(newMode);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "mode.changed", newMode.name())));
+
+        // Update wireframe preview and editing info
+        sendWireframeSync(player);
+        sendEditingInfo(player);
     }
 
     private static void handlePos1(ServerPlayer player) {
@@ -392,5 +423,417 @@ public class NetworkHandler {
             player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "select.apply.remove_success", removedCount, skippedNotInConstruction, construction.getBlockCount())));
         }
+    }
+
+    // ===== GUI Action Handler =====
+
+    /**
+     * Gestisce le azioni GUI ricevute dal client.
+     */
+    private static void handleGuiAction(GuiActionPacket packet, ServerPlayNetworking.Context context) {
+        ServerPlayer player = context.player();
+        String action = packet.action();
+        String targetId = packet.targetId();
+        String extraData = packet.extraData();
+
+        Architect.LOGGER.debug("GUI action from {}: action={}, target={}, extra={}",
+                player.getName().getString(), action, targetId, extraData);
+
+        switch (action) {
+            case "show" -> handleGuiShow(player, targetId);
+            case "hide" -> handleGuiHide(player, targetId);
+            case "tp" -> handleGuiTp(player, targetId);
+            case "edit" -> handleGuiEdit(player, targetId);
+            case "exit" -> handleGuiExit(player);
+            case "give" -> handleGuiGive(player);
+            case "shot" -> handleGuiShot(player, targetId, extraData);
+            case "title" -> handleGuiTitle(player, extraData);
+            case "rename" -> handleGuiRename(player, targetId);
+            case "request_list" -> sendConstructionList(player);
+            default -> Architect.LOGGER.warn("Unknown GUI action: {}", action);
+        }
+    }
+
+    private static void handleGuiShow(ServerPlayer player, String id) {
+        ConstructionRegistry registry = ConstructionRegistry.getInstance();
+
+        if (!registry.exists(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "show.not_found", id)));
+            return;
+        }
+
+        if (isConstructionBeingEdited(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "show.in_editing", id)));
+            return;
+        }
+
+        if (VISIBLE_CONSTRUCTIONS.contains(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "show.already_visible", id)));
+            return;
+        }
+
+        Construction construction = registry.get(id);
+        if (construction == null || construction.getBlockCount() == 0) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "show.empty", id)));
+            return;
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+
+        // Salva i blocchi originali del mondo
+        Map<BlockPos, BlockState> originalBlocks = new HashMap<>();
+        for (BlockPos pos : construction.getBlocks().keySet()) {
+            originalBlocks.put(pos.immutable(), level.getBlockState(pos));
+        }
+        ORIGINAL_WORLD_BLOCKS.put(id, originalBlocks);
+
+        // Piazza i blocchi della costruzione nel mondo
+        int placedCount = 0;
+        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+            BlockPos pos = entry.getKey();
+            BlockState state = entry.getValue();
+            level.setBlock(pos, state, 3);
+            placedCount++;
+        }
+
+        VISIBLE_CONSTRUCTIONS.add(id);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "show.success", id, placedCount)));
+    }
+
+    private static void handleGuiHide(ServerPlayer player, String id) {
+        ConstructionRegistry registry = ConstructionRegistry.getInstance();
+
+        if (!registry.exists(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "hide.not_found", id)));
+            return;
+        }
+
+        if (isConstructionBeingEdited(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "hide.in_editing", id)));
+            return;
+        }
+
+        Construction construction = registry.get(id);
+        if (construction == null || construction.getBlockCount() == 0) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "hide.not_found", id)));
+            return;
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+
+        // Ripristina i blocchi originali
+        Map<BlockPos, BlockState> originalBlocks = ORIGINAL_WORLD_BLOCKS.get(id);
+        int restoredCount = 0;
+
+        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+            BlockPos pos = entry.getKey();
+            if (originalBlocks != null && originalBlocks.containsKey(pos)) {
+                level.setBlock(pos, originalBlocks.get(pos), 3);
+            } else {
+                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            }
+            restoredCount++;
+        }
+
+        ORIGINAL_WORLD_BLOCKS.remove(id);
+        VISIBLE_CONSTRUCTIONS.remove(id);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "hide.success", id, restoredCount)));
+    }
+
+    private static void handleGuiTp(ServerPlayer player, String id) {
+        Construction construction = getConstructionIncludingEditing(id);
+        if (construction == null || !construction.getBounds().isValid()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "tp.not_found", id)));
+            return;
+        }
+
+        BlockPos center = construction.getBounds().getCenter();
+        double centerX = center.getX() + 0.5;
+        double centerY = center.getY() + 0.5;
+        double centerZ = center.getZ() + 0.5;
+
+        BlockPos min = construction.getBounds().getMin();
+        double tpX = centerX;
+        double tpY = min.getY();
+        double tpZ = construction.getBounds().getMax().getZ() + 2;
+
+        double dx = centerX - tpX;
+        double dz = centerZ - tpZ;
+        float yaw = (float) (Math.atan2(-dx, dz) * 180.0 / Math.PI);
+
+        double dy = centerY - (tpY + 1.6);
+        double horizontalDist = Math.sqrt(dx * dx + dz * dz);
+        float pitch = (float) (-Math.atan2(dy, horizontalDist) * 180.0 / Math.PI);
+
+        player.teleportTo(
+                (ServerLevel) player.level(),
+                tpX, tpY, tpZ,
+                java.util.Set.of(),
+                yaw, pitch,
+                false
+        );
+
+        BlockPos pos = new BlockPos((int) tpX, (int) tpY, (int) tpZ);
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "tp.success_self", id, pos.getX(), pos.getY(), pos.getZ())));
+    }
+
+    private static void handleGuiEdit(ServerPlayer player, String id) {
+        // Verifica che non sia già in editing
+        if (EditingSession.hasSession(player)) {
+            EditingSession session = EditingSession.getSession(player);
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "edit.already_editing", session.getConstruction().getId())));
+            return;
+        }
+
+        // Valida formato ID
+        if (!Construction.isValidId(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "edit.invalid_id", id)));
+            return;
+        }
+
+        // Verifica che un altro giocatore non stia già modificando questa costruzione
+        if (isConstructionBeingEdited(id)) {
+            EditingSession existingSession = getSessionForConstruction(id);
+            if (existingSession != null) {
+                String otherPlayerName = existingSession.getPlayer().getName().getString();
+                player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                        I18n.tr(player, "edit.already_in_use", id, otherPlayerName)));
+                return;
+            }
+        }
+
+        // Carica o crea la costruzione
+        Construction construction;
+        ConstructionRegistry registry = ConstructionRegistry.getInstance();
+
+        if (registry.exists(id)) {
+            construction = registry.get(id);
+        } else {
+            construction = new Construction(id, player.getUUID(), player.getName().getString());
+        }
+
+        // Avvia sessione di editing
+        EditingSession.startSession(player, construction);
+
+        // Invia sync al client
+        sendWireframeSync(player);
+        sendEditingInfo(player);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "edit.success", id)));
+    }
+
+    private static void handleGuiExit(ServerPlayer player) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.endSession(player);
+        Construction construction = session.getConstruction();
+
+        // Registra la costruzione nel registro (solo se ha blocchi)
+        if (construction.getBlockCount() > 0) {
+            ConstructionRegistry.getInstance().register(construction);
+        }
+
+        // Pulisci la selezione
+        SelectionManager.getInstance().clearSelection(player);
+
+        // Invia sync al client
+        sendEmptyWireframe(player);
+        sendEditingInfoEmpty(player);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "exit.success", construction.getId(), construction.getBlockCount())));
+    }
+
+    private static void handleGuiGive(ServerPlayer player) {
+        ItemStack hammerStack = new ItemStack(ModItems.CONSTRUCTION_HAMMER);
+
+        if (player.getInventory().add(hammerStack)) {
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                    I18n.tr(player, "give.success")));
+        } else {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "give.inventory_full")));
+        }
+    }
+
+    private static void handleGuiShot(ServerPlayer player, String constructionId, String title) {
+        if (constructionId.isEmpty()) {
+            // Use current editing session if no ID provided
+            EditingSession session = EditingSession.getSession(player);
+            if (session == null) {
+                player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                        I18n.tr(player, "shot.no_id")));
+                return;
+            }
+            constructionId = session.getConstruction().getId();
+        }
+
+        String screenshotTitle = (title != null && !title.isEmpty()) ? title : "Screenshot";
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "shot.in_editing", constructionId)));
+
+        sendScreenshotRequest(player, constructionId, screenshotTitle);
+    }
+
+    private static void handleGuiTitle(ServerPlayer player, String title) {
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        // Set title for player's language (default to "en")
+        String lang = I18n.getPlayerLanguage(player);
+        if (lang == null || lang.isEmpty()) {
+            lang = "en";
+        }
+
+        session.getConstruction().setTitle(lang, title);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "title.success", lang, title)));
+
+        // Update editing info on client
+        sendEditingInfo(player);
+    }
+
+    private static void handleGuiRename(ServerPlayer player, String newId) {
+        // Rename is complex - for now just inform user to use commands
+        player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+                "Rename is not supported via GUI yet. Use /struttura exit and /struttura edit <new_id>"));
+    }
+
+    // ===== Helper Methods =====
+
+    private static boolean isConstructionBeingEdited(String constructionId) {
+        return getSessionForConstruction(constructionId) != null;
+    }
+
+    private static EditingSession getSessionForConstruction(String constructionId) {
+        for (EditingSession session : EditingSession.getAllSessions()) {
+            if (session.getConstruction().getId().equals(constructionId)) {
+                return session;
+            }
+        }
+        return null;
+    }
+
+    private static Construction getConstructionIncludingEditing(String id) {
+        ConstructionRegistry registry = ConstructionRegistry.getInstance();
+        if (registry.exists(id)) {
+            return registry.get(id);
+        }
+        EditingSession session = getSessionForConstruction(id);
+        if (session != null) {
+            return session.getConstruction();
+        }
+        return null;
+    }
+
+    // ===== Editing Info Packet Methods =====
+
+    /**
+     * Invia le informazioni di editing al client.
+     */
+    public static void sendEditingInfo(ServerPlayer player) {
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            sendEditingInfoEmpty(player);
+            return;
+        }
+
+        Construction construction = session.getConstruction();
+        ConstructionBounds bounds = construction.getBounds();
+
+        String boundsStr = bounds.isValid()
+                ? bounds.getSizeX() + "x" + bounds.getSizeY() + "x" + bounds.getSizeZ()
+                : "0x0x0";
+
+        // Get title in player's language
+        String lang = I18n.getPlayerLanguage(player);
+        String title = construction.getTitle(lang);
+        if (title == null || title.isEmpty()) {
+            // Try English as fallback
+            title = construction.getTitle("en");
+            if (title == null) title = "";
+        }
+
+        int airCount = construction.getBlockCount() - construction.getSolidBlockCount();
+
+        EditingInfoPacket packet = new EditingInfoPacket(
+                true,
+                construction.getId(),
+                title,
+                construction.getBlockCount(),
+                construction.getSolidBlockCount(),
+                airCount,
+                boundsStr,
+                session.getMode().name()
+        );
+
+        ServerPlayNetworking.send(player, packet);
+    }
+
+    /**
+     * Invia un packet di editing vuoto (non in editing).
+     */
+    public static void sendEditingInfoEmpty(ServerPlayer player) {
+        ServerPlayNetworking.send(player, EditingInfoPacket.empty());
+    }
+
+    /**
+     * Invia la lista delle costruzioni al client.
+     */
+    public static void sendConstructionList(ServerPlayer player) {
+        List<ConstructionListPacket.ConstructionInfo> list = new ArrayList<>();
+
+        // Aggiungi tutte le costruzioni dal registry
+        for (Construction c : ConstructionRegistry.getInstance().getAll()) {
+            boolean isEditing = isConstructionBeingEdited(c.getId());
+            list.add(new ConstructionListPacket.ConstructionInfo(
+                    c.getId(),
+                    c.getAuthorName(),
+                    c.getBlockCount(),
+                    isEditing
+            ));
+        }
+
+        // Aggiungi quelle in editing che non sono ancora nel registry
+        for (EditingSession session : EditingSession.getAllSessions()) {
+            Construction c = session.getConstruction();
+            boolean alreadyInList = list.stream().anyMatch(info -> info.id().equals(c.getId()));
+            if (!alreadyInList) {
+                list.add(new ConstructionListPacket.ConstructionInfo(
+                        c.getId(),
+                        c.getAuthorName(),
+                        c.getBlockCount(),
+                        true
+                ));
+            }
+        }
+
+        ServerPlayNetworking.send(player, new ConstructionListPacket(list));
     }
 }

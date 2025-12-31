@@ -266,6 +266,9 @@ public class StrutturaCommand {
         // Invia sync wireframe al client
         NetworkHandler.sendWireframeSync(player);
 
+        // Invia info editing al client per la GUI
+        NetworkHandler.sendEditingInfo(player);
+
         source.sendSuccess(() -> Component.literal(I18n.tr(player, "edit.success", id)), false);
 
         return 1;
@@ -305,6 +308,9 @@ public class StrutturaCommand {
 
         // Invia sync wireframe vuoto al client
         NetworkHandler.sendEmptyWireframe(player);
+
+        // Invia stato editing vuoto al client per la GUI
+        NetworkHandler.sendEditingInfoEmpty(player);
 
         source.sendSuccess(() -> Component.literal(
             I18n.tr(player, "exit.success", construction.getId(), construction.getBlockCount())

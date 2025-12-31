@@ -4,7 +4,12 @@ import it.magius.struttura.architect.client.KeybindingHandler;
 import it.magius.struttura.architect.client.ModKeybindings;
 import it.magius.struttura.architect.client.ScreenshotCapture;
 import it.magius.struttura.architect.client.WireframeRenderer;
+import it.magius.struttura.architect.client.gui.PanelManager;
+import it.magius.struttura.architect.client.gui.StrutturaHud;
+import it.magius.struttura.architect.client.gui.panel.MainPanel;
 import it.magius.struttura.architect.network.BlockPositionsSyncPacket;
+import it.magius.struttura.architect.network.ConstructionListPacket;
+import it.magius.struttura.architect.network.EditingInfoPacket;
 import it.magius.struttura.architect.network.ScreenshotRequestPacket;
 import it.magius.struttura.architect.network.WireframeSyncPacket;
 import net.fabricmc.api.ClientModInitializer;
@@ -13,6 +18,9 @@ import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Environment(EnvType.CLIENT)
 public class ArchitectClient implements ClientModInitializer {
@@ -55,6 +63,45 @@ public class ArchitectClient implements ClientModInitializer {
             });
         });
 
+        // Registra il receiver per le informazioni di editing
+        ClientPlayNetworking.registerGlobalReceiver(EditingInfoPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                PanelManager pm = PanelManager.getInstance();
+                if (packet.isEditing()) {
+                    pm.updateEditingInfo(
+                            packet.constructionId(),
+                            packet.title(),
+                            packet.blockCount(),
+                            packet.solidBlockCount(),
+                            packet.airBlockCount(),
+                            packet.bounds(),
+                            packet.mode()
+                    );
+                } else {
+                    pm.clearEditingInfo();
+                }
+                Architect.LOGGER.debug("Received editing info: editing={}, id={}",
+                        packet.isEditing(), packet.constructionId());
+            });
+        });
+
+        // Registra il receiver per la lista costruzioni
+        ClientPlayNetworking.registerGlobalReceiver(ConstructionListPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                List<MainPanel.ConstructionInfo> list = new ArrayList<>();
+                for (ConstructionListPacket.ConstructionInfo info : packet.constructions()) {
+                    list.add(new MainPanel.ConstructionInfo(
+                            info.id(),
+                            info.authorName(),
+                            info.blockCount(),
+                            info.isBeingEdited()
+                    ));
+                }
+                PanelManager.getInstance().getMainPanel().updateConstructionList(list);
+                Architect.LOGGER.debug("Received construction list: {} items", list.size());
+            });
+        });
+
         // Registra l'evento per la cattura screenshot (deve essere su render tick)
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             ScreenshotCapture.onRenderTick();
@@ -66,10 +113,14 @@ public class ArchitectClient implements ClientModInitializer {
         // Inizializza il renderer wireframe (registra WorldRenderEvents)
         WireframeRenderer.init();
 
+        // Inizializza l'HUD (registra HudRenderCallback)
+        StrutturaHud.init();
+
         // Pulisci i dati quando ci disconnettiamo
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             WireframeRenderer.reset();
-            Architect.LOGGER.debug("Disconnected, wireframe data reset");
+            PanelManager.getInstance().reset();
+            Architect.LOGGER.debug("Disconnected, wireframe and GUI data reset");
         });
 
         Architect.LOGGER.info("STRUTTURA: Architect client initialized");

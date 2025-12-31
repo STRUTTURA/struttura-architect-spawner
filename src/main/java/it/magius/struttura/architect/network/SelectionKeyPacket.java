@@ -23,7 +23,8 @@ public record SelectionKeyPacket(Action action) implements CustomPacketPayload {
         POS2,
         CLEAR,
         APPLY,
-        APPLYALL
+        APPLYALL,
+        MODE_TOGGLE
     }
 
     private static SelectionKeyPacket read(FriendlyByteBuf buf) {
