@@ -247,6 +247,28 @@ public class ConstructionStorage {
         json.addProperty("authorId", construction.getAuthorId().toString());
         json.addProperty("authorName", construction.getAuthorName());
         json.addProperty("createdAt", construction.getCreatedAt().toString());
+
+        // Titoli multilingua
+        JsonObject titles = new JsonObject();
+        for (var entry : construction.getTitles().entrySet()) {
+            titles.addProperty(entry.getKey(), entry.getValue());
+        }
+        json.add("titles", titles);
+
+        // Descrizioni brevi multilingua
+        JsonObject shortDescriptions = new JsonObject();
+        for (var entry : construction.getShortDescriptions().entrySet()) {
+            shortDescriptions.addProperty(entry.getKey(), entry.getValue());
+        }
+        json.add("short_descriptions", shortDescriptions);
+
+        // Descrizioni complete multilingua
+        JsonObject descriptions = new JsonObject();
+        for (var entry : construction.getDescriptions().entrySet()) {
+            descriptions.addProperty(entry.getKey(), entry.getValue());
+        }
+        json.add("descriptions", descriptions);
+
         json.addProperty("blockCount", construction.getBlockCount());
         json.addProperty("solidBlockCount", construction.getSolidBlockCount());
 
@@ -284,7 +306,49 @@ public class ConstructionStorage {
             String authorName = json.get("authorName").getAsString();
             Instant createdAt = Instant.parse(json.get("createdAt").getAsString());
 
-            return new Construction(id, authorId, authorName, createdAt);
+            // Carica titoli multilingua
+            Map<String, String> titles = new HashMap<>();
+            if (json.has("titles") && json.get("titles").isJsonObject()) {
+                JsonObject titlesObj = json.getAsJsonObject("titles");
+                for (var entry : titlesObj.entrySet()) {
+                    if (!entry.getValue().isJsonNull()) {
+                        titles.put(entry.getKey(), entry.getValue().getAsString());
+                    }
+                }
+            } else if (json.has("title") && !json.get("title").isJsonNull()) {
+                // Retrocompatibilità: vecchio formato con singolo title -> usa "en"
+                titles.put("en", json.get("title").getAsString());
+            }
+
+            // Carica descrizioni brevi multilingua
+            Map<String, String> shortDescriptions = new HashMap<>();
+            if (json.has("short_descriptions") && json.get("short_descriptions").isJsonObject()) {
+                JsonObject shortDescObj = json.getAsJsonObject("short_descriptions");
+                for (var entry : shortDescObj.entrySet()) {
+                    if (!entry.getValue().isJsonNull()) {
+                        shortDescriptions.put(entry.getKey(), entry.getValue().getAsString());
+                    }
+                }
+            } else if (json.has("description") && !json.get("description").isJsonNull()) {
+                // Retrocompatibilità: vecchio formato con singola description -> metti in short_descriptions
+                String desc = json.get("description").getAsString();
+                if (!desc.isEmpty()) {
+                    shortDescriptions.put("en", desc);
+                }
+            }
+
+            // Carica descrizioni complete multilingua
+            Map<String, String> descriptions = new HashMap<>();
+            if (json.has("descriptions") && json.get("descriptions").isJsonObject()) {
+                JsonObject descriptionsObj = json.getAsJsonObject("descriptions");
+                for (var entry : descriptionsObj.entrySet()) {
+                    if (!entry.getValue().isJsonNull()) {
+                        descriptions.put(entry.getKey(), entry.getValue().getAsString());
+                    }
+                }
+            }
+
+            return new Construction(id, authorId, authorName, createdAt, titles, shortDescriptions, descriptions);
         }
     }
 

@@ -130,8 +130,39 @@ public class StrutturaCommand {
                         .executes(StrutturaCommand::executePush)
                     )
                 )
+                .then(Commands.literal("title")
+                    .then(Commands.argument("lang", StringArgumentType.word())
+                        .suggests(LANGUAGE_SUGGESTIONS)
+                        .then(Commands.argument("text", StringArgumentType.greedyString())
+                            .executes(StrutturaCommand::executeTitle)
+                        )
+                    )
+                )
+                .then(Commands.literal("desc")
+                    .then(Commands.argument("lang", StringArgumentType.word())
+                        .suggests(LANGUAGE_SUGGESTIONS)
+                        .then(Commands.argument("text", StringArgumentType.greedyString())
+                            .executes(StrutturaCommand::executeDesc)
+                        )
+                    )
+                )
+                .then(Commands.literal("desc_full")
+                    .then(Commands.argument("lang", StringArgumentType.word())
+                        .suggests(LANGUAGE_SUGGESTIONS)
+                        .then(Commands.argument("text", StringArgumentType.greedyString())
+                            .executes(StrutturaCommand::executeDescFull)
+                        )
+                    )
+                )
         );
     }
+
+    // Suggerimenti per i codici lingua supportati
+    private static final SuggestionProvider<CommandSourceStack> LANGUAGE_SUGGESTIONS =
+        (context, builder) -> SharedSuggestionProvider.suggest(
+            java.util.List.of("en", "it", "de", "fr", "es", "pt", "ru", "zh", "ja", "ko"),
+            builder
+        );
 
     // Suggerimenti per gli ID dei blocchi (solo quelli presenti nella costruzione corrente)
     private static final SuggestionProvider<CommandSourceStack> BLOCK_ID_SUGGESTIONS =
@@ -306,6 +337,37 @@ public class StrutturaCommand {
         StringBuilder info = new StringBuilder();
         info.append(I18n.tr(player, "info.header"));
         info.append("\n").append(I18n.tr(player, "info.construction", construction.getId()));
+
+        // Mostra titoli multilingua
+        if (construction.getTitles().isEmpty()) {
+            info.append("\n").append(I18n.tr(player, "info.titles", I18n.tr(player, "info.not_set")));
+        } else {
+            info.append("\n").append(I18n.tr(player, "info.titles_header"));
+            for (var entry : construction.getTitles().entrySet()) {
+                info.append("\n  ").append(entry.getKey()).append(": ").append(entry.getValue());
+            }
+        }
+
+        // Mostra descrizioni brevi multilingua
+        if (construction.getShortDescriptions().isEmpty()) {
+            info.append("\n").append(I18n.tr(player, "info.short_descriptions", I18n.tr(player, "info.not_set")));
+        } else {
+            info.append("\n").append(I18n.tr(player, "info.short_descriptions_header"));
+            for (var entry : construction.getShortDescriptions().entrySet()) {
+                info.append("\n  ").append(entry.getKey()).append(": ").append(entry.getValue());
+            }
+        }
+
+        // Mostra descrizioni complete multilingua
+        if (construction.getDescriptions().isEmpty()) {
+            info.append("\n").append(I18n.tr(player, "info.descriptions", I18n.tr(player, "info.not_set")));
+        } else {
+            info.append("\n").append(I18n.tr(player, "info.descriptions_header"));
+            for (var entry : construction.getDescriptions().entrySet()) {
+                info.append("\n  ").append(entry.getKey()).append(": ").append(entry.getValue());
+            }
+        }
+
         info.append("\n").append(I18n.tr(player, "info.mode", session.getMode().name()));
         info.append("\n").append(I18n.tr(player, "info.blocks_tracked", construction.getBlockCount()));
         info.append("\n").append(I18n.tr(player, "info.blocks_solid", construction.getSolidBlockCount()));
@@ -859,6 +921,12 @@ public class StrutturaCommand {
             return 0;
         }
 
+        // Verifica che la costruzione abbia un titolo (obbligatorio per l'API)
+        if (!construction.hasValidTitle()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "push.no_title", id)));
+            return 0;
+        }
+
         // Messaggio di invio
         source.sendSuccess(() -> Component.literal(
             I18n.tr(player, "push.sending", id, construction.getBlockCount())
@@ -1132,5 +1200,97 @@ public class StrutturaCommand {
                 I18n.tr(player, "select.complete", dims[0], dims[1], dims[2], selection.getVolume())
             ), false);
         }
+    }
+
+    // ===== Comandi Title e Desc =====
+
+    private static int executeTitle(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        if (!EditingSession.hasSession(player)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "command.not_editing_hint")));
+            return 0;
+        }
+
+        String lang = StringArgumentType.getString(ctx, "lang").toLowerCase();
+        String text = StringArgumentType.getString(ctx, "text");
+        EditingSession session = EditingSession.getSession(player);
+        Construction construction = session.getConstruction();
+
+        construction.setTitle(lang, text);
+
+        Architect.LOGGER.info("Player {} set title [{}] for construction {}: {}",
+            player.getName().getString(), lang, construction.getId(), text);
+
+        source.sendSuccess(() -> Component.literal(
+            I18n.tr(player, "title.success", lang, text)
+        ), false);
+
+        return 1;
+    }
+
+    private static int executeDesc(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        if (!EditingSession.hasSession(player)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "command.not_editing_hint")));
+            return 0;
+        }
+
+        String lang = StringArgumentType.getString(ctx, "lang").toLowerCase();
+        String text = StringArgumentType.getString(ctx, "text");
+        EditingSession session = EditingSession.getSession(player);
+        Construction construction = session.getConstruction();
+
+        construction.setShortDescription(lang, text);
+
+        Architect.LOGGER.info("Player {} set short description [{}] for construction {}: {}",
+            player.getName().getString(), lang, construction.getId(), text);
+
+        source.sendSuccess(() -> Component.literal(
+            I18n.tr(player, "desc.success", lang, text)
+        ), false);
+
+        return 1;
+    }
+
+    private static int executeDescFull(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        if (!EditingSession.hasSession(player)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "command.not_editing_hint")));
+            return 0;
+        }
+
+        String lang = StringArgumentType.getString(ctx, "lang").toLowerCase();
+        String text = StringArgumentType.getString(ctx, "text");
+        EditingSession session = EditingSession.getSession(player);
+        Construction construction = session.getConstruction();
+
+        construction.setDescription(lang, text);
+
+        Architect.LOGGER.info("Player {} set full description [{}] for construction {}: {}",
+            player.getName().getString(), lang, construction.getId(), text);
+
+        source.sendSuccess(() -> Component.literal(
+            I18n.tr(player, "desc_full.success", lang, text)
+        ), false);
+
+        return 1;
     }
 }

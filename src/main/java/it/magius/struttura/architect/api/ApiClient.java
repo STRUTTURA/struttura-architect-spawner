@@ -129,11 +129,27 @@ public class ApiClient {
     private static JsonObject buildPayload(Construction construction) throws IOException {
         JsonObject json = new JsonObject();
 
-        // Metadata
-        json.addProperty("id", construction.getId());
-        json.addProperty("authorId", construction.getAuthorId().toString());
-        json.addProperty("authorName", construction.getAuthorName());
-        json.addProperty("createdAt", construction.getCreatedAt().toString());
+        // Titoli multilingua: { "en": "Medieval Tower", "it": "Torre Medievale" }
+        JsonObject titles = new JsonObject();
+        for (var entry : construction.getTitles().entrySet()) {
+            titles.addProperty(entry.getKey(), entry.getValue());
+        }
+        json.add("titles", titles);
+
+        // Descrizioni brevi multilingua: { "en": "A defensive tower", "it": "Una torre difensiva" }
+        JsonObject shortDescriptions = new JsonObject();
+        for (var entry : construction.getShortDescriptions().entrySet()) {
+            shortDescriptions.addProperty(entry.getKey(), entry.getValue());
+        }
+        json.add("short_descriptions", shortDescriptions);
+
+        // Descrizioni complete multilingua
+        JsonObject descriptions = new JsonObject();
+        for (var entry : construction.getDescriptions().entrySet()) {
+            descriptions.addProperty(entry.getKey(), entry.getValue());
+        }
+        json.add("descriptions", descriptions);
+
         json.addProperty("blockCount", construction.getBlockCount());
         json.addProperty("solidBlockCount", construction.getSolidBlockCount());
 
