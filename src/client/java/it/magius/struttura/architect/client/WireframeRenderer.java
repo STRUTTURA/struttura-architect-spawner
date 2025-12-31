@@ -25,11 +25,14 @@ public class WireframeRenderer {
     // Colore fucsia per il wireframe costruzione (packed ARGB)
     private static final int CONSTRUCTION_COLOR = 0xFFFF00FF; // Alpha, Red, Green, Blue
 
+    // Colore rosso per il wireframe dei singoli blocchi (packed ARGB)
+    private static final int BLOCK_COLOR = 0xFFFF0000; // Rosso
+
     // Colore ciano per il wireframe selezione (packed ARGB)
     private static final int SELECTION_COLOR = 0xFF00FFFF;
 
-    // Inset per l'overlay dei blocchi (per non sovrapporsi al wireframe)
-    private static final double BLOCK_INSET = 0.01;
+    // Outset per l'overlay dei blocchi (leggermente più grande del blocco per essere sempre visibile)
+    private static final double BLOCK_OUTSET = 0.01;
 
     // Dati correnti (aggiornati dal packet)
     private static WireframeData.ConstructionWireframe constructionData = WireframeData.ConstructionWireframe.empty();
@@ -60,39 +63,29 @@ public class WireframeRenderer {
 
         poseStack.pushPose();
 
-        // Renderizza wireframe per i blocchi overlay
+        // Renderizza wireframe per i blocchi overlay (colore ROSSO, leggermente più grande del blocco)
         if (constructionData.active && hasBlocks) {
             for (BlockPos pos : blockPositions) {
                 AABB box = new AABB(
-                    pos.getX() + BLOCK_INSET, pos.getY() + BLOCK_INSET, pos.getZ() + BLOCK_INSET,
-                    pos.getX() + 1 - BLOCK_INSET, pos.getY() + 1 - BLOCK_INSET, pos.getZ() + 1 - BLOCK_INSET
+                    pos.getX() - BLOCK_OUTSET, pos.getY() - BLOCK_OUTSET, pos.getZ() - BLOCK_OUTSET,
+                    pos.getX() + 1 + BLOCK_OUTSET, pos.getY() + 1 + BLOCK_OUTSET, pos.getZ() + 1 + BLOCK_OUTSET
                 );
-                VoxelShape shape = Shapes.create(box);
-                ShapeRenderer.renderShape(
-                    poseStack, lineBuffer, shape,
-                    -cameraPos.x, -cameraPos.y, -cameraPos.z,
-                    CONSTRUCTION_COLOR, 1.0f
-                );
+                renderShape(poseStack, lineBuffer, box, cameraPos, BLOCK_COLOR);
             }
         }
 
-        // Renderizza wireframe costruzione (se attivo)
+        // Renderizza wireframe costruzione (se attivo, leggermente più grande per essere sempre visibile)
         if (constructionData.active) {
             BlockPos min = constructionData.min;
             BlockPos max = constructionData.max;
             AABB box = new AABB(
-                min.getX(), min.getY(), min.getZ(),
-                max.getX() + 1, max.getY() + 1, max.getZ() + 1
+                min.getX() - BLOCK_OUTSET, min.getY() - BLOCK_OUTSET, min.getZ() - BLOCK_OUTSET,
+                max.getX() + 1 + BLOCK_OUTSET, max.getY() + 1 + BLOCK_OUTSET, max.getZ() + 1 + BLOCK_OUTSET
             );
-            VoxelShape shape = Shapes.create(box);
-            ShapeRenderer.renderShape(
-                poseStack, lineBuffer, shape,
-                -cameraPos.x, -cameraPos.y, -cameraPos.z,
-                CONSTRUCTION_COLOR, 1.0f
-            );
+            renderShape(poseStack, lineBuffer, box, cameraPos, CONSTRUCTION_COLOR);
         }
 
-        // Renderizza wireframe selezione (se ha entrambe le posizioni)
+        // Renderizza wireframe selezione (se ha entrambe le posizioni, leggermente più grande per essere sempre visibile)
         if (selectionData.active && selectionData.hasPos1 && selectionData.hasPos2) {
             BlockPos pos1 = selectionData.pos1;
             BlockPos pos2 = selectionData.pos2;
@@ -103,18 +96,26 @@ public class WireframeRenderer {
             int maxY = Math.max(pos1.getY(), pos2.getY());
             int maxZ = Math.max(pos1.getZ(), pos2.getZ());
             AABB box = new AABB(
-                minX, minY, minZ,
-                maxX + 1, maxY + 1, maxZ + 1
+                minX - BLOCK_OUTSET, minY - BLOCK_OUTSET, minZ - BLOCK_OUTSET,
+                maxX + 1 + BLOCK_OUTSET, maxY + 1 + BLOCK_OUTSET, maxZ + 1 + BLOCK_OUTSET
             );
-            VoxelShape shape = Shapes.create(box);
-            ShapeRenderer.renderShape(
-                poseStack, lineBuffer, shape,
-                -cameraPos.x, -cameraPos.y, -cameraPos.z,
-                SELECTION_COLOR, 1.0f
-            );
+            renderShape(poseStack, lineBuffer, box, cameraPos, SELECTION_COLOR);
         }
 
         poseStack.popPose();
+    }
+
+    /**
+     * Renderizza una forma wireframe.
+     */
+    private static void renderShape(PoseStack poseStack, VertexConsumer lineBuffer,
+            AABB box, Vec3 cameraPos, int color) {
+        VoxelShape shape = Shapes.create(box);
+        ShapeRenderer.renderShape(
+            poseStack, lineBuffer, shape,
+            -cameraPos.x, -cameraPos.y, -cameraPos.z,
+            color, 1.0f
+        );
     }
 
     /**
