@@ -1,0 +1,205 @@
+package it.magius.struttura.architect.item;
+
+import it.magius.struttura.architect.i18n.I18n;
+import it.magius.struttura.architect.network.NetworkHandler;
+import it.magius.struttura.architect.registry.ConstructionRegistry;
+import it.magius.struttura.architect.session.EditingSession;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.TooltipDisplay;
+import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+
+import java.util.function.Consumer;
+
+/**
+ * Martello da Costruzione - Item principale per l'editing delle costruzioni.
+ *
+ * Comportamento:
+ * - NON in editing:
+ *   - Click destro su aria: apre GUI principale
+ *   - Click destro su blocco di costruzione: entra in quella costruzione
+ *   - Click destro su blocco normale: apre GUI principale
+ *   - Shift + Click destro su aria: apre GUI "Nuova Costruzione"
+ *
+ * - IN editing:
+ *   - Click destro su aria: apre GUI info costruzione
+ *   - Click destro su blocco IN costruzione: RIMUOVE dalla costruzione
+ *   - Click destro su blocco NON in costruzione: AGGIUNGE alla costruzione
+ *   - CTRL + Click destro su aria: apre GUI info costruzione (TODO)
+ */
+public class ConstructionHammerItem extends Item {
+
+    public ConstructionHammerItem(Properties properties) {
+        super(properties);
+    }
+
+    @Override
+    public InteractionResult use(Level level, Player player, InteractionHand hand) {
+        if (level.isClientSide()) {
+            return InteractionResult.SUCCESS;
+        }
+
+        ServerPlayer serverPlayer = (ServerPlayer) player;
+        EditingSession session = EditingSession.getSession(player.getUUID());
+
+        if (player.isShiftKeyDown() && session == null) {
+            // Shift + Click destro in aria (non in editing): apri GUI nuova costruzione
+            // TODO: Aprire GUI nuova costruzione (Fase 2)
+            serverPlayer.sendSystemMessage(Component.literal("§e[Struttura] §fGUI Nuova Costruzione - Coming soon..."));
+        } else {
+            // Click destro in aria: apri GUI principale
+            // TODO: Aprire GUI principale (Fase 2)
+            if (session != null) {
+                serverPlayer.sendSystemMessage(Component.literal("§e[Struttura] §fGUI Info Costruzione - Coming soon..."));
+            } else {
+                serverPlayer.sendSystemMessage(Component.literal("§e[Struttura] §fGUI Principale - Coming soon..."));
+            }
+        }
+
+        return InteractionResult.SUCCESS;
+    }
+
+    @Override
+    public InteractionResult useOn(UseOnContext context) {
+        Level level = context.getLevel();
+        if (level.isClientSide()) {
+            return InteractionResult.SUCCESS;
+        }
+
+        ServerPlayer player = (ServerPlayer) context.getPlayer();
+        if (player == null) {
+            return InteractionResult.PASS;
+        }
+
+        BlockPos clickedPos = context.getClickedPos();
+        BlockState clickedState = level.getBlockState(clickedPos);
+        EditingSession session = EditingSession.getSession(player.getUUID());
+
+        if (session == null) {
+            // Non in editing: controlla se il blocco appartiene a una costruzione
+            return handleClickOutsideEditing(player, clickedPos);
+        } else {
+            // In editing: gestione blocchi
+            return handleClickInEditing(player, clickedPos, clickedState, session);
+        }
+    }
+
+    private InteractionResult handleClickOutsideEditing(ServerPlayer player, BlockPos clickedPos) {
+        // Cerca se il blocco appartiene a una costruzione esistente
+        var registry = ConstructionRegistry.getInstance();
+
+        for (String id : registry.getAllIds()) {
+            var construction = registry.get(id);
+            if (construction != null && construction.containsBlock(clickedPos)) {
+                // Entra nella costruzione
+                enterConstruction(player, id);
+                return InteractionResult.SUCCESS;
+            }
+        }
+
+        // Blocco normale: apri GUI principale
+        // TODO: Aprire GUI principale (Fase 2)
+        player.sendSystemMessage(Component.literal("§e[Struttura] §fGUI Principale - Coming soon..."));
+        return InteractionResult.SUCCESS;
+    }
+
+    private InteractionResult handleClickInEditing(ServerPlayer player, BlockPos clickedPos,
+            BlockState clickedState, EditingSession session) {
+
+        var currentConstruction = session.getConstruction();
+        boolean isInCurrentConstruction = currentConstruction.containsBlock(clickedPos);
+
+        if (isInCurrentConstruction) {
+            // Blocco IN costruzione corrente: RIMUOVI
+            currentConstruction.removeBlock(clickedPos);
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "block.removed", formatPos(clickedPos))));
+            NetworkHandler.sendWireframeSync(player);
+        } else {
+            // Controlla se il blocco appartiene a un'altra costruzione
+            var registry = ConstructionRegistry.getInstance();
+            String otherConstructionId = null;
+
+            for (String id : registry.getAllIds()) {
+                if (id.equals(currentConstruction.getId())) {
+                    continue; // Salta la costruzione corrente
+                }
+                var otherConstruction = registry.get(id);
+                if (otherConstruction != null && otherConstruction.containsBlock(clickedPos)) {
+                    otherConstructionId = id;
+                    break;
+                }
+            }
+
+            if (otherConstructionId != null) {
+                // Blocco appartiene a un'altra costruzione: esci dalla corrente e entra nell'altra
+                exitAndEnterConstruction(player, session, otherConstructionId);
+            } else {
+                // Blocco NON in nessuna costruzione: AGGIUNGI alla corrente
+                if (!clickedState.isAir()) {
+                    currentConstruction.addBlock(clickedPos, clickedState);
+                    player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                            I18n.tr(player, "block.added", formatPos(clickedPos))));
+                    NetworkHandler.sendWireframeSync(player);
+                }
+            }
+        }
+
+        return InteractionResult.SUCCESS;
+    }
+
+    private void exitAndEnterConstruction(ServerPlayer player, EditingSession currentSession, String newConstructionId) {
+        var currentConstruction = currentSession.getConstruction();
+
+        // Salva e termina la sessione corrente
+        ConstructionRegistry.getInstance().register(currentConstruction);
+        EditingSession.endSession(player);
+
+        player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+                I18n.tr(player, "exit.success", currentConstruction.getId(), currentConstruction.getBlockCount())));
+
+        // Entra nella nuova costruzione
+        enterConstruction(player, newConstructionId);
+    }
+
+    private void enterConstruction(ServerPlayer player, String id) {
+        var registry = ConstructionRegistry.getInstance();
+        var construction = registry.get(id);
+
+        if (construction == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "error.construction_not_found", id)));
+            return;
+        }
+
+        EditingSession session = EditingSession.startSession(player, construction);
+        NetworkHandler.sendWireframeSync(player);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "enter.success", id)));
+    }
+
+    @Override
+    public void appendHoverText(ItemStack stack, TooltipContext context, TooltipDisplay display,
+            Consumer<Component> tooltip, TooltipFlag flag) {
+        super.appendHoverText(stack, context, display, tooltip, flag);
+
+        tooltip.accept(Component.literal(""));
+        tooltip.accept(Component.literal("§7Durante editing:"));
+        tooltip.accept(Component.literal("§e[Click destro]§f su blocco in costruzione: rimuovi"));
+        tooltip.accept(Component.literal("§e[Click destro]§f su altro blocco: aggiungi"));
+    }
+
+    private String formatPos(BlockPos pos) {
+        return pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
+    }
+}

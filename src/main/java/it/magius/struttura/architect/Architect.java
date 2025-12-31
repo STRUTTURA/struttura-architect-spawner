@@ -5,10 +5,13 @@ import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
+import it.magius.struttura.architect.registry.ModItems;
+import it.magius.struttura.architect.session.EditingSession;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +30,9 @@ public class Architect implements ModInitializer {
 
 		// Inizializza il sistema i18n
 		I18n.init();
+
+		// Registra gli items
+		ModItems.init();
 
 		// Registra i packet di rete
 		NetworkHandler.registerServer();
@@ -58,6 +64,30 @@ public class Architect implements ModInitializer {
 			if (world.dimension() == net.minecraft.world.level.Level.OVERWORLD) {
 				LOGGER.info("World unloading, clearing construction registry");
 				ConstructionRegistry.getInstance().clear();
+			}
+		});
+
+		// Quando un giocatore si connette, ri-sincronizza il wireframe se aveva una sessione attiva
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+			var player = handler.getPlayer();
+			EditingSession session = EditingSession.getSession(player.getUUID());
+			if (session != null) {
+				// Il giocatore aveva una sessione attiva, ri-sincronizza il wireframe
+				LOGGER.info("Player {} rejoined with active editing session, syncing wireframe", player.getName().getString());
+				NetworkHandler.sendWireframeSync(player);
+			}
+		});
+
+		// Quando un giocatore si disconnette, termina la sessione di editing
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+			var player = handler.getPlayer();
+			EditingSession session = EditingSession.getSession(player.getUUID());
+			if (session != null) {
+				// Registra la costruzione (questo la salva anche su disco) e termina la sessione
+				LOGGER.info("Player {} disconnected, saving and ending editing session for {}",
+					player.getName().getString(), session.getConstruction().getId());
+				ConstructionRegistry.getInstance().register(session.getConstruction());
+				EditingSession.endSession(player);
 			}
 		});
 

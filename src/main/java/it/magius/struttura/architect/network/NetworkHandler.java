@@ -36,7 +36,6 @@ public class NetworkHandler {
         PayloadTypeRegistry.playS2C().register(ScreenshotRequestPacket.TYPE, ScreenshotRequestPacket.STREAM_CODEC);
         // Registra il packet per ricevere i dati dello screenshot (C2S)
         PayloadTypeRegistry.playC2S().register(ScreenshotDataPacket.TYPE, ScreenshotDataPacket.STREAM_CODEC);
-
         // Registra il receiver per i dati dello screenshot
         ServerPlayNetworking.registerGlobalReceiver(ScreenshotDataPacket.TYPE, NetworkHandler::handleScreenshotData);
 
@@ -203,4 +202,5 @@ public class NetworkHandler {
             ));
         }
     }
+
 }

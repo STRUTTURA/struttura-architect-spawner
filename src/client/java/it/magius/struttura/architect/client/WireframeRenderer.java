@@ -163,4 +163,18 @@ public class WireframeRenderer {
         selectionData = WireframeData.SelectionWireframe.empty();
         blockPositions = new ArrayList<>();
     }
+
+    /**
+     * Controlla se il wireframe della costruzione è attivo.
+     */
+    public static boolean isConstructionActive() {
+        return constructionData.active;
+    }
+
+    /**
+     * Controlla se il wireframe della selezione è attivo.
+     */
+    public static boolean isSelectionActive() {
+        return selectionData.active;
+    }
 }

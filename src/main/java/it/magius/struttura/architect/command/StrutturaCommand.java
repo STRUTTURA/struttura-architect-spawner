@@ -10,6 +10,7 @@ import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
+import it.magius.struttura.architect.registry.ModItems;
 import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
 import net.minecraft.commands.CommandSourceStack;
@@ -20,6 +21,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.Collection;
@@ -165,6 +167,9 @@ public class StrutturaCommand {
                             .executes(StrutturaCommand::executeShotWithIdAndTitle)
                         )
                     )
+                )
+                .then(Commands.literal("give")
+                    .executes(StrutturaCommand::executeGive)
                 )
         );
     }
@@ -1389,5 +1394,32 @@ public class StrutturaCommand {
         NetworkHandler.sendScreenshotRequest(player, constructionId, screenshotTitle);
 
         return 1;
+    }
+
+    /**
+     * Esegue /struttura give - da' il Martello da Costruzione al giocatore.
+     */
+    private static int executeGive(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Crea l'item e aggiungilo all'inventario
+        ItemStack hammerStack = new ItemStack(ModItems.CONSTRUCTION_HAMMER);
+
+        if (player.getInventory().add(hammerStack)) {
+            source.sendSuccess(() -> Component.literal(
+                "§a[Struttura] §f" + I18n.tr(player, "give.success")
+            ), false);
+            return 1;
+        } else {
+            source.sendFailure(Component.literal(
+                "§c[Struttura] §f" + I18n.tr(player, "give.inventory_full")
+            ));
+            return 0;
+        }
     }
 }
