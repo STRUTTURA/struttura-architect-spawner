@@ -1,6 +1,8 @@
 package it.magius.struttura.architect.network;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.api.ApiClient;
+import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.selection.SelectionManager;
@@ -8,6 +10,8 @@ import it.magius.struttura.architect.session.EditingSession;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -28,6 +32,14 @@ public class NetworkHandler {
         PayloadTypeRegistry.playS2C().register(WireframeSyncPacket.TYPE, WireframeSyncPacket.STREAM_CODEC);
         // Registra il packet per le posizioni dei blocchi (S2C)
         PayloadTypeRegistry.playS2C().register(BlockPositionsSyncPacket.TYPE, BlockPositionsSyncPacket.STREAM_CODEC);
+        // Registra il packet per richiedere uno screenshot (S2C)
+        PayloadTypeRegistry.playS2C().register(ScreenshotRequestPacket.TYPE, ScreenshotRequestPacket.STREAM_CODEC);
+        // Registra il packet per ricevere i dati dello screenshot (C2S)
+        PayloadTypeRegistry.playC2S().register(ScreenshotDataPacket.TYPE, ScreenshotDataPacket.STREAM_CODEC);
+
+        // Registra il receiver per i dati dello screenshot
+        ServerPlayNetworking.registerGlobalReceiver(ScreenshotDataPacket.TYPE, NetworkHandler::handleScreenshotData);
+
         Architect.LOGGER.info("Registered network packets");
     }
 
@@ -130,5 +142,65 @@ public class NetworkHandler {
 
         Architect.LOGGER.debug("Sent block positions to {}: {} solid, {} air",
             player.getName().getString(), solidBlocks.size(), airBlocks.size());
+    }
+
+    /**
+     * Invia una richiesta di screenshot al client.
+     */
+    public static void sendScreenshotRequest(ServerPlayer player, String constructionId, String title) {
+        ScreenshotRequestPacket packet = new ScreenshotRequestPacket(constructionId, title);
+        ServerPlayNetworking.send(player, packet);
+        Architect.LOGGER.debug("Sent screenshot request to {} for construction {}",
+            player.getName().getString(), constructionId);
+    }
+
+    /**
+     * Gestisce i dati dello screenshot ricevuti dal client.
+     */
+    private static void handleScreenshotData(ScreenshotDataPacket packet, ServerPlayNetworking.Context context) {
+        ServerPlayer player = context.player();
+        String constructionId = packet.constructionId();
+        String title = packet.title();
+        byte[] imageData = packet.imageData();
+
+        Architect.LOGGER.info("Received screenshot data from {} for {}: {} bytes",
+            player.getName().getString(), constructionId, imageData.length);
+
+        // Genera un nome file unico basato sul timestamp
+        String filename = "screenshot_" + System.currentTimeMillis() + ".jpg";
+
+        // Messaggio di caricamento
+        player.sendSystemMessage(Component.literal(
+            I18n.tr(player, "shot.sending", constructionId)
+        ));
+
+        // Cattura il server per il callback sul main thread
+        var server = ((ServerLevel) player.level()).getServer();
+
+        // Upload asincrono al server API
+        boolean started = ApiClient.uploadScreenshot(constructionId, imageData, filename, title, response -> {
+            // Callback eseguito su thread async, schedula sul main thread
+            server.execute(() -> {
+                if (response.success()) {
+                    player.sendSystemMessage(Component.literal(
+                        I18n.tr(player, "shot.success", constructionId, response.message())
+                    ));
+                    Architect.LOGGER.info("Screenshot upload successful for {}: {} - {}",
+                        constructionId, response.statusCode(), response.message());
+                } else {
+                    player.sendSystemMessage(Component.literal(
+                        I18n.tr(player, "shot.failed", constructionId, response.message())
+                    ));
+                    Architect.LOGGER.warn("Screenshot upload failed for {}: {} - {}",
+                        constructionId, response.statusCode(), response.message());
+                }
+            });
+        });
+
+        if (!started) {
+            player.sendSystemMessage(Component.literal(
+                I18n.tr(player, "push.request_in_progress")
+            ));
+        }
     }
 }

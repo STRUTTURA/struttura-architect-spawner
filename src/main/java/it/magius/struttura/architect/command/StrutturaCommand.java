@@ -154,6 +154,18 @@ public class StrutturaCommand {
                         )
                     )
                 )
+                .then(Commands.literal("shot")
+                    // In editing mode: /struttura shot [title]
+                    .executes(StrutturaCommand::executeShotInEditing)
+                    // Outside editing mode: /struttura shot <id> [title]
+                    .then(Commands.argument("id", StringArgumentType.string())
+                        .suggests(CONSTRUCTION_ID_SUGGESTIONS)
+                        .executes(StrutturaCommand::executeShotWithId)
+                        .then(Commands.argument("title", StringArgumentType.greedyString())
+                            .executes(StrutturaCommand::executeShotWithIdAndTitle)
+                        )
+                    )
+                )
         );
     }
 
@@ -1290,6 +1302,91 @@ public class StrutturaCommand {
         source.sendSuccess(() -> Component.literal(
             I18n.tr(player, "desc_full.success", lang, text)
         ), false);
+
+        return 1;
+    }
+
+    // ===== Comando Shot =====
+
+    /**
+     * Esegue /struttura shot senza argomenti (in editing mode).
+     * Usa l'ID della costruzione corrente e titolo default.
+     */
+    private static int executeShotInEditing(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Verifica che il giocatore sia in editing mode
+        if (!EditingSession.hasSession(player)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "shot.no_id")));
+            return 0;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+        String constructionId = session.getConstruction().getId();
+
+        return executeShotCommon(player, source, constructionId, null);
+    }
+
+    /**
+     * Esegue /struttura shot <id> (con ID esplicito, senza titolo).
+     */
+    private static int executeShotWithId(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        String constructionId = StringArgumentType.getString(ctx, "id");
+        return executeShotCommon(player, source, constructionId, null);
+    }
+
+    /**
+     * Esegue /struttura shot <id> <title> (con ID esplicito e titolo).
+     */
+    private static int executeShotWithIdAndTitle(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        String constructionId = StringArgumentType.getString(ctx, "id");
+        String title = StringArgumentType.getString(ctx, "title");
+        return executeShotCommon(player, source, constructionId, title);
+    }
+
+    /**
+     * Logica comune per il comando shot.
+     */
+    private static int executeShotCommon(ServerPlayer player, CommandSourceStack source,
+                                         String constructionId, String title) {
+        // Verifica che non ci sia già una richiesta in corso
+        if (ApiClient.isRequestInProgress()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "push.request_in_progress")));
+            return 0;
+        }
+
+        // Usa titolo default se non specificato
+        String screenshotTitle = (title != null && !title.isEmpty()) ? title : "Screenshot";
+
+        // Messaggio di cattura
+        source.sendSuccess(() -> Component.literal(
+            I18n.tr(player, "shot.in_editing", constructionId)
+        ), false);
+
+        Architect.LOGGER.info("Player {} taking screenshot for construction {}",
+            player.getName().getString(), constructionId);
+
+        // Invia richiesta screenshot al client
+        NetworkHandler.sendScreenshotRequest(player, constructionId, screenshotTitle);
 
         return 1;
     }

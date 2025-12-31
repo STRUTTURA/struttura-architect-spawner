@@ -316,4 +316,95 @@ public class ApiClient {
             default -> "HTTP " + statusCode;
         };
     }
+
+    /**
+     * Esegue l'upload di uno screenshot al server in modo asincrono.
+     *
+     * @param constructionId l'ID della costruzione (formato RDNS)
+     * @param imageData i dati JPEG dell'immagine
+     * @param filename il nome del file (es: "screenshot_001.jpg")
+     * @param title il titolo dell'immagine
+     * @param onComplete callback chiamato al completamento
+     * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
+     */
+    public static boolean uploadScreenshot(String constructionId, byte[] imageData, String filename,
+                                           String title, Consumer<ApiResponse> onComplete) {
+        if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
+            return false;
+        }
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return executeUploadScreenshot(constructionId, imageData, filename, title);
+            } catch (Exception e) {
+                Architect.LOGGER.error("Screenshot upload failed", e);
+                return new ApiResponse(0, "Error: " + e.getMessage(), false);
+            } finally {
+                REQUEST_IN_PROGRESS.set(false);
+            }
+        }).thenAccept(onComplete);
+
+        return true;
+    }
+
+    /**
+     * Esegue l'upload dello screenshot.
+     */
+    private static ApiResponse executeUploadScreenshot(String constructionId, byte[] imageData,
+                                                       String filename, String title) throws Exception {
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String endpoint = config.getEndpoint();
+        String url = endpoint + "/building/" + constructionId + "/images";
+
+        Architect.LOGGER.info("Uploading screenshot for {} to {}", constructionId, url);
+
+        // Prepara il payload JSON
+        JsonObject payload = new JsonObject();
+        payload.addProperty("filename", filename);
+        payload.addProperty("title", title != null && !title.isEmpty() ? title : "Screenshot");
+        payload.addProperty("data", Base64.getEncoder().encodeToString(imageData));
+
+        byte[] jsonBytes = GSON.toJson(payload).getBytes(StandardCharsets.UTF_8);
+
+        Architect.LOGGER.info("Screenshot payload size: {} bytes ({} KB)", jsonBytes.length, jsonBytes.length / 1024);
+
+        // Configura la connessione
+        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        try {
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            conn.setReadTimeout(config.getRequestTimeout() * 1000);
+
+            // Headers
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("Authorization", config.getAuth());
+            conn.setRequestProperty("X-Api-Key", config.getApikey());
+            conn.setRequestProperty("Content-Length", String.valueOf(jsonBytes.length));
+
+            // Streaming output per efficienza con grandi payload
+            conn.setFixedLengthStreamingMode(jsonBytes.length);
+
+            // Invia il body
+            try (OutputStream os = new BufferedOutputStream(conn.getOutputStream(), 65536)) {
+                os.write(jsonBytes);
+                os.flush();
+            }
+
+            // Leggi la risposta
+            int statusCode = conn.getResponseCode();
+            String responseBody = readResponse(conn);
+
+            Architect.LOGGER.info("Screenshot upload response: {} - {}", statusCode, responseBody);
+
+            // Parse risposta JSON se possibile
+            String message = parseResponseMessage(responseBody, statusCode);
+            boolean success = statusCode >= 200 && statusCode < 300;
+
+            return new ApiResponse(statusCode, message, success);
+
+        } finally {
+            conn.disconnect();
+        }
+    }
 }
