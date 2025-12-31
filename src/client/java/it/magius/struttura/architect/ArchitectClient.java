@@ -1,5 +1,7 @@
 package it.magius.struttura.architect;
 
+import it.magius.struttura.architect.client.KeybindingHandler;
+import it.magius.struttura.architect.client.ModKeybindings;
 import it.magius.struttura.architect.client.ScreenshotCapture;
 import it.magius.struttura.architect.client.WireframeRenderer;
 import it.magius.struttura.architect.network.BlockPositionsSyncPacket;
@@ -19,6 +21,9 @@ public class ArchitectClient implements ClientModInitializer {
     public void onInitializeClient() {
         Architect.LOGGER.info("STRUTTURA: Architect client initializing...");
 
+        // Registra i keybindings
+        ModKeybindings.register();
+
         // Il payload type è già registrato dal server in NetworkHandler.registerServer()
         // Il client deve solo registrare il receiver
 
@@ -36,9 +41,9 @@ public class ArchitectClient implements ClientModInitializer {
         // Registra il receiver per le posizioni dei blocchi
         ClientPlayNetworking.registerGlobalReceiver(BlockPositionsSyncPacket.TYPE, (packet, context) -> {
             context.client().execute(() -> {
-                WireframeRenderer.setBlockPositions(packet.solidBlocks(), packet.airBlocks());
-                Architect.LOGGER.debug("Received block positions: {} solid, {} air",
-                    packet.solidBlocks().size(), packet.airBlocks().size());
+                WireframeRenderer.setBlockPositions(packet.solidBlocks(), packet.airBlocks(), packet.previewBlocks());
+                Architect.LOGGER.debug("Received block positions: {} solid, {} air, {} preview",
+                    packet.solidBlocks().size(), packet.airBlocks().size(), packet.previewBlocks().size());
             });
         });
 
@@ -54,6 +59,9 @@ public class ArchitectClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             ScreenshotCapture.onRenderTick();
         });
+
+        // Registra l'handler per i keybindings di selezione
+        ClientTickEvents.END_CLIENT_TICK.register(KeybindingHandler::onClientTick);
 
         // Inizializza il renderer wireframe (registra WorldRenderEvents)
         WireframeRenderer.init();

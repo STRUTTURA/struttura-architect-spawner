@@ -1,3 +1,10 @@
 {
-  "item.architect.construction_hammer": "Construction Hammer"
+  "item.architect.construction_hammer": "Construction Hammer",
+
+  "key.category.architect.struttura": "Struttura",
+  "key.struttura.select_pos1": "Selection Pos1",
+  "key.struttura.select_pos2": "Selection Pos2",
+  "key.struttura.select_clear": "Selection Clear",
+  "key.struttura.select_apply": "Selection Apply",
+  "key.struttura.select_applyall": "Selection Apply All"
 }

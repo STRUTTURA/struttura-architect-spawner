@@ -13,10 +13,13 @@ import java.util.List;
 /**
  * Packet per sincronizzare le posizioni dei blocchi della costruzione in editing.
  * Usato per renderizzare overlay sui blocchi.
+ * - solidBlocks/airBlocks: blocchi già nella costruzione (wireframe rosso)
+ * - previewBlocks: blocchi che verranno aggiunti con select add (wireframe ciano)
  */
 public record BlockPositionsSyncPacket(
     List<BlockPos> solidBlocks,
-    List<BlockPos> airBlocks
+    List<BlockPos> airBlocks,
+    List<BlockPos> previewBlocks
 ) implements CustomPacketPayload {
 
     public static final CustomPacketPayload.Type<BlockPositionsSyncPacket> TYPE =
@@ -38,7 +41,13 @@ public record BlockPositionsSyncPacket(
             airBlocks.add(buf.readBlockPos());
         }
 
-        return new BlockPositionsSyncPacket(solidBlocks, airBlocks);
+        int previewCount = buf.readVarInt();
+        List<BlockPos> previewBlocks = new ArrayList<>(previewCount);
+        for (int i = 0; i < previewCount; i++) {
+            previewBlocks.add(buf.readBlockPos());
+        }
+
+        return new BlockPositionsSyncPacket(solidBlocks, airBlocks, previewBlocks);
     }
 
     private static void write(FriendlyByteBuf buf, BlockPositionsSyncPacket packet) {
@@ -49,6 +58,11 @@ public record BlockPositionsSyncPacket(
 
         buf.writeVarInt(packet.airBlocks.size());
         for (BlockPos pos : packet.airBlocks) {
+            buf.writeBlockPos(pos);
+        }
+
+        buf.writeVarInt(packet.previewBlocks.size());
+        for (BlockPos pos : packet.previewBlocks) {
             buf.writeBlockPos(pos);
         }
     }
@@ -62,18 +76,25 @@ public record BlockPositionsSyncPacket(
      * Crea un packet vuoto (nessun blocco).
      */
     public static BlockPositionsSyncPacket empty() {
-        return new BlockPositionsSyncPacket(List.of(), List.of());
+        return new BlockPositionsSyncPacket(List.of(), List.of(), List.of());
     }
 
     /**
-     * Verifica se ci sono blocchi.
+     * Verifica se ci sono blocchi nella costruzione.
      */
     public boolean hasBlocks() {
         return !solidBlocks.isEmpty() || !airBlocks.isEmpty();
     }
 
     /**
-     * Conta totale blocchi.
+     * Verifica se ci sono blocchi in anteprima.
+     */
+    public boolean hasPreviewBlocks() {
+        return !previewBlocks.isEmpty();
+    }
+
+    /**
+     * Conta totale blocchi nella costruzione.
      */
     public int totalBlocks() {
         return solidBlocks.size() + airBlocks.size();

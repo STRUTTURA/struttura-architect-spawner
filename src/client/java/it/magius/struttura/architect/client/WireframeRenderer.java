@@ -38,8 +38,11 @@ public class WireframeRenderer {
     private static WireframeData.ConstructionWireframe constructionData = WireframeData.ConstructionWireframe.empty();
     private static WireframeData.SelectionWireframe selectionData = WireframeData.SelectionWireframe.empty();
 
-    // Posizioni dei blocchi per l'overlay (tutti i blocchi, senza distinzione)
+    // Posizioni dei blocchi per l'overlay (blocchi nella costruzione - rosso)
     private static List<BlockPos> blockPositions = new ArrayList<>();
+
+    // Posizioni dei blocchi di anteprima (blocchi che verranno aggiunti - ciano)
+    private static List<BlockPos> previewPositions = new ArrayList<>();
 
     /**
      * Inizializza il renderer registrando l'evento di rendering.
@@ -51,7 +54,8 @@ public class WireframeRenderer {
     private static void onWorldRender(WorldRenderContext context) {
         // Non renderizzare se non ci sono dati
         boolean hasBlocks = !blockPositions.isEmpty();
-        if (!constructionData.active && !selectionData.active && !hasBlocks) {
+        boolean hasPreview = !previewPositions.isEmpty();
+        if (!constructionData.active && !selectionData.active && !hasBlocks && !hasPreview) {
             return;
         }
 
@@ -71,6 +75,17 @@ public class WireframeRenderer {
                     pos.getX() + 1 + BLOCK_OUTSET, pos.getY() + 1 + BLOCK_OUTSET, pos.getZ() + 1 + BLOCK_OUTSET
                 );
                 renderShape(poseStack, lineBuffer, box, cameraPos, BLOCK_COLOR);
+            }
+        }
+
+        // Renderizza wireframe per i blocchi di anteprima (colore CIANO, blocchi che verranno aggiunti)
+        if (hasPreview) {
+            for (BlockPos pos : previewPositions) {
+                AABB box = new AABB(
+                    pos.getX() - BLOCK_OUTSET, pos.getY() - BLOCK_OUTSET, pos.getZ() - BLOCK_OUTSET,
+                    pos.getX() + 1 + BLOCK_OUTSET, pos.getY() + 1 + BLOCK_OUTSET, pos.getZ() + 1 + BLOCK_OUTSET
+                );
+                renderShape(poseStack, lineBuffer, box, cameraPos, SELECTION_COLOR);
             }
         }
 
@@ -148,12 +163,18 @@ public class WireframeRenderer {
 
     /**
      * Imposta le posizioni dei blocchi per l'overlay.
+     * @param solid blocchi solidi nella costruzione
+     * @param air blocchi aria nella costruzione
+     * @param preview blocchi di anteprima (verranno aggiunti con select add)
      */
-    public static void setBlockPositions(List<BlockPos> solid, List<BlockPos> air) {
-        // Combina tutti i blocchi in una sola lista
+    public static void setBlockPositions(List<BlockPos> solid, List<BlockPos> air, List<BlockPos> preview) {
+        // Combina tutti i blocchi della costruzione in una sola lista
         blockPositions = new ArrayList<>(solid.size() + air.size());
         blockPositions.addAll(solid);
         blockPositions.addAll(air);
+
+        // Imposta i blocchi di anteprima
+        previewPositions = new ArrayList<>(preview);
     }
 
     /**
@@ -163,6 +184,7 @@ public class WireframeRenderer {
         constructionData = WireframeData.ConstructionWireframe.empty();
         selectionData = WireframeData.SelectionWireframe.empty();
         blockPositions = new ArrayList<>();
+        previewPositions = new ArrayList<>();
     }
 
     /**

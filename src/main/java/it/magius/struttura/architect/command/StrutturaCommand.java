@@ -8,6 +8,7 @@ import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.EditMode;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.registry.ModItems;
@@ -116,8 +117,11 @@ public class StrutturaCommand {
                     .then(Commands.literal("pos2")
                         .executes(StrutturaCommand::executeSelectPos2)
                     )
-                    .then(Commands.literal("add")
-                        .executes(StrutturaCommand::executeSelectAdd)
+                    .then(Commands.literal("apply")
+                        .executes(ctx -> executeSelectApply(ctx, false))
+                    )
+                    .then(Commands.literal("applyall")
+                        .executes(ctx -> executeSelectApply(ctx, true))
                     )
                     .then(Commands.literal("clear")
                         .executes(StrutturaCommand::executeSelectClear)
@@ -331,6 +335,9 @@ public class StrutturaCommand {
             session.setMode(it.magius.struttura.architect.model.EditMode.REMOVE);
             source.sendSuccess(() -> Component.literal(I18n.tr(player, "mode.remove.success")), false);
         }
+
+        // Aggiorna la preview della selezione (dipende dalla modalità)
+        NetworkHandler.sendWireframeSync(player);
 
         return 1;
     }
@@ -1051,7 +1058,7 @@ public class StrutturaCommand {
         return 1;
     }
 
-    private static int executeSelectAdd(CommandContext<CommandSourceStack> ctx) {
+    private static int executeSelectApply(CommandContext<CommandSourceStack> ctx, boolean includeAir) {
         CommandSourceStack source = ctx.getSource();
 
         if (!(source.getEntity() instanceof ServerPlayer player)) {
@@ -1078,46 +1085,79 @@ public class StrutturaCommand {
         EditingSession session = EditingSession.getSession(player);
         Construction construction = session.getConstruction();
         ServerLevel level = (ServerLevel) player.level();
+        EditMode mode = session.getMode();
 
-        int addedCount = 0;
-        int skippedAir = 0;
+        int processedCount = 0;
+        int skippedCount = 0;
 
-        // Itera su tutti i blocchi nell'area selezionata
-        for (int x = min.getX(); x <= max.getX(); x++) {
-            for (int y = min.getY(); y <= max.getY(); y++) {
-                for (int z = min.getZ(); z <= max.getZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    BlockState state = level.getBlockState(pos);
+        if (mode == EditMode.ADD) {
+            // Mode ADD: aggiungi i blocchi alla costruzione
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int y = min.getY(); y <= max.getY(); y++) {
+                    for (int z = min.getZ(); z <= max.getZ(); z++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+                        BlockState state = level.getBlockState(pos);
 
-                    // Salta i blocchi aria (opzionale - potremmo volerli includere)
-                    if (state.isAir()) {
-                        skippedAir++;
-                        continue;
+                        // Salta i blocchi aria se non includeAir
+                        if (!includeAir && state.isAir()) {
+                            skippedCount++;
+                            continue;
+                        }
+
+                        // Aggiungi il blocco alla costruzione
+                        construction.addBlock(pos, state);
+                        processedCount++;
                     }
-
-                    // Aggiungi il blocco alla costruzione
-                    construction.addBlock(pos, state);
-                    addedCount++;
                 }
             }
+
+            // Pulisci la selezione dopo l'aggiunta
+            SelectionManager.getInstance().clearSelection(player);
+            NetworkHandler.sendWireframeSync(player);
+
+            final int finalProcessed = processedCount;
+            final int finalSkipped = skippedCount;
+            final int totalBlocks = construction.getBlockCount();
+
+            Architect.LOGGER.info("Player {} added {} blocks from selection to construction {} (skipped {} air blocks)",
+                player.getName().getString(), finalProcessed, construction.getId(), finalSkipped);
+
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "select.apply.add_success", finalProcessed, finalSkipped, totalBlocks)
+            ), false);
+        } else {
+            // Mode REMOVE: rimuovi i blocchi dalla costruzione
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int y = min.getY(); y <= max.getY(); y++) {
+                    for (int z = min.getZ(); z <= max.getZ(); z++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+
+                        // Rimuovi solo se il blocco è nella costruzione
+                        if (construction.containsBlock(pos)) {
+                            construction.removeBlock(pos);
+                            processedCount++;
+                        } else {
+                            skippedCount++;
+                        }
+                    }
+                }
+            }
+
+            // Pulisci la selezione dopo la rimozione
+            SelectionManager.getInstance().clearSelection(player);
+            NetworkHandler.sendWireframeSync(player);
+
+            final int finalProcessed = processedCount;
+            final int finalSkipped = skippedCount;
+            final int totalBlocks = construction.getBlockCount();
+
+            Architect.LOGGER.info("Player {} removed {} blocks from selection from construction {} (skipped {} not in construction)",
+                player.getName().getString(), finalProcessed, construction.getId(), finalSkipped);
+
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "select.apply.remove_success", finalProcessed, finalSkipped, totalBlocks)
+            ), false);
         }
-
-        // Pulisci la selezione dopo l'aggiunta
-        SelectionManager.getInstance().clearSelection(player);
-
-        // Invia sync wireframe (bounds costruzione aggiornati, selezione pulita)
-        NetworkHandler.sendWireframeSync(player);
-
-        final int finalAdded = addedCount;
-        final int finalSkipped = skippedAir;
-        final int totalBlocks = construction.getBlockCount();
-
-        Architect.LOGGER.info("Player {} added {} blocks from selection to construction {} (skipped {} air blocks)",
-            player.getName().getString(), finalAdded, construction.getId(), finalSkipped);
-
-        source.sendSuccess(() -> Component.literal(
-            I18n.tr(player, "select.add.success", finalAdded, finalSkipped, totalBlocks)
-        ), false);
 
         return 1;
     }

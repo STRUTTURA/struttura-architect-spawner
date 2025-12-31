@@ -1,3 +1,10 @@
 {
-  "item.architect.construction_hammer": "Martello da Costruzione"
+  "item.architect.construction_hammer": "Martello da Costruzione",
+
+  "key.category.architect.struttura": "Struttura",
+  "key.struttura.select_pos1": "Selezione Pos1",
+  "key.struttura.select_pos2": "Selezione Pos2",
+  "key.struttura.select_clear": "Selezione Pulisci",
+  "key.struttura.select_apply": "Selezione Applica",
+  "key.struttura.select_applyall": "Selezione Applica Tutto"
 }
