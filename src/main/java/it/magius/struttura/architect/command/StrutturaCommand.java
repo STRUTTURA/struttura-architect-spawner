@@ -57,10 +57,10 @@ public class StrutturaCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(
             Commands.literal("struttura")
-                .then(Commands.literal("enter")
+                .then(Commands.literal("edit")
                     .then(Commands.argument("id", StringArgumentType.string())
                         .suggests(CONSTRUCTION_ID_SUGGESTIONS)
-                        .executes(StrutturaCommand::executeEnter)
+                        .executes(StrutturaCommand::executeEdit)
                     )
                 )
                 .then(Commands.literal("exit")
@@ -206,7 +206,7 @@ public class StrutturaCommand {
             return SharedSuggestionProvider.suggest(suggestions, builder);
         };
 
-    private static int executeEnter(CommandContext<CommandSourceStack> ctx) {
+    private static int executeEdit(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
 
         // Verifica che sia un giocatore
@@ -219,7 +219,7 @@ public class StrutturaCommand {
         if (EditingSession.hasSession(player)) {
             EditingSession session = EditingSession.getSession(player);
             source.sendFailure(Component.literal(
-                I18n.tr(player, "enter.already_editing", session.getConstruction().getId())
+                I18n.tr(player, "edit.already_editing", session.getConstruction().getId())
             ));
             return 0;
         }
@@ -228,7 +228,7 @@ public class StrutturaCommand {
 
         // Valida formato ID
         if (!Construction.isValidId(id)) {
-            source.sendFailure(Component.literal(I18n.tr(player, "enter.invalid_id", id)));
+            source.sendFailure(Component.literal(I18n.tr(player, "edit.invalid_id", id)));
             return 0;
         }
 
@@ -237,7 +237,7 @@ public class StrutturaCommand {
         if (existingSession != null) {
             String otherPlayerName = existingSession.getPlayer().getName().getString();
             source.sendFailure(Component.literal(
-                I18n.tr(player, "enter.already_in_use", id, otherPlayerName)
+                I18n.tr(player, "edit.already_in_use", id, otherPlayerName)
             ));
             return 0;
         }
@@ -249,7 +249,7 @@ public class StrutturaCommand {
         if (registry.exists(id)) {
             // Carica la costruzione esistente
             construction = registry.get(id);
-            Architect.LOGGER.info("Player {} re-entered existing construction: {}", player.getName().getString(), id);
+            Architect.LOGGER.info("Player {} re-editing existing construction: {}", player.getName().getString(), id);
         } else {
             // Crea nuova costruzione
             construction = new Construction(
@@ -266,7 +266,7 @@ public class StrutturaCommand {
         // Invia sync wireframe al client
         NetworkHandler.sendWireframeSync(player);
 
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "enter.success", id)), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "edit.success", id)), false);
 
         return 1;
     }

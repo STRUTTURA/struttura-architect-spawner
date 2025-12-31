@@ -1,6 +1,6 @@
 {
   "parent": "minecraft:item/handheld",
   "textures": {
-    "layer0": "minecraft:item/golden_pickaxe"
+    "layer0": "minecraft:item/blaze_rod"
   }
 }
