@@ -92,7 +92,7 @@ public class ArchitectClient implements ClientModInitializer {
                 for (ConstructionListPacket.ConstructionInfo info : packet.constructions()) {
                     list.add(new MainPanel.ConstructionInfo(
                             info.id(),
-                            info.authorName(),
+                            info.title(),
                             info.blockCount(),
                             info.isBeingEdited()
                     ));

@@ -28,21 +28,21 @@ public record ConstructionListPacket(
      */
     public record ConstructionInfo(
         String id,
-        String authorName,
+        String title,
         int blockCount,
         boolean isBeingEdited
     ) {
         private static ConstructionInfo read(FriendlyByteBuf buf) {
             String id = buf.readUtf(256);
-            String authorName = buf.readUtf(64);
+            String title = buf.readUtf(128);
             int blockCount = buf.readVarInt();
             boolean isBeingEdited = buf.readBoolean();
-            return new ConstructionInfo(id, authorName, blockCount, isBeingEdited);
+            return new ConstructionInfo(id, title, blockCount, isBeingEdited);
         }
 
         private static void write(FriendlyByteBuf buf, ConstructionInfo info) {
             buf.writeUtf(info.id, 256);
-            buf.writeUtf(info.authorName, 64);
+            buf.writeUtf(info.title, 128);
             buf.writeVarInt(info.blockCount);
             buf.writeBoolean(info.isBeingEdited);
         }

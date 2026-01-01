@@ -21,7 +21,6 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -32,8 +31,7 @@ import java.util.Set;
  */
 public class NetworkHandler {
 
-    // Mappa per memorizzare i blocchi originali del mondo quando si usa "show"
-    private static final Map<String, Map<BlockPos, BlockState>> ORIGINAL_WORLD_BLOCKS = new HashMap<>();
+    // Set delle costruzioni attualmente visibili nel mondo
     private static final Set<String> VISIBLE_CONSTRUCTIONS = new HashSet<>();
 
     /**
@@ -449,6 +447,7 @@ public class NetworkHandler {
             case "shot" -> handleGuiShot(player, targetId, extraData);
             case "title" -> handleGuiTitle(player, extraData);
             case "rename" -> handleGuiRename(player, targetId);
+            case "destroy" -> handleGuiDestroy(player, targetId);
             case "request_list" -> sendConstructionList(player);
             default -> Architect.LOGGER.warn("Unknown GUI action: {}", action);
         }
@@ -483,13 +482,6 @@ public class NetworkHandler {
         }
 
         ServerLevel level = (ServerLevel) player.level();
-
-        // Salva i blocchi originali del mondo
-        Map<BlockPos, BlockState> originalBlocks = new HashMap<>();
-        for (BlockPos pos : construction.getBlocks().keySet()) {
-            originalBlocks.put(pos.immutable(), level.getBlockState(pos));
-        }
-        ORIGINAL_WORLD_BLOCKS.put(id, originalBlocks);
 
         // Piazza i blocchi della costruzione nel mondo
         int placedCount = 0;
@@ -530,25 +522,17 @@ public class NetworkHandler {
 
         ServerLevel level = (ServerLevel) player.level();
 
-        // Ripristina i blocchi originali
-        Map<BlockPos, BlockState> originalBlocks = ORIGINAL_WORLD_BLOCKS.get(id);
-        int restoredCount = 0;
-
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
-            BlockPos pos = entry.getKey();
-            if (originalBlocks != null && originalBlocks.containsKey(pos)) {
-                level.setBlock(pos, originalBlocks.get(pos), 3);
-            } else {
-                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-            }
-            restoredCount++;
+        // Sostituisci i blocchi della costruzione con AIR
+        int removedCount = 0;
+        for (BlockPos pos : construction.getBlocks().keySet()) {
+            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            removedCount++;
         }
 
-        ORIGINAL_WORLD_BLOCKS.remove(id);
         VISIBLE_CONSTRUCTIONS.remove(id);
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "hide.success", id, restoredCount)));
+                I18n.tr(player, "hide.success", id, removedCount)));
     }
 
     private static void handleGuiTp(ServerPlayer player, String id) {
@@ -591,14 +575,6 @@ public class NetworkHandler {
     }
 
     private static void handleGuiEdit(ServerPlayer player, String id) {
-        // Verifica che non sia già in editing
-        if (EditingSession.hasSession(player)) {
-            EditingSession session = EditingSession.getSession(player);
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
-                    I18n.tr(player, "edit.already_editing", session.getConstruction().getId())));
-            return;
-        }
-
         // Valida formato ID
         if (!Construction.isValidId(id)) {
             player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
@@ -609,12 +585,27 @@ public class NetworkHandler {
         // Verifica che un altro giocatore non stia già modificando questa costruzione
         if (isConstructionBeingEdited(id)) {
             EditingSession existingSession = getSessionForConstruction(id);
-            if (existingSession != null) {
+            // Solo blocca se un ALTRO giocatore sta modificando questa costruzione
+            if (existingSession != null && !existingSession.getPlayer().getUUID().equals(player.getUUID())) {
                 String otherPlayerName = existingSession.getPlayer().getName().getString();
                 player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
                         I18n.tr(player, "edit.already_in_use", id, otherPlayerName)));
                 return;
             }
+        }
+
+        // Se il player è già in editing, esci prima dalla sessione corrente
+        if (EditingSession.hasSession(player)) {
+            EditingSession currentSession = EditingSession.endSession(player);
+            Construction currentConstruction = currentSession.getConstruction();
+
+            // Salva la costruzione corrente se ha blocchi
+            if (currentConstruction.getBlockCount() > 0) {
+                ConstructionRegistry.getInstance().register(currentConstruction);
+            }
+
+            // Pulisci la selezione
+            SelectionManager.getInstance().clearSelection(player);
         }
 
         // Carica o crea la costruzione
@@ -633,6 +624,7 @@ public class NetworkHandler {
         // Invia sync al client
         sendWireframeSync(player);
         sendEditingInfo(player);
+        sendConstructionList(player);
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "edit.success", id)));
@@ -659,6 +651,7 @@ public class NetworkHandler {
         // Invia sync al client
         sendEmptyWireframe(player);
         sendEditingInfoEmpty(player);
+        sendConstructionList(player);
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "exit.success", construction.getId(), construction.getBlockCount())));
@@ -723,6 +716,67 @@ public class NetworkHandler {
         // Rename is complex - for now just inform user to use commands
         player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
                 "Rename is not supported via GUI yet. Use /struttura exit and /struttura edit <new_id>"));
+    }
+
+    private static void handleGuiDestroy(ServerPlayer player, String id) {
+        ConstructionRegistry registry = ConstructionRegistry.getInstance();
+
+        // Verifica che la costruzione esista (in registry o in editing)
+        if (!registry.exists(id) && getSessionForConstruction(id) == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "destroy.not_found", id)));
+            return;
+        }
+
+        // Verifica se un ALTRO giocatore sta editando questa costruzione
+        EditingSession existingSession = getSessionForConstruction(id);
+        if (existingSession != null && !existingSession.getPlayer().getUUID().equals(player.getUUID())) {
+            String otherPlayerName = existingSession.getPlayer().getName().getString();
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "destroy.in_editing_by_other", id, otherPlayerName)));
+            return;
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+        Construction construction = getConstructionIncludingEditing(id);
+
+        // 1. Sostituisci i blocchi della costruzione con AIR
+        if (construction != null && construction.getBlockCount() > 0) {
+            for (BlockPos pos : construction.getBlocks().keySet()) {
+                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            }
+            Architect.LOGGER.info("GUI Destroy: removed {} blocks for construction {}", construction.getBlockCount(), id);
+        }
+
+        // 2. Pulisci i dati di visibilità
+        VISIBLE_CONSTRUCTIONS.remove(id);
+
+        // 3. Se il giocatore corrente sta editando questa costruzione, termina la sessione
+        if (existingSession != null && existingSession.getPlayer().getUUID().equals(player.getUUID())) {
+            EditingSession.endSession(player);
+
+            // Pulisci la selezione
+            SelectionManager.getInstance().clearSelection(player);
+
+            // Invia sync wireframe vuoto al client
+            sendEmptyWireframe(player);
+
+            // Invia stato editing vuoto al client per la GUI
+            sendEditingInfoEmpty(player);
+
+            Architect.LOGGER.info("GUI Destroy: ended editing session for {}", id);
+        }
+
+        // 4. Rimuovi la costruzione dal registry (e dal filesystem)
+        registry.unregister(id);
+
+        // 5. Aggiorna la lista delle costruzioni per il client
+        sendConstructionList(player);
+
+        Architect.LOGGER.info("Player {} destroyed construction via GUI: {}", player.getName().getString(), id);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "destroy.success", id)));
     }
 
     // ===== Helper Methods =====
@@ -809,12 +863,15 @@ public class NetworkHandler {
     public static void sendConstructionList(ServerPlayer player) {
         List<ConstructionListPacket.ConstructionInfo> list = new ArrayList<>();
 
+        // Get player's preferred language for title fallback
+        String lang = I18n.getPlayerLanguage(player);
+
         // Aggiungi tutte le costruzioni dal registry
         for (Construction c : ConstructionRegistry.getInstance().getAll()) {
             boolean isEditing = isConstructionBeingEdited(c.getId());
             list.add(new ConstructionListPacket.ConstructionInfo(
                     c.getId(),
-                    c.getAuthorName(),
+                    c.getTitleWithFallback(lang),
                     c.getBlockCount(),
                     isEditing
             ));
@@ -827,7 +884,7 @@ public class NetworkHandler {
             if (!alreadyInList) {
                 list.add(new ConstructionListPacket.ConstructionInfo(
                         c.getId(),
-                        c.getAuthorName(),
+                        c.getTitleWithFallback(lang),
                         c.getBlockCount(),
                         true
                 ));

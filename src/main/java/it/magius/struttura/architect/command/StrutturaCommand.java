@@ -16,6 +16,7 @@ import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.server.permissions.Permissions;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
@@ -23,6 +24,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.Collection;
@@ -33,10 +35,6 @@ import java.util.Map;
  * Comando principale /struttura con tutti i subcomandi.
  */
 public class StrutturaCommand {
-
-    // Mappa per memorizzare i blocchi originali del mondo quando si usa "show"
-    // Chiave: ID costruzione, Valore: mappa posizione -> stato blocco originale
-    private static final Map<String, Map<BlockPos, BlockState>> ORIGINAL_WORLD_BLOCKS = new HashMap<>();
 
     // Set delle costruzioni attualmente visibili nel mondo
     private static final java.util.Set<String> VISIBLE_CONSTRUCTIONS = new java.util.HashSet<>();
@@ -57,6 +55,7 @@ public class StrutturaCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(
             Commands.literal("struttura")
+                .requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)) // Richiede livello OP 2 (Game Master)
                 .then(Commands.literal("edit")
                     .then(Commands.argument("id", StringArgumentType.string())
                         .suggests(CONSTRUCTION_ID_SUGGESTIONS)
@@ -174,6 +173,15 @@ public class StrutturaCommand {
                 )
                 .then(Commands.literal("give")
                     .executes(StrutturaCommand::executeGive)
+                )
+                .then(Commands.literal("destroy")
+                    // In editing mode: /struttura destroy (destroys current construction)
+                    .executes(StrutturaCommand::executeDestroyInEditing)
+                    // Outside editing mode: /struttura destroy <id>
+                    .then(Commands.argument("id", StringArgumentType.string())
+                        .suggests(CONSTRUCTION_ID_SUGGESTIONS)
+                        .executes(StrutturaCommand::executeDestroyWithId)
+                    )
                 )
         );
     }
@@ -723,13 +731,6 @@ public class StrutturaCommand {
 
         ServerLevel level = (ServerLevel) player.level();
 
-        // Salva i blocchi originali del mondo
-        Map<BlockPos, BlockState> originalBlocks = new HashMap<>();
-        for (BlockPos pos : construction.getBlocks().keySet()) {
-            originalBlocks.put(pos.immutable(), level.getBlockState(pos));
-        }
-        ORIGINAL_WORLD_BLOCKS.put(id, originalBlocks);
-
         // Piazza i blocchi della costruzione nel mondo
         int placedCount = 0;
         for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
@@ -783,30 +784,17 @@ public class StrutturaCommand {
 
         ServerLevel level = (ServerLevel) player.level();
 
-        // Se abbiamo i blocchi originali salvati (da un show precedente), usali
-        // Altrimenti, semplicemente rimuovi i blocchi della costruzione mettendo aria
-        Map<BlockPos, BlockState> originalBlocks = ORIGINAL_WORLD_BLOCKS.get(id);
-
-        int restoredCount = 0;
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
-            BlockPos pos = entry.getKey();
-
-            if (originalBlocks != null && originalBlocks.containsKey(pos)) {
-                // Ripristina il blocco originale salvato
-                level.setBlock(pos, originalBlocks.get(pos), 3);
-            } else {
-                // Nessun blocco originale salvato, metti aria
-                level.setBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
-            }
-            restoredCount++;
+        // Sostituisci i blocchi della costruzione con AIR
+        int removedCount = 0;
+        for (BlockPos pos : construction.getBlocks().keySet()) {
+            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            removedCount++;
         }
 
-        // Pulisci i dati
-        ORIGINAL_WORLD_BLOCKS.remove(id);
         VISIBLE_CONSTRUCTIONS.remove(id);
 
-        final int finalCount = restoredCount;
-        Architect.LOGGER.info("Player {} hid construction {} ({} blocks cleared)",
+        final int finalCount = removedCount;
+        Architect.LOGGER.info("Player {} hid construction {} ({} blocks removed)",
             player.getName().getString(), id, finalCount);
 
         source.sendSuccess(() -> Component.literal(
@@ -1467,5 +1455,113 @@ public class StrutturaCommand {
             ));
             return 0;
         }
+    }
+
+    // ===== Comando Destroy =====
+
+    /**
+     * Esegue /struttura destroy senza argomenti (in editing mode).
+     * Distrugge la costruzione correntemente in editing.
+     */
+    private static int executeDestroyInEditing(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Verifica che il giocatore sia in editing mode
+        if (!EditingSession.hasSession(player)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "destroy.no_id")));
+            return 0;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+        String constructionId = session.getConstruction().getId();
+
+        return executeDestroyCommon(player, source, constructionId);
+    }
+
+    /**
+     * Esegue /struttura destroy <id> (con ID esplicito).
+     */
+    private static int executeDestroyWithId(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        String constructionId = StringArgumentType.getString(ctx, "id");
+        return executeDestroyCommon(player, source, constructionId);
+    }
+
+    /**
+     * Logica comune per il comando destroy.
+     * 1. Se la costruzione è visibile (SHOW), ripristina i blocchi originali salvati
+     * 2. Se il giocatore è in editing di questa costruzione, termina la sessione
+     * 3. Rimuove la costruzione dal registry e dal filesystem
+     */
+    private static int executeDestroyCommon(ServerPlayer player, CommandSourceStack source, String constructionId) {
+        ConstructionRegistry registry = ConstructionRegistry.getInstance();
+
+        // Verifica che la costruzione esista (in registry o in editing)
+        if (!constructionExistsIncludingEditing(constructionId)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "destroy.not_found", constructionId)));
+            return 0;
+        }
+
+        // Verifica se un ALTRO giocatore sta editando questa costruzione
+        EditingSession existingSession = getSessionForConstruction(constructionId);
+        if (existingSession != null && !existingSession.getPlayer().getUUID().equals(player.getUUID())) {
+            String otherPlayerName = existingSession.getPlayer().getName().getString();
+            source.sendFailure(Component.literal(
+                I18n.tr(player, "destroy.in_editing_by_other", constructionId, otherPlayerName)
+            ));
+            return 0;
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+        Construction construction = getConstructionIncludingEditing(constructionId);
+
+        // 1. Sostituisci i blocchi della costruzione con AIR
+        if (construction != null && construction.getBlockCount() > 0) {
+            for (BlockPos pos : construction.getBlocks().keySet()) {
+                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            }
+            Architect.LOGGER.info("Destroy: removed {} blocks for construction {}", construction.getBlockCount(), constructionId);
+        }
+
+        // 2. Pulisci i dati di visibilità
+        VISIBLE_CONSTRUCTIONS.remove(constructionId);
+
+        // 3. Se il giocatore corrente sta editando questa costruzione, termina la sessione
+        if (existingSession != null && existingSession.getPlayer().getUUID().equals(player.getUUID())) {
+            EditingSession.endSession(player);
+
+            // Pulisci la selezione
+            SelectionManager.getInstance().clearSelection(player);
+
+            // Invia sync wireframe vuoto al client
+            NetworkHandler.sendEmptyWireframe(player);
+
+            // Invia stato editing vuoto al client per la GUI
+            NetworkHandler.sendEditingInfoEmpty(player);
+
+            Architect.LOGGER.info("Destroy: ended editing session for {}", constructionId);
+        }
+
+        // 4. Rimuovi la costruzione dal registry (e dal filesystem)
+        registry.unregister(constructionId);
+
+        Architect.LOGGER.info("Player {} destroyed construction: {}", player.getName().getString(), constructionId);
+
+        source.sendSuccess(() -> Component.literal(
+            I18n.tr(player, "destroy.success", constructionId)
+        ), true);
+
+        return 1;
     }
 }

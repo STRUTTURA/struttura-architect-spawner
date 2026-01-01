@@ -67,6 +67,9 @@ public class StrutturaScreen extends Screen {
             int editingX = startX + mainPanelWidth + PANEL_SPACING;
             editingPanel.render(graphics, editingX, panelY, mouseX, mouseY, partialTick);
         }
+
+        // Render modal on top of everything
+        mainPanel.renderModal(graphics, mouseX, mouseY);
     }
 
     @Override
@@ -79,6 +82,11 @@ public class StrutturaScreen extends Screen {
         double mouseY = event.y();
         int button = event.button();
 
+        // Handle modal clicks first - modal captures all clicks when open
+        if (mainPanel.isModalOpen()) {
+            return mainPanel.mouseClicked(mouseX, mouseY, button);
+        }
+
         PanelManager pm = PanelManager.getInstance();
         boolean isEditing = pm.isEditing();
 
@@ -89,6 +97,18 @@ public class StrutturaScreen extends Screen {
 
         int startX = (this.width - totalWidth) / 2;
         int panelY = (this.height - mainPanel.getHeight()) / 2;
+
+        // Check NEW button first (it's partially outside panel bounds)
+        // The button is at top-right corner, straddling the panel edge
+        int newBtnSize = 13;
+        int newBtnX = startX + mainPanelWidth - newBtnSize / 2 - 2;
+        int newBtnY = panelY - newBtnSize / 2 + 2;
+        if (mouseX >= newBtnX && mouseX < newBtnX + newBtnSize &&
+            mouseY >= newBtnY && mouseY < newBtnY + newBtnSize) {
+            if (mainPanel.mouseClicked(mouseX, mouseY, button)) {
+                return true;
+            }
+        }
 
         // Check if click is within main panel bounds
         if (mouseX >= startX && mouseX < startX + mainPanelWidth &&

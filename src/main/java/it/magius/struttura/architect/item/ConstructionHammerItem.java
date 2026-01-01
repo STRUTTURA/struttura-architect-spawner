@@ -3,6 +3,7 @@ package it.magius.struttura.architect.item;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
+import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -137,16 +138,7 @@ public class ConstructionHammerItem extends Item {
     }
 
     private void exitAndEnterConstruction(ServerPlayer player, EditingSession currentSession, String newConstructionId) {
-        var currentConstruction = currentSession.getConstruction();
-
-        // Salva e termina la sessione corrente
-        ConstructionRegistry.getInstance().register(currentConstruction);
-        EditingSession.endSession(player);
-
-        player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
-                I18n.tr(player, "exit.success", currentConstruction.getId(), currentConstruction.getBlockCount())));
-
-        // Entra nella nuova costruzione
+        // enterConstruction ora gestisce automaticamente l'exit dalla sessione corrente
         enterConstruction(player, newConstructionId);
     }
 
@@ -158,6 +150,20 @@ public class ConstructionHammerItem extends Item {
             player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
                     I18n.tr(player, "error.construction_not_found", id)));
             return;
+        }
+
+        // Se il player è già in editing, esci prima dalla sessione corrente
+        if (EditingSession.hasSession(player)) {
+            EditingSession currentSession = EditingSession.endSession(player);
+            var currentConstruction = currentSession.getConstruction();
+
+            // Salva la costruzione corrente se ha blocchi
+            if (currentConstruction.getBlockCount() > 0) {
+                ConstructionRegistry.getInstance().register(currentConstruction);
+            }
+
+            // Pulisci la selezione
+            SelectionManager.getInstance().clearSelection(player);
         }
 
         EditingSession session = EditingSession.startSession(player, construction);

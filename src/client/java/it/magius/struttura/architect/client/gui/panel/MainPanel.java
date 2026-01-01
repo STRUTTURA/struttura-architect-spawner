@@ -40,7 +40,12 @@ public class MainPanel {
     // Button hover states
     private int hoveredButton = -1;
 
-    public record ConstructionInfo(String id, String authorName, int blockCount, boolean isBeingEdited) {}
+    // Modal state for "NEW" dialog
+    private boolean showNewModal = false;
+    private String newIdText = "";
+    private boolean newIdFocused = true;
+
+    public record ConstructionInfo(String id, String title, int blockCount, boolean isBeingEdited) {}
 
     public int getWidth() {
         return WIDTH;
@@ -63,7 +68,7 @@ public class MainPanel {
         String filter = searchText.toLowerCase(Locale.ROOT);
         for (ConstructionInfo c : constructions) {
             if (filter.isEmpty() || c.id().toLowerCase(Locale.ROOT).contains(filter) ||
-                c.authorName().toLowerCase(Locale.ROOT).contains(filter)) {
+                c.title().toLowerCase(Locale.ROOT).contains(filter)) {
                 filteredConstructions.add(c);
             }
         }
@@ -148,9 +153,14 @@ public class MainPanel {
                 int idColor = info.isBeingEdited() ? 0xFFFFAA00 : 0xFFFFFFFF;
                 graphics.drawString(font, idText, x + PADDING + 3, itemY + 2, idColor, false);
 
-                String detailText = info.authorName() + " - " + info.blockCount() + " blocks";
-                if (detailText.length() > 30) {
-                    detailText = detailText.substring(0, 27) + "...";
+                // Title (max 30 chars) + block count
+                String titleText = info.title().isEmpty() ? "(no title)" : info.title();
+                if (titleText.length() > 30) {
+                    titleText = titleText.substring(0, 27) + "...";
+                }
+                String detailText = titleText + " - " + info.blockCount() + " blk";
+                if (detailText.length() > 35) {
+                    detailText = detailText.substring(0, 32) + "...";
                 }
                 graphics.drawString(font, detailText, x + PADDING + 3, itemY + 11, 0xFF808080, false);
             }
@@ -158,10 +168,22 @@ public class MainPanel {
 
         currentY = listEndY + PADDING;
 
+        // NEW button (positioned at top-right corner, straddling the panel edge)
+        int newBtnSize = 13;
+        int newBtnX = x + WIDTH - newBtnSize / 2 - 2;
+        int newBtnY = y - newBtnSize / 2 + 2;
+        boolean newBtnHovered = mouseX >= newBtnX && mouseX < newBtnX + newBtnSize &&
+                                mouseY >= newBtnY && mouseY < newBtnY + newBtnSize;
+        int newBgColor = newBtnHovered ? 0xFF406040 : 0xFF305030;
+        graphics.fill(newBtnX, newBtnY, newBtnX + newBtnSize, newBtnY + newBtnSize, newBgColor);
+        graphics.renderOutline(newBtnX, newBtnY, newBtnSize, newBtnSize, 0xFF60A060);
+        int newTextWidth = font.width("+");
+        graphics.drawString(font, "+", newBtnX + (newBtnSize - newTextWidth) / 2 + 1, newBtnY + 3, 0xFF88FF88, false);
+
         // Action buttons (only if something is selected)
         if (selectedIndex >= 0 && selectedIndex < filteredConstructions.size()) {
             ConstructionInfo selected = filteredConstructions.get(selectedIndex);
-            String[] buttons = {"SHOW", "HIDE", "TP", "EDIT", "SHOT"};
+            String[] buttons = {"SHOW", "HIDE", "TP", "EDIT", "SHOT", "DEL"};
             int buttonWidth = (WIDTH - PADDING * 2 - (buttons.length - 1) * 2) / buttons.length;
 
             for (int i = 0; i < buttons.length; i++) {
@@ -184,10 +206,107 @@ public class MainPanel {
             }
         }
 
+        // Modal is rendered separately via renderModal() to ensure it's on top
+    }
+
+    /**
+     * Check if the modal is currently open.
+     */
+    public boolean isModalOpen() {
+        return showNewModal;
+    }
+
+    /**
+     * Render the modal dialog on top of everything.
+     * Should be called after all panels are rendered.
+     */
+    public void renderModal(GuiGraphics graphics, int mouseX, int mouseY) {
+        if (!showNewModal) {
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        Font font = mc.font;
+        renderNewModal(graphics, font, mouseX, mouseY);
+    }
+
+    private void renderNewModal(GuiGraphics graphics, Font font, int mouseX, int mouseY) {
+        Minecraft mc = Minecraft.getInstance();
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
+
+        int modalWidth = 200;
+        int modalHeight = 80;
+        int modalX = (screenWidth - modalWidth) / 2;
+        int modalY = (screenHeight - modalHeight) / 2;
+
+        // Dark overlay behind modal
+        graphics.fill(0, 0, screenWidth, screenHeight, 0x80000000);
+
+        // Modal background
+        graphics.fill(modalX, modalY, modalX + modalWidth, modalY + modalHeight, 0xF0202020);
+        graphics.renderOutline(modalX, modalY, modalWidth, modalHeight, 0xFF60A060);
+
+        // Title
+        graphics.drawString(font, "New Construction", modalX + 10, modalY + 8, 0xFF88FF88, false);
+
+        // ID input box
+        int inputY = modalY + 25;
+        int inputWidth = modalWidth - 20;
+        graphics.fill(modalX + 10, inputY, modalX + 10 + inputWidth, inputY + 16,
+                     newIdFocused ? 0xFF404040 : 0xFF303030);
+        graphics.renderOutline(modalX + 10, inputY, inputWidth, 16,
+                              newIdFocused ? 0xFFFFFFFF : 0xFF606060);
+
+        String inputDisplay = newIdText.isEmpty() && !newIdFocused ? "namespace.category.name" : newIdText;
+        int inputColor = newIdText.isEmpty() && !newIdFocused ? 0xFF606060 : 0xFFFFFFFF;
+        graphics.drawString(font, inputDisplay + (newIdFocused ? "_" : ""),
+                           modalX + 13, inputY + 4, inputColor, false);
+
+        // Buttons: CREATE and CANCEL
+        int btnWidth = 60;
+        int btnY = modalY + 50;
+
+        // CREATE button
+        int createX = modalX + modalWidth / 2 - btnWidth - 5;
+        boolean createHovered = mouseX >= createX && mouseX < createX + btnWidth &&
+                                mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT;
+        graphics.fill(createX, btnY, createX + btnWidth, btnY + BUTTON_HEIGHT,
+                     createHovered ? 0xFF406040 : 0xFF305030);
+        graphics.renderOutline(createX, btnY, btnWidth, BUTTON_HEIGHT, 0xFF60A060);
+        int createTextW = font.width("CREATE");
+        graphics.drawString(font, "CREATE", createX + (btnWidth - createTextW) / 2, btnY + 4, 0xFF88FF88, false);
+
+        // CANCEL button
+        int cancelX = modalX + modalWidth / 2 + 5;
+        boolean cancelHovered = mouseX >= cancelX && mouseX < cancelX + btnWidth &&
+                                mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT;
+        graphics.fill(cancelX, btnY, cancelX + btnWidth, btnY + BUTTON_HEIGHT,
+                     cancelHovered ? 0xFF604040 : 0xFF503030);
+        graphics.renderOutline(cancelX, btnY, btnWidth, BUTTON_HEIGHT, 0xFFA06060);
+        int cancelTextW = font.width("CANCEL");
+        graphics.drawString(font, "CANCEL", cancelX + (btnWidth - cancelTextW) / 2, btnY + 4, 0xFFFF8888, false);
     }
 
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button != 0) return false;
+
+        // Handle modal clicks first if modal is open
+        if (showNewModal) {
+            return handleModalClick(mouseX, mouseY);
+        }
+
+        // Check NEW button click FIRST (top right corner, straddling panel edge - partially outside bounds)
+        int newBtnSize = 13;
+        int newBtnX = x + WIDTH - newBtnSize / 2 - 2;
+        int newBtnY = y - newBtnSize / 2 + 2;
+        if (mouseX >= newBtnX && mouseX < newBtnX + newBtnSize &&
+            mouseY >= newBtnY && mouseY < newBtnY + newBtnSize) {
+            showNewModal = true;
+            newIdText = "";
+            newIdFocused = true;
+            searchFocused = false;
+            return true;
+        }
 
         // Check if click is within panel bounds
         if (mouseX < x || mouseX > x + WIDTH || mouseY < y || mouseY > y + HEIGHT) {
@@ -195,7 +314,6 @@ public class MainPanel {
         }
 
         Minecraft mc = Minecraft.getInstance();
-        Font font = mc.font;
 
         int currentY = y + PADDING + 12;
 
@@ -230,7 +348,7 @@ public class MainPanel {
         // Action buttons click
         if (selectedIndex >= 0 && selectedIndex < filteredConstructions.size()) {
             ConstructionInfo selected = filteredConstructions.get(selectedIndex);
-            String[] actions = {"show", "hide", "tp", "edit", "shot"};
+            String[] actions = {"show", "hide", "tp", "edit", "shot", "destroy"};
             int buttonWidth = (WIDTH - PADDING * 2 - (actions.length - 1) * 2) / actions.length;
 
             for (int i = 0; i < actions.length; i++) {
@@ -246,6 +364,59 @@ public class MainPanel {
         }
 
         return true; // Consume click even if nothing hit within panel
+    }
+
+    private boolean handleModalClick(double mouseX, double mouseY) {
+        Minecraft mc = Minecraft.getInstance();
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
+
+        int modalWidth = 200;
+        int modalHeight = 80;
+        int modalX = (screenWidth - modalWidth) / 2;
+        int modalY = (screenHeight - modalHeight) / 2;
+
+        // Check input field click
+        int inputY = modalY + 25;
+        int inputWidth = modalWidth - 20;
+        if (mouseX >= modalX + 10 && mouseX < modalX + 10 + inputWidth &&
+            mouseY >= inputY && mouseY < inputY + 16) {
+            newIdFocused = true;
+            return true;
+        }
+
+        // Check CREATE button
+        int btnWidth = 60;
+        int btnY = modalY + 50;
+        int createX = modalX + modalWidth / 2 - btnWidth - 5;
+        if (mouseX >= createX && mouseX < createX + btnWidth &&
+            mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
+            if (!newIdText.isEmpty()) {
+                executeAction("edit", newIdText);
+                showNewModal = false;
+                newIdText = "";
+            }
+            return true;
+        }
+
+        // Check CANCEL button
+        int cancelX = modalX + modalWidth / 2 + 5;
+        if (mouseX >= cancelX && mouseX < cancelX + btnWidth &&
+            mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
+            showNewModal = false;
+            newIdText = "";
+            return true;
+        }
+
+        // Click outside modal closes it
+        if (mouseX < modalX || mouseX > modalX + modalWidth ||
+            mouseY < modalY || mouseY > modalY + modalHeight) {
+            showNewModal = false;
+            newIdText = "";
+            return true;
+        }
+
+        return true; // Consume click within modal
     }
 
     private void executeAction(String action, String targetId) {
@@ -268,6 +439,31 @@ public class MainPanel {
     }
 
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // Handle modal input first
+        if (showNewModal && newIdFocused) {
+            // Backspace
+            if (keyCode == 259 && !newIdText.isEmpty()) {
+                newIdText = newIdText.substring(0, newIdText.length() - 1);
+                return true;
+            }
+            // Escape - close modal
+            if (keyCode == 256) {
+                showNewModal = false;
+                newIdText = "";
+                return true;
+            }
+            // Enter - create
+            if (keyCode == 257) {
+                if (!newIdText.isEmpty()) {
+                    executeAction("edit", newIdText);
+                    showNewModal = false;
+                    newIdText = "";
+                }
+                return true;
+            }
+            return true; // Consume all key presses when modal is open
+        }
+
         if (!searchFocused) return false;
 
         // Backspace
@@ -293,6 +489,15 @@ public class MainPanel {
     }
 
     public boolean charTyped(char chr, int modifiers) {
+        // Handle modal input first
+        if (showNewModal && newIdFocused) {
+            if (Character.isLetterOrDigit(chr) || chr == '.' || chr == '_') {
+                newIdText += chr;
+                return true;
+            }
+            return true; // Consume all chars when modal is open
+        }
+
         if (!searchFocused) return false;
 
         if (Character.isLetterOrDigit(chr) || chr == '.' || chr == '_' || chr == ' ') {
@@ -310,5 +515,7 @@ public class MainPanel {
         scrollOffset = 0;
         constructions.clear();
         filteredConstructions.clear();
+        showNewModal = false;
+        newIdText = "";
     }
 }
