@@ -1,6 +1,7 @@
 package it.magius.struttura.architect.client.gui.panel;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.client.gui.EditBoxHelper;
 import it.magius.struttura.architect.client.gui.PanelManager;
 import it.magius.struttura.architect.network.GuiActionPacket;
 import it.magius.struttura.architect.network.SelectionKeyPacket;
@@ -27,11 +28,14 @@ public class EditingPanel {
     private int height;
     private int hoveredButton = -1;
 
-    // Editable fields state
-    private boolean editingRdns = false;
-    private boolean editingName = false;
-    private String rdnsEditText = "";
-    private String nameEditText = "";
+    // EditBox helpers for editable fields
+    private EditBoxHelper rdnsBox;
+    private EditBoxHelper nameBox;
+    private boolean editBoxesInitialized = false;
+
+    // Track which field was being edited to restore value on escape
+    private String originalRdns = "";
+    private String originalName = "";
 
     public int getWidth() {
         return WIDTH;
@@ -41,6 +45,24 @@ public class EditingPanel {
         return height;
     }
 
+    /**
+     * Initialize EditBox helpers. Must be called after Minecraft client is ready.
+     */
+    private void initEditBoxes(Font font) {
+        if (editBoxesInitialized) return;
+
+        // RDNS box - lowercase only ID characters
+        rdnsBox = new EditBoxHelper(font, 0, 0, WIDTH - PADDING * 2, LINE_HEIGHT,
+            "namespace.category.name",
+            s -> s.chars().allMatch(c -> (c >= 'a' && c <= 'z') || Character.isDigit(c) || c == '.' || c == '_'),
+            null);
+
+        // Name box - free text
+        nameBox = EditBoxHelper.createTextBox(font, 0, 0, WIDTH - PADDING * 2, LINE_HEIGHT, "(not set)");
+
+        editBoxesInitialized = true;
+    }
+
     public void render(GuiGraphics graphics, int x, int y, int mouseX, int mouseY, float tickDelta) {
         this.x = x;
         this.y = y;
@@ -48,6 +70,9 @@ public class EditingPanel {
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;
         PanelManager pm = PanelManager.getInstance();
+
+        // Initialize EditBoxes if needed
+        initEditBoxes(font);
 
         // Calculate height based on content (compact stats: 4 lines instead of 5)
         height = PADDING * 2 + LINE_HEIGHT * 7 + BUTTON_HEIGHT * 4 + PADDING * 5;
@@ -65,49 +90,46 @@ public class EditingPanel {
 
         // Construction ID (editable)
         String idLabel = "ID: ";
-        String idValue = pm.getEditingConstructionId();
-        if (editingRdns) {
-            idValue = rdnsEditText + "_";
-        }
         int idLabelWidth = font.width(idLabel);
-
         graphics.drawString(font, idLabel, x + PADDING, currentY, 0xFF808080, false);
 
-        // ID field background
+        // ID field using EditBoxHelper
         int fieldX = x + PADDING + idLabelWidth;
         int fieldWidth = WIDTH - PADDING * 2 - idLabelWidth;
-        boolean idHovered = mouseX >= fieldX && mouseX < fieldX + fieldWidth &&
-                           mouseY >= currentY - 1 && mouseY < currentY + LINE_HEIGHT;
-        int idBgColor = editingRdns ? 0xFF404040 : (idHovered ? 0xFF303030 : 0x00000000);
-        if (idBgColor != 0) {
-            graphics.fill(fieldX - 1, currentY - 1, fieldX + fieldWidth, currentY + LINE_HEIGHT - 1, idBgColor);
+
+        // Update EditBox with current value if not focused (sync from server)
+        if (!rdnsBox.isFocused()) {
+            String currentId = pm.getEditingConstructionId();
+            if (!rdnsBox.getValue().equals(currentId)) {
+                rdnsBox.setValue(currentId);
+            }
         }
-        graphics.drawString(font, truncate(idValue, fieldWidth - 2, font), fieldX, currentY, 0xFFFFFFFF, false);
+
+        rdnsBox.setPosition(fieldX, currentY - 1);
+        rdnsBox.setWidth(fieldWidth);
+        rdnsBox.render(graphics, mouseX, mouseY, tickDelta);
         currentY += LINE_HEIGHT + 2;
 
         // Name (editable)
         String nameLabel = "Name: ";
-        String nameValue = pm.getEditingTitle();
-        if (nameValue.isEmpty()) {
-            nameValue = "(not set)";
-        }
-        if (editingName) {
-            nameValue = nameEditText + "_";
-        }
         int nameLabelWidth = font.width(nameLabel);
-
         graphics.drawString(font, nameLabel, x + PADDING, currentY, 0xFF808080, false);
 
+        // Name field using EditBoxHelper
         fieldX = x + PADDING + nameLabelWidth;
         fieldWidth = WIDTH - PADDING * 2 - nameLabelWidth;
-        boolean nameHovered = mouseX >= fieldX && mouseX < fieldX + fieldWidth &&
-                             mouseY >= currentY - 1 && mouseY < currentY + LINE_HEIGHT;
-        int nameBgColor = editingName ? 0xFF404040 : (nameHovered ? 0xFF303030 : 0x00000000);
-        if (nameBgColor != 0) {
-            graphics.fill(fieldX - 1, currentY - 1, fieldX + fieldWidth, currentY + LINE_HEIGHT - 1, nameBgColor);
+
+        // Update EditBox with current value if not focused (sync from server)
+        if (!nameBox.isFocused()) {
+            String currentTitle = pm.getEditingTitle();
+            if (!nameBox.getValue().equals(currentTitle)) {
+                nameBox.setValue(currentTitle);
+            }
         }
-        int nameColor = pm.getEditingTitle().isEmpty() && !editingName ? 0xFF606060 : 0xFFFFFFFF;
-        graphics.drawString(font, truncate(nameValue, fieldWidth - 2, font), fieldX, currentY, nameColor, false);
+
+        nameBox.setPosition(fieldX, currentY - 1);
+        nameBox.setWidth(fieldWidth);
+        nameBox.render(graphics, mouseX, mouseY, tickDelta);
         currentY += LINE_HEIGHT + PADDING;
 
         // Stats (compact layout)
@@ -225,9 +247,15 @@ public class EditingPanel {
 
         // Check if click is within panel bounds
         if (mouseX < x || mouseX > x + WIDTH || mouseY < y || mouseY > y + height) {
-            // Click outside - cancel editing
-            editingRdns = false;
-            editingName = false;
+            // Click outside - cancel editing and restore values
+            if (rdnsBox != null && rdnsBox.isFocused()) {
+                rdnsBox.setValue(originalRdns);
+                rdnsBox.setFocused(false);
+            }
+            if (nameBox != null && nameBox.isFocused()) {
+                nameBox.setValue(originalName);
+                nameBox.setFocused(false);
+            }
             return false;
         }
 
@@ -238,37 +266,31 @@ public class EditingPanel {
         int currentY = y + PADDING + LINE_HEIGHT + 2;
 
         // ID field click
-        String idLabel = "ID: ";
-        int idLabelWidth = font.width(idLabel);
-        int fieldX = x + PADDING + idLabelWidth;
-        int fieldWidth = WIDTH - PADDING * 2 - idLabelWidth;
-
-        if (mouseX >= fieldX && mouseX < fieldX + fieldWidth &&
-            mouseY >= currentY - 1 && mouseY < currentY + LINE_HEIGHT) {
-            editingRdns = true;
-            editingName = false;
-            rdnsEditText = pm.getEditingConstructionId();
+        if (rdnsBox.mouseClicked(mouseX, mouseY, button)) {
+            // Save original value for cancel
+            originalRdns = pm.getEditingConstructionId();
+            nameBox.setFocused(false);
             return true;
         }
         currentY += LINE_HEIGHT + 2;
 
         // Name field click
-        String nameLabel = "Name: ";
-        int nameLabelWidth = font.width(nameLabel);
-        fieldX = x + PADDING + nameLabelWidth;
-        fieldWidth = WIDTH - PADDING * 2 - nameLabelWidth;
-
-        if (mouseX >= fieldX && mouseX < fieldX + fieldWidth &&
-            mouseY >= currentY - 1 && mouseY < currentY + LINE_HEIGHT) {
-            editingName = true;
-            editingRdns = false;
-            nameEditText = pm.getEditingTitle();
+        if (nameBox.mouseClicked(mouseX, mouseY, button)) {
+            // Save original value for cancel
+            originalName = pm.getEditingTitle();
+            rdnsBox.setFocused(false);
             return true;
         }
 
-        // Cancel field editing if clicking elsewhere
-        editingRdns = false;
-        editingName = false;
+        // Cancel field editing if clicking elsewhere in panel
+        if (rdnsBox.isFocused()) {
+            rdnsBox.setValue(originalRdns);
+            rdnsBox.setFocused(false);
+        }
+        if (nameBox.isFocused()) {
+            nameBox.setValue(originalName);
+            nameBox.setFocused(false);
+        }
 
         // Skip stats section (Stats label + 3 data rows)
         currentY += LINE_HEIGHT + PADDING + LINE_HEIGHT * 4 + PADDING;
@@ -328,56 +350,54 @@ public class EditingPanel {
     }
 
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (!editingRdns && !editingName) return false;
-
-        // Backspace
-        if (keyCode == 259) {
-            if (editingRdns && !rdnsEditText.isEmpty()) {
-                rdnsEditText = rdnsEditText.substring(0, rdnsEditText.length() - 1);
-            } else if (editingName && !nameEditText.isEmpty()) {
-                nameEditText = nameEditText.substring(0, nameEditText.length() - 1);
+        // Handle RDNS box
+        if (rdnsBox != null && rdnsBox.isFocused()) {
+            // Escape - cancel editing and restore
+            if (keyCode == 256) {
+                rdnsBox.setValue(originalRdns);
+                rdnsBox.setFocused(false);
+                return true;
             }
-            return true;
-        }
-
-        // Escape - cancel editing
-        if (keyCode == 256) {
-            editingRdns = false;
-            editingName = false;
-            return true;
-        }
-
-        // Enter - confirm editing
-        if (keyCode == 257) {
-            if (editingRdns) {
-                // Send rename packet
-                ClientPlayNetworking.send(new GuiActionPacket("rename", rdnsEditText, ""));
-                editingRdns = false;
-            } else if (editingName) {
-                // Send title update packet
-                ClientPlayNetworking.send(new GuiActionPacket("title", "", nameEditText));
-                editingName = false;
+            // Enter - confirm editing
+            if (keyCode == 257) {
+                ClientPlayNetworking.send(new GuiActionPacket("rename", rdnsBox.getValue(), ""));
+                rdnsBox.setFocused(false);
+                return true;
             }
-            return true;
+            return rdnsBox.keyPressed(keyCode, scanCode, modifiers);
         }
 
-        return true;
+        // Handle Name box
+        if (nameBox != null && nameBox.isFocused()) {
+            // Escape - cancel editing and restore
+            if (keyCode == 256) {
+                nameBox.setValue(originalName);
+                nameBox.setFocused(false);
+                return true;
+            }
+            // Enter - confirm editing
+            if (keyCode == 257) {
+                ClientPlayNetworking.send(new GuiActionPacket("title", "", nameBox.getValue()));
+                nameBox.setFocused(false);
+                return true;
+            }
+            return nameBox.keyPressed(keyCode, scanCode, modifiers);
+        }
+
+        return false;
     }
 
     public boolean charTyped(char chr, int modifiers) {
-        if (editingRdns) {
-            // Only allow valid ID characters
-            if (Character.isLetterOrDigit(chr) || chr == '.' || chr == '_') {
-                rdnsEditText += Character.toLowerCase(chr);
-            }
-            return true;
-        } else if (editingName) {
-            // Allow most characters for name
-            if (chr >= 32) {
-                nameEditText += chr;
-            }
-            return true;
+        // Handle RDNS box - force lowercase
+        if (rdnsBox != null && rdnsBox.isFocused()) {
+            return rdnsBox.charTyped(Character.toLowerCase(chr), modifiers);
         }
+
+        // Handle Name box
+        if (nameBox != null && nameBox.isFocused()) {
+            return nameBox.charTyped(chr, modifiers);
+        }
+
         return false;
     }
 }

@@ -2,6 +2,7 @@ package it.magius.struttura.architect.client.gui.panel;
 
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.client.ModValidator;
+import it.magius.struttura.architect.client.gui.EditBoxHelper;
 import it.magius.struttura.architect.client.gui.PanelManager;
 import it.magius.struttura.architect.model.ModInfo;
 import it.magius.struttura.architect.network.GuiActionPacket;
@@ -34,8 +35,6 @@ public class MainPanel {
     private static final int SEARCH_HEIGHT = 16;
 
     private int x, y;
-    private String searchText = "";
-    private boolean searchFocused = false;
     private int selectedIndex = -1;
     private int scrollOffset = 0;
 
@@ -46,15 +45,17 @@ public class MainPanel {
     // Button hover states
     private int hoveredButton = -1;
 
+    // EditBox helpers for text input
+    private EditBoxHelper searchBox;
+    private EditBoxHelper newIdBox;
+    private EditBoxHelper pullIdBox;
+    private boolean editBoxesInitialized = false;
+
     // Modal state for "NEW" dialog
     private boolean showNewModal = false;
-    private String newIdText = "";
-    private boolean newIdFocused = true;
 
     // Modal state for "PULL" dialog
     private boolean showPullModal = false;
-    private String pullIdText = "";
-    private boolean pullIdFocused = true;
 
     // Modal state for "MISSING MODS" dialog
     private boolean showMissingModsDialog = false;
@@ -83,7 +84,7 @@ public class MainPanel {
 
     private void applyFilter() {
         filteredConstructions.clear();
-        String filter = searchText.toLowerCase(Locale.ROOT);
+        String filter = searchBox != null ? searchBox.getValue().toLowerCase(Locale.ROOT) : "";
         for (ConstructionInfo c : constructions) {
             if (filter.isEmpty() || c.id().toLowerCase(Locale.ROOT).contains(filter) ||
                 c.title().toLowerCase(Locale.ROOT).contains(filter)) {
@@ -100,6 +101,27 @@ public class MainPanel {
         }
     }
 
+    /**
+     * Initialize EditBox helpers. Must be called after Minecraft client is ready.
+     */
+    private void initEditBoxes() {
+        if (editBoxesInitialized) return;
+
+        Font font = Minecraft.getInstance().font;
+
+        // Search box
+        searchBox = EditBoxHelper.createSearchBox(font, 0, 0, WIDTH - PADDING * 2, SEARCH_HEIGHT,
+            text -> applyFilter());
+
+        // New ID modal box
+        newIdBox = EditBoxHelper.createIdBox(font, 0, 0, 180, 16, "namespace.category.name");
+
+        // Pull ID modal box
+        pullIdBox = EditBoxHelper.createIdBox(font, 0, 0, 180, 16, "it.example.myhouse");
+
+        editBoxesInitialized = true;
+    }
+
     private int getVisibleItemCount() {
         int buttonsAreaHeight = BUTTON_HEIGHT * 2 + 2 + PADDING; // 2 button rows + spacing + padding
         int listHeight = HEIGHT - PADDING * 3 - SEARCH_HEIGHT - buttonsAreaHeight - 12;
@@ -112,6 +134,9 @@ public class MainPanel {
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;
 
+        // Initialize EditBoxes if needed
+        initEditBoxes();
+
         // Draw background
         graphics.fill(x, y, x + WIDTH, y + HEIGHT, 0xE0000000);
         graphics.renderOutline(x, y, WIDTH, HEIGHT, 0xFF404040);
@@ -121,18 +146,12 @@ public class MainPanel {
 
         int currentY = y + PADDING + 12;
 
-        // Search box
+        // Search box using EditBoxHelper
         int searchBoxX = x + PADDING;
         int searchBoxWidth = WIDTH - PADDING * 2;
-        graphics.fill(searchBoxX, currentY, searchBoxX + searchBoxWidth, currentY + SEARCH_HEIGHT,
-                     searchFocused ? 0xFF404040 : 0xFF202020);
-        graphics.renderOutline(searchBoxX, currentY, searchBoxWidth, SEARCH_HEIGHT,
-                              searchFocused ? 0xFFFFFFFF : 0xFF606060);
-
-        String displayText = searchText.isEmpty() && !searchFocused ? "Search..." : searchText;
-        int textColor = searchText.isEmpty() && !searchFocused ? 0xFF808080 : 0xFFFFFFFF;
-        graphics.drawString(font, displayText + (searchFocused ? "_" : ""),
-                           searchBoxX + 3, currentY + 4, textColor, false);
+        searchBox.setPosition(searchBoxX, currentY);
+        searchBox.setWidth(searchBoxWidth);
+        searchBox.render(graphics, mouseX, mouseY, tickDelta);
 
         currentY += SEARCH_HEIGHT + PADDING;
 
@@ -324,18 +343,12 @@ public class MainPanel {
         // Title
         graphics.drawString(font, "New Construction", modalX + 10, modalY + 8, 0xFF88FF88, false);
 
-        // ID input box
+        // ID input box using EditBoxHelper
         int inputY = modalY + 25;
         int inputWidth = modalWidth - 20;
-        graphics.fill(modalX + 10, inputY, modalX + 10 + inputWidth, inputY + 16,
-                     newIdFocused ? 0xFF404040 : 0xFF303030);
-        graphics.renderOutline(modalX + 10, inputY, inputWidth, 16,
-                              newIdFocused ? 0xFFFFFFFF : 0xFF606060);
-
-        String inputDisplay = newIdText.isEmpty() && !newIdFocused ? "namespace.category.name" : newIdText;
-        int inputColor = newIdText.isEmpty() && !newIdFocused ? 0xFF606060 : 0xFFFFFFFF;
-        graphics.drawString(font, inputDisplay + (newIdFocused ? "_" : ""),
-                           modalX + 13, inputY + 4, inputColor, false);
+        newIdBox.setPosition(modalX + 10, inputY);
+        newIdBox.setWidth(inputWidth);
+        newIdBox.render(graphics, mouseX, mouseY, 0);
 
         // Buttons: CREATE and CANCEL
         int btnWidth = 60;
@@ -382,25 +395,12 @@ public class MainPanel {
         // Title with down arrow
         graphics.drawString(font, "\u2193 Pull Construction", modalX + 10, modalY + 8, 0xFF8888FF, false);
 
-        // ID input box
+        // ID input box using EditBoxHelper
         int inputY = modalY + 25;
         int inputWidth = modalWidth - 20;
-        graphics.fill(modalX + 10, inputY, modalX + 10 + inputWidth, inputY + 16,
-                     pullIdFocused ? 0xFF404040 : 0xFF303030);
-        graphics.renderOutline(modalX + 10, inputY, inputWidth, 16,
-                              pullIdFocused ? 0xFFFFFFFF : 0xFF606060);
-
-        // Show placeholder when text is empty, cursor when focused
-        if (pullIdText.isEmpty()) {
-            graphics.drawString(font, "it.example.myhouse", modalX + 13, inputY + 4, 0xFF606060, false);
-            if (pullIdFocused) {
-                // Draw cursor at the start
-                graphics.drawString(font, "_", modalX + 13, inputY + 4, 0xFFFFFFFF, false);
-            }
-        } else {
-            graphics.drawString(font, pullIdText + (pullIdFocused ? "_" : ""),
-                               modalX + 13, inputY + 4, 0xFFFFFFFF, false);
-        }
+        pullIdBox.setPosition(modalX + 10, inputY);
+        pullIdBox.setWidth(inputWidth);
+        pullIdBox.render(graphics, mouseX, mouseY, 0);
 
         // Buttons: PULL and CANCEL
         int btnWidth = 60;
@@ -451,9 +451,9 @@ public class MainPanel {
         if (mouseX >= newBtnX && mouseX < newBtnX + btnSize &&
             mouseY >= newBtnY && mouseY < newBtnY + btnSize) {
             showNewModal = true;
-            newIdText = "";
-            newIdFocused = true;
-            searchFocused = false;
+            newIdBox.clear();
+            newIdBox.setFocused(true);
+            searchBox.setFocused(false);
             return true;
         }
 
@@ -463,9 +463,9 @@ public class MainPanel {
         if (mouseX >= pullBtnX && mouseX < pullBtnX + btnSize &&
             mouseY >= pullBtnY && mouseY < pullBtnY + btnSize) {
             showPullModal = true;
-            pullIdText = "";
-            pullIdFocused = true;
-            searchFocused = false;
+            pullIdBox.clear();
+            pullIdBox.setFocused(true);
+            searchBox.setFocused(false);
             return true;
         }
 
@@ -478,15 +478,11 @@ public class MainPanel {
 
         int currentY = y + PADDING + 12;
 
-        // Search box click
-        int searchBoxX = x + PADDING;
-        int searchBoxWidth = WIDTH - PADDING * 2;
-        if (mouseX >= searchBoxX && mouseX < searchBoxX + searchBoxWidth &&
-            mouseY >= currentY && mouseY < currentY + SEARCH_HEIGHT) {
-            searchFocused = true;
+        // Search box click - check if clicking on search box
+        if (searchBox.mouseClicked(mouseX, mouseY, button)) {
             return true;
         } else {
-            searchFocused = false;
+            searchBox.setFocused(false);
         }
 
         currentY += SEARCH_HEIGHT + PADDING;
@@ -554,11 +550,7 @@ public class MainPanel {
         int modalY = (screenHeight - modalHeight) / 2;
 
         // Check input field click
-        int inputY = modalY + 25;
-        int inputWidth = modalWidth - 20;
-        if (mouseX >= modalX + 10 && mouseX < modalX + 10 + inputWidth &&
-            mouseY >= inputY && mouseY < inputY + 16) {
-            newIdFocused = true;
+        if (newIdBox.mouseClicked(mouseX, mouseY, 0)) {
             return true;
         }
 
@@ -568,10 +560,10 @@ public class MainPanel {
         int createX = modalX + modalWidth / 2 - btnWidth - 5;
         if (mouseX >= createX && mouseX < createX + btnWidth &&
             mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
-            if (!newIdText.isEmpty()) {
-                executeAction("edit", newIdText);
+            if (!newIdBox.getValue().isEmpty()) {
+                executeAction("edit", newIdBox.getValue());
                 showNewModal = false;
-                newIdText = "";
+                newIdBox.clear();
             }
             return true;
         }
@@ -581,7 +573,7 @@ public class MainPanel {
         if (mouseX >= cancelX && mouseX < cancelX + btnWidth &&
             mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
             showNewModal = false;
-            newIdText = "";
+            newIdBox.clear();
             return true;
         }
 
@@ -589,7 +581,7 @@ public class MainPanel {
         if (mouseX < modalX || mouseX > modalX + modalWidth ||
             mouseY < modalY || mouseY > modalY + modalHeight) {
             showNewModal = false;
-            newIdText = "";
+            newIdBox.clear();
             return true;
         }
 
@@ -607,11 +599,7 @@ public class MainPanel {
         int modalY = (screenHeight - modalHeight) / 2;
 
         // Check input field click
-        int inputY = modalY + 25;
-        int inputWidth = modalWidth - 20;
-        if (mouseX >= modalX + 10 && mouseX < modalX + 10 + inputWidth &&
-            mouseY >= inputY && mouseY < inputY + 16) {
-            pullIdFocused = true;
+        if (pullIdBox.mouseClicked(mouseX, mouseY, 0)) {
             return true;
         }
 
@@ -621,11 +609,11 @@ public class MainPanel {
         int pullX = modalX + modalWidth / 2 - btnWidth - 5;
         if (mouseX >= pullX && mouseX < pullX + btnWidth &&
             mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
-            if (!pullIdText.isEmpty()) {
+            if (!pullIdBox.getValue().isEmpty()) {
                 // First check mod requirements, then pull if all mods present
-                executeAction("pull_check", pullIdText);
+                executeAction("pull_check", pullIdBox.getValue());
                 showPullModal = false;
-                pullIdText = "";
+                pullIdBox.clear();
             }
             return true;
         }
@@ -635,7 +623,7 @@ public class MainPanel {
         if (mouseX >= cancelX && mouseX < cancelX + btnWidth &&
             mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
             showPullModal = false;
-            pullIdText = "";
+            pullIdBox.clear();
             return true;
         }
 
@@ -643,7 +631,7 @@ public class MainPanel {
         if (mouseX < modalX || mouseX > modalX + modalWidth ||
             mouseY < modalY || mouseY > modalY + modalHeight) {
             showPullModal = false;
-            pullIdText = "";
+            pullIdBox.clear();
             return true;
         }
 
@@ -679,53 +667,45 @@ public class MainPanel {
 
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         // Handle NEW modal input first
-        if (showNewModal && newIdFocused) {
-            // Backspace
-            if (keyCode == 259 && !newIdText.isEmpty()) {
-                newIdText = newIdText.substring(0, newIdText.length() - 1);
-                return true;
-            }
+        if (showNewModal && newIdBox.isFocused()) {
             // Escape - close modal
             if (keyCode == 256) {
                 showNewModal = false;
-                newIdText = "";
+                newIdBox.clear();
                 return true;
             }
             // Enter - create
             if (keyCode == 257) {
-                if (!newIdText.isEmpty()) {
-                    executeAction("edit", newIdText);
+                if (!newIdBox.getValue().isEmpty()) {
+                    executeAction("edit", newIdBox.getValue());
                     showNewModal = false;
-                    newIdText = "";
+                    newIdBox.clear();
                 }
                 return true;
             }
-            return true; // Consume all key presses when modal is open
+            // Let EditBox handle other keys
+            return newIdBox.keyPressed(keyCode, scanCode, modifiers);
         }
 
         // Handle PULL modal input
-        if (showPullModal && pullIdFocused) {
-            // Backspace
-            if (keyCode == 259 && !pullIdText.isEmpty()) {
-                pullIdText = pullIdText.substring(0, pullIdText.length() - 1);
-                return true;
-            }
+        if (showPullModal && pullIdBox.isFocused()) {
             // Escape - close modal
             if (keyCode == 256) {
                 showPullModal = false;
-                pullIdText = "";
+                pullIdBox.clear();
                 return true;
             }
             // Enter - pull (check mods first)
             if (keyCode == 257) {
-                if (!pullIdText.isEmpty()) {
-                    executeAction("pull_check", pullIdText);
+                if (!pullIdBox.getValue().isEmpty()) {
+                    executeAction("pull_check", pullIdBox.getValue());
                     showPullModal = false;
-                    pullIdText = "";
+                    pullIdBox.clear();
                 }
                 return true;
             }
-            return true; // Consume all key presses when modal is open
+            // Let EditBox handle other keys
+            return pullIdBox.keyPressed(keyCode, scanCode, modifiers);
         }
 
         // Handle Missing Mods dialog
@@ -740,70 +720,63 @@ public class MainPanel {
             return true; // Consume all key presses when modal is open
         }
 
-        if (!searchFocused) return false;
-
-        // Backspace
-        if (keyCode == 259 && !searchText.isEmpty()) {
-            searchText = searchText.substring(0, searchText.length() - 1);
-            applyFilter();
-            return true;
+        // Handle search box
+        if (searchBox.isFocused()) {
+            // Escape - unfocus
+            if (keyCode == 256) {
+                searchBox.setFocused(false);
+                return true;
+            }
+            // Enter - unfocus
+            if (keyCode == 257) {
+                searchBox.setFocused(false);
+                return true;
+            }
+            // Let EditBox handle other keys
+            return searchBox.keyPressed(keyCode, scanCode, modifiers);
         }
 
-        // Escape - unfocus
-        if (keyCode == 256) {
-            searchFocused = false;
-            return true;
-        }
-
-        // Enter - unfocus
-        if (keyCode == 257) {
-            searchFocused = false;
-            return true;
-        }
-
-        return true; // Consume all key presses when focused
+        return false;
     }
 
     public boolean charTyped(char chr, int modifiers) {
         // Handle NEW modal input first
-        if (showNewModal && newIdFocused) {
-            if (Character.isLetterOrDigit(chr) || chr == '.' || chr == '_') {
-                newIdText += chr;
-                return true;
-            }
-            return true; // Consume all chars when modal is open
+        if (showNewModal && newIdBox.isFocused()) {
+            return newIdBox.charTyped(chr, modifiers);
         }
 
         // Handle PULL modal input
-        if (showPullModal && pullIdFocused) {
-            if (Character.isLetterOrDigit(chr) || chr == '.' || chr == '_') {
-                pullIdText += chr;
-                return true;
-            }
-            return true; // Consume all chars when modal is open
+        if (showPullModal && pullIdBox.isFocused()) {
+            return pullIdBox.charTyped(chr, modifiers);
         }
 
-        if (!searchFocused) return false;
-
-        if (Character.isLetterOrDigit(chr) || chr == '.' || chr == '_' || chr == ' ') {
-            searchText += chr;
-            applyFilter();
-            return true;
+        // Handle search box
+        if (searchBox.isFocused()) {
+            return searchBox.charTyped(chr, modifiers);
         }
-        return true; // Consume all chars when focused
+
+        return false;
     }
 
     public void reset() {
-        searchText = "";
-        searchFocused = false;
+        if (searchBox != null) {
+            searchBox.clear();
+            searchBox.setFocused(false);
+        }
+        if (newIdBox != null) {
+            newIdBox.clear();
+            newIdBox.setFocused(false);
+        }
+        if (pullIdBox != null) {
+            pullIdBox.clear();
+            pullIdBox.setFocused(false);
+        }
         selectedIndex = -1;
         scrollOffset = 0;
         constructions.clear();
         filteredConstructions.clear();
         showNewModal = false;
-        newIdText = "";
         showPullModal = false;
-        pullIdText = "";
         showMissingModsDialog = false;
         pendingPullId = null;
         missingMods.clear();
