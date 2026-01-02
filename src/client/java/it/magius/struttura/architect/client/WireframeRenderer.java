@@ -2,7 +2,9 @@ package it.magius.struttura.architect.client;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.network.WireframeData;
+import net.minecraft.client.Minecraft;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.minecraft.client.renderer.ShapeRenderer;
@@ -65,27 +67,50 @@ public class WireframeRenderer {
         // Ottieni la posizione della camera dal cameraRenderState
         Vec3 cameraPos = context.worldState().cameraRenderState.pos;
 
+        // Calcola parametri per il fade basato sulla distanza
+        BlockPos playerPos = Minecraft.getInstance().player.blockPosition();
+        int fadeStart = ArchitectConfig.getInstance().getWireframeFadeStart();
+        int fadeEnd = ArchitectConfig.getInstance().getWireframeFadeEnd();
+        int fadeStartSq = fadeStart * fadeStart;
+        int fadeEndSq = fadeEnd * fadeEnd;
+
         poseStack.pushPose();
 
         // Renderizza wireframe per i blocchi overlay (colore ROSSO, leggermente più grande del blocco)
         if (constructionData.active && hasBlocks) {
             for (BlockPos pos : blockPositions) {
+                double distSq = playerPos.distSqr(pos);
+                if (distSq >= fadeEndSq) continue;  // Skip blocchi troppo lontani
+
+                float alpha = 1.0f;
+                if (distSq > fadeStartSq) {
+                    alpha = 1.0f - (float)((distSq - fadeStartSq) / (double)(fadeEndSq - fadeStartSq));
+                }
+
                 AABB box = new AABB(
                     pos.getX() - BLOCK_OUTSET, pos.getY() - BLOCK_OUTSET, pos.getZ() - BLOCK_OUTSET,
                     pos.getX() + 1 + BLOCK_OUTSET, pos.getY() + 1 + BLOCK_OUTSET, pos.getZ() + 1 + BLOCK_OUTSET
                 );
-                renderShape(poseStack, lineBuffer, box, cameraPos, BLOCK_COLOR);
+                renderShapeWithAlpha(poseStack, lineBuffer, box, cameraPos, BLOCK_COLOR, alpha);
             }
         }
 
         // Renderizza wireframe per i blocchi di anteprima (colore CIANO, blocchi che verranno aggiunti)
         if (hasPreview) {
             for (BlockPos pos : previewPositions) {
+                double distSq = playerPos.distSqr(pos);
+                if (distSq >= fadeEndSq) continue;  // Skip blocchi troppo lontani
+
+                float alpha = 1.0f;
+                if (distSq > fadeStartSq) {
+                    alpha = 1.0f - (float)((distSq - fadeStartSq) / (double)(fadeEndSq - fadeStartSq));
+                }
+
                 AABB box = new AABB(
                     pos.getX() - BLOCK_OUTSET, pos.getY() - BLOCK_OUTSET, pos.getZ() - BLOCK_OUTSET,
                     pos.getX() + 1 + BLOCK_OUTSET, pos.getY() + 1 + BLOCK_OUTSET, pos.getZ() + 1 + BLOCK_OUTSET
                 );
-                renderShape(poseStack, lineBuffer, box, cameraPos, SELECTION_COLOR);
+                renderShapeWithAlpha(poseStack, lineBuffer, box, cameraPos, SELECTION_COLOR, alpha);
             }
         }
 
@@ -130,6 +155,26 @@ public class WireframeRenderer {
             poseStack, lineBuffer, shape,
             -cameraPos.x, -cameraPos.y, -cameraPos.z,
             color, 1.0f
+        );
+    }
+
+    /**
+     * Renderizza una forma wireframe con alpha personalizzato per il fade basato sulla distanza.
+     */
+    private static void renderShapeWithAlpha(PoseStack poseStack, VertexConsumer lineBuffer,
+            AABB box, Vec3 cameraPos, int color, float alpha) {
+        // Estrai componenti colore e applica alpha
+        int a = (int)((color >> 24 & 0xFF) * alpha);
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+        int colorWithAlpha = (a << 24) | (r << 16) | (g << 8) | b;
+
+        VoxelShape shape = Shapes.create(box);
+        ShapeRenderer.renderShape(
+            poseStack, lineBuffer, shape,
+            -cameraPos.x, -cameraPos.y, -cameraPos.z,
+            colorWithAlpha, alpha
         );
     }
 

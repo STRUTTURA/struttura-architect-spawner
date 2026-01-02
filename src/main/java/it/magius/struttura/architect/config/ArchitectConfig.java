@@ -30,6 +30,10 @@ public class ArchitectConfig {
     private String apikey = "us-ak_385b96c7595ed54693f6367e5d1765a585e45d2bbd940ad3a40154510975440edc42c016dcc76cbce19e7e16a613e550b093c918f141cd66f9032f9523a347c8";
     private int requestTimeout = 60;
 
+    // Wireframe rendering settings
+    private int wireframeFadeStart = 10;   // Distanza inizio fade (blocchi)
+    private int wireframeFadeEnd = 30;     // Distanza fine fade / non renderizzato (blocchi)
+
     private ArchitectConfig() {}
 
     /**
@@ -99,6 +103,8 @@ public class ArchitectConfig {
     public String getAuth() { return auth; }
     public String getApikey() { return apikey; }
     public int getRequestTimeout() { return requestTimeout; }
+    public int getWireframeFadeStart() { return wireframeFadeStart; }
+    public int getWireframeFadeEnd() { return wireframeFadeEnd; }
 
     // Setters
     public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
