@@ -18,7 +18,10 @@ import org.slf4j.LoggerFactory;
 
 public class Architect implements ModInitializer {
 	public static final String MOD_ID = "architect";
-	public static final String MOD_VERSION = "0.1.0";
+	public static final String MOD_VERSION = net.fabricmc.loader.api.FabricLoader.getInstance()
+		.getModContainer(MOD_ID)
+		.map(container -> container.getMetadata().getVersion().getFriendlyString())
+		.orElse("unknown");
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
 	@Override

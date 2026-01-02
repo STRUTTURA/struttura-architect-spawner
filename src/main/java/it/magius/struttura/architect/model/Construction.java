@@ -3,6 +3,7 @@ package it.magius.struttura.architect.model;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -43,6 +44,13 @@ public class Construction {
 
     // Blocchi tracciati: posizione -> stato blocco
     private final Map<BlockPos, BlockState> blocks = new HashMap<>();
+
+    // NBT dei block entities (casse, furnace, etc.): posizione -> NBT
+    // Solo per blocchi che hanno dati NBT (contenuto inventario, etc.)
+    private final Map<BlockPos, CompoundTag> blockEntityNbt = new HashMap<>();
+
+    // Entità nella costruzione: UUID originale -> dati entità
+    private final Map<UUID, EntityData> entities = new HashMap<>();
 
     // Bounds calcolati dai blocchi
     private final ConstructionBounds bounds = new ConstructionBounds();
@@ -109,12 +117,63 @@ public class Construction {
     }
 
     /**
+     * Aggiunge un blocco con il suo NBT (per block entities come casse, furnace, etc.)
+     */
+    public void addBlock(BlockPos pos, BlockState state, CompoundTag nbt) {
+        blocks.put(pos.immutable(), state);
+        if (nbt != null && !nbt.isEmpty()) {
+            blockEntityNbt.put(pos.immutable(), nbt);
+        }
+        bounds.expandToInclude(pos);
+    }
+
+    /**
+     * Imposta l'NBT di un block entity.
+     */
+    public void setBlockEntityNbt(BlockPos pos, CompoundTag nbt) {
+        if (nbt != null && !nbt.isEmpty()) {
+            blockEntityNbt.put(pos.immutable(), nbt);
+        } else {
+            blockEntityNbt.remove(pos);
+        }
+    }
+
+    /**
+     * Ottiene l'NBT di un block entity.
+     */
+    public CompoundTag getBlockEntityNbt(BlockPos pos) {
+        return blockEntityNbt.get(pos);
+    }
+
+    /**
+     * Verifica se un blocco ha un NBT associato.
+     */
+    public boolean hasBlockEntityNbt(BlockPos pos) {
+        return blockEntityNbt.containsKey(pos);
+    }
+
+    /**
+     * Ottiene tutti gli NBT dei block entities.
+     */
+    public Map<BlockPos, CompoundTag> getBlockEntityNbtMap() {
+        return blockEntityNbt;
+    }
+
+    /**
+     * Conta i block entities con NBT.
+     */
+    public int getBlockEntityCount() {
+        return blockEntityNbt.size();
+    }
+
+    /**
      * Rimuove un blocco dalla costruzione.
      * Ricalcola i bounds automaticamente dopo la rimozione.
      */
     public boolean removeBlock(BlockPos pos) {
         boolean removed = blocks.remove(pos) != null;
         if (removed) {
+            blockEntityNbt.remove(pos);  // Rimuovi anche l'NBT se presente
             recalculateBounds();
         }
         return removed;
@@ -217,6 +276,43 @@ public class Construction {
     public Map<BlockPos, BlockState> getBlocks() { return blocks; }
     public ConstructionBounds getBounds() { return bounds; }
 
+    // ===== Entity management =====
+
+    /**
+     * Aggiunge un'entità alla costruzione.
+     */
+    public void addEntity(UUID id, EntityData data) {
+        entities.put(id, data);
+    }
+
+    /**
+     * Rimuove un'entità dalla costruzione.
+     */
+    public boolean removeEntity(UUID id) {
+        return entities.remove(id) != null;
+    }
+
+    /**
+     * Rimuove tutte le entità dalla costruzione.
+     */
+    public void clearEntities() {
+        entities.clear();
+    }
+
+    /**
+     * Ottiene tutte le entità della costruzione.
+     */
+    public Map<UUID, EntityData> getEntities() {
+        return entities;
+    }
+
+    /**
+     * Conta le entità nella costruzione.
+     */
+    public int getEntityCount() {
+        return entities.size();
+    }
+
     // Getter/Setter multilingua per titoli
     public Map<String, String> getTitles() { return titles; }
     public String getTitle(String lang) { return titles.getOrDefault(lang, ""); }
@@ -298,15 +394,26 @@ public class Construction {
 
     /**
      * Crea una copia della costruzione con un nuovo ID.
-     * Tutti i dati (blocchi, titoli, descrizioni, etc.) vengono copiati.
+     * Tutti i dati (blocchi, entità, titoli, descrizioni, etc.) vengono copiati.
      */
     public Construction copyWithNewId(String newId) {
         Construction copy = new Construction(newId, this.authorId, this.authorName, this.createdAt,
             this.titles, this.shortDescriptions, this.descriptions);
 
-        // Copia tutti i blocchi
+        // Copia tutti i blocchi con i loro NBT
         for (Map.Entry<BlockPos, BlockState> entry : this.blocks.entrySet()) {
-            copy.addBlock(entry.getKey(), entry.getValue());
+            BlockPos pos = entry.getKey();
+            CompoundTag nbt = this.blockEntityNbt.get(pos);
+            if (nbt != null) {
+                copy.addBlock(pos, entry.getValue(), nbt.copy());
+            } else {
+                copy.addBlock(pos, entry.getValue());
+            }
+        }
+
+        // Copia tutte le entità
+        for (Map.Entry<UUID, EntityData> entry : this.entities.entrySet()) {
+            copy.addEntity(entry.getKey(), entry.getValue());
         }
 
         // Copia i mod richiesti
@@ -325,8 +432,8 @@ public class Construction {
     }
 
     /**
-     * Calcola i mod richiesti analizzando i blocchi della costruzione.
-     * Per ogni blocco non vanilla, estrae il namespace e popola le info del mod.
+     * Calcola i mod richiesti analizzando i blocchi e le entità della costruzione.
+     * Per ogni blocco/entità non vanilla, estrae il namespace e popola le info del mod.
      */
     public void computeRequiredMods() {
         requiredMods.clear();
@@ -340,6 +447,17 @@ public class Construction {
             if (!"minecraft".equals(namespace)) {
                 ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
                 info.incrementBlockCount();
+            }
+        }
+
+        // Conta le entità per ogni mod non-vanilla
+        for (EntityData entityData : entities.values()) {
+            String namespace = entityData.getModNamespace();
+
+            // Ignora le entità vanilla
+            if (!"minecraft".equals(namespace)) {
+                ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
+                info.incrementEntityCount();
             }
         }
 

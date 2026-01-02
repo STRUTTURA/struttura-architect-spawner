@@ -7,6 +7,7 @@ import com.google.gson.JsonElement;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -14,6 +15,7 @@ import net.minecraft.nbt.NbtIo;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.io.*;
 import java.net.HttpURLConnection;
@@ -159,6 +161,7 @@ public class ApiClient {
 
         json.addProperty("blockCount", construction.getBlockCount());
         json.addProperty("solidBlockCount", construction.getSolidBlockCount());
+        json.addProperty("entityCount", construction.getEntityCount());
 
         // Bounds
         JsonObject bounds = new JsonObject();
@@ -201,6 +204,16 @@ public class ApiClient {
 
         Architect.LOGGER.debug("NBT size: {} bytes, Base64 size: {} bytes",
             nbtBytes.length, blocksBase64.length());
+
+        // Entità in formato NBT compresso e codificato base64 (se presenti)
+        if (!construction.getEntities().isEmpty()) {
+            byte[] entitiesNbtBytes = serializeEntitiesToNbt(construction);
+            String entitiesBase64 = Base64.getEncoder().encodeToString(entitiesNbtBytes);
+            json.addProperty("entities", entitiesBase64);
+
+            Architect.LOGGER.debug("Entities NBT size: {} bytes, Base64 size: {} bytes",
+                entitiesNbtBytes.length, entitiesBase64.length());
+        }
 
         return json;
     }
@@ -248,12 +261,88 @@ public class ApiClient {
             blockTag.putInt("y", pos.getY() - offsetY);
             blockTag.putInt("z", pos.getZ() - offsetZ);
             blockTag.putInt("p", paletteIndex);
+
+            // Se il blocco ha un NBT associato (block entity), includilo
+            CompoundTag blockEntityNbt = construction.getBlockEntityNbt(pos);
+            if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                blockTag.put("nbt", blockEntityNbt);
+            }
+
             blocksList.add(blockTag);
         }
 
         root.put("palette", paletteList);
         root.put("blocks", blocksList);
         root.putInt("version", 1);
+
+        // Comprimi in memoria
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        NbtIo.writeCompressed(root, baos);
+        return baos.toByteArray();
+    }
+
+    /**
+     * Serializza le entità della costruzione in formato NBT compresso.
+     * Le coordinate vengono normalizzate (relative a 0,0,0) sottraendo i bounds minimi.
+     * Anche i tag TileX/Y/Z delle entità hanging vengono normalizzati.
+     */
+    private static byte[] serializeEntitiesToNbt(Construction construction) throws IOException {
+        CompoundTag root = new CompoundTag();
+        root.putInt("version", 1);
+
+        var bounds = construction.getBounds();
+        int minX = bounds.isValid() ? bounds.getMinX() : 0;
+        int minY = bounds.isValid() ? bounds.getMinY() : 0;
+        int minZ = bounds.isValid() ? bounds.getMinZ() : 0;
+
+        ListTag entitiesList = new ListTag();
+
+        for (Map.Entry<UUID, EntityData> entry : construction.getEntities().entrySet()) {
+            EntityData data = entry.getValue();
+
+            CompoundTag entityTag = new CompoundTag();
+            entityTag.putString("type", data.getEntityType());
+            entityTag.putDouble("x", data.getRelativePos().x);
+            entityTag.putDouble("y", data.getRelativePos().y);
+            entityTag.putDouble("z", data.getRelativePos().z);
+            entityTag.putFloat("yaw", data.getYaw());
+            entityTag.putFloat("pitch", data.getPitch());
+
+            // Copia l'NBT e normalizza coordinate per entità hanging
+            // Le coordinate sono già normalizzate in EntityData.fromEntity(), ma ri-normalizziamo
+            // per sicurezza nel caso vengano aggiunte entità in modo diverso
+            CompoundTag nbt = data.getNbt().copy();
+
+            // MC 1.21+ usa "block_pos" (CompoundTag con X, Y, Z)
+            if (nbt.contains("block_pos")) {
+                nbt.getCompound("block_pos").ifPresent(blockPos -> {
+                    int x = blockPos.getIntOr("X", 0);
+                    int y = blockPos.getIntOr("Y", 0);
+                    int z = blockPos.getIntOr("Z", 0);
+
+                    // Normalizza sottraendo i bounds minimi
+                    blockPos.putInt("X", x - minX);
+                    blockPos.putInt("Y", y - minY);
+                    blockPos.putInt("Z", z - minZ);
+                });
+            }
+            // Fallback per vecchi formati (TileX/Y/Z)
+            else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+                int tileX = nbt.getIntOr("TileX", 0);
+                int tileY = nbt.getIntOr("TileY", 0);
+                int tileZ = nbt.getIntOr("TileZ", 0);
+
+                // Normalizza sottraendo i bounds minimi
+                nbt.putInt("TileX", tileX - minX);
+                nbt.putInt("TileY", tileY - minY);
+                nbt.putInt("TileZ", tileZ - minZ);
+            }
+            entityTag.put("nbt", nbt);
+
+            entitiesList.add(entityTag);
+        }
+
+        root.put("entities", entitiesList);
 
         // Comprimi in memoria
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -544,8 +633,41 @@ public class ApiClient {
             blocksConn.disconnect();
         }
 
-        // 3. Parse e combina i dati
-        Construction construction = parseConstructionFromResponses(constructionId, metadataBody, blocksData);
+        // 3. Scarica le entità (NBT binario compresso, opzionale - può non esistere)
+        String entitiesUrl = endpoint + "/building/" + constructionId + "/entities";
+        Architect.LOGGER.info("Pulling entities for {} from {}", constructionId, entitiesUrl);
+
+        byte[] entitiesData = null;
+
+        HttpURLConnection entitiesConn = (HttpURLConnection) URI.create(entitiesUrl).toURL().openConnection();
+        try {
+            entitiesConn.setRequestMethod("GET");
+            entitiesConn.setInstanceFollowRedirects(true);
+            entitiesConn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            entitiesConn.setReadTimeout(config.getRequestTimeout() * 1000);
+            entitiesConn.setRequestProperty("Accept", "application/octet-stream");
+            entitiesConn.setRequestProperty("Authorization", config.getAuth());
+            entitiesConn.setRequestProperty("X-Api-Key", config.getApikey());
+
+            int entitiesStatus = entitiesConn.getResponseCode();
+
+            if (entitiesStatus >= 200 && entitiesStatus < 300) {
+                // Entità presenti
+                entitiesData = readBinaryResponse(entitiesConn);
+                Architect.LOGGER.info("Entities response: {} - {} bytes", entitiesStatus, entitiesData.length);
+            } else if (entitiesStatus == 404) {
+                // Nessuna entità (costruzione vecchia o senza entità)
+                Architect.LOGGER.debug("No entities for construction {}", constructionId);
+            } else {
+                // Altri errori - logga ma non fallire
+                Architect.LOGGER.warn("Failed to fetch entities: {}", entitiesStatus);
+            }
+        } finally {
+            entitiesConn.disconnect();
+        }
+
+        // 4. Parse e combina i dati
+        Construction construction = parseConstructionFromResponses(constructionId, metadataBody, blocksData, entitiesData);
         if (construction == null) {
             return new PullResponse(metadataStatus, "Failed to parse construction data", false, null);
         }
@@ -569,13 +691,15 @@ public class ApiClient {
     }
 
     /**
-     * Parsa le risposte (metadati JSON e blocchi NBT binari) e crea un oggetto Construction.
+     * Parsa le risposte (metadati JSON, blocchi e entità NBT binari) e crea un oggetto Construction.
      *
      * @param constructionId l'ID della costruzione
      * @param metadataBody la risposta JSON di /building/:id/metadata
      * @param blocksData i dati NBT binari compressi di /building/:id/blocks
+     * @param entitiesData i dati NBT binari compressi di /building/:id/entities (può essere null)
      */
-    private static Construction parseConstructionFromResponses(String constructionId, String metadataBody, byte[] blocksData) {
+    private static Construction parseConstructionFromResponses(String constructionId, String metadataBody,
+                                                                byte[] blocksData, byte[] entitiesData) {
         try {
             JsonObject metadata = GSON.fromJson(metadataBody, JsonObject.class);
 
@@ -649,8 +773,13 @@ public class ApiClient {
                 deserializeBlocksFromNbt(construction, blocksData);
             }
 
-            Architect.LOGGER.info("Parsed construction {} with {} blocks",
-                constructionId, construction.getBlockCount());
+            // Deserializza le entità da NBT compresso (opzionale)
+            if (entitiesData != null && entitiesData.length > 0) {
+                deserializeEntitiesFromNbt(construction, entitiesData);
+            }
+
+            Architect.LOGGER.info("Parsed construction {} with {} blocks, {} entities",
+                constructionId, construction.getBlockCount(), construction.getEntityCount());
 
             return construction;
 
@@ -690,7 +819,42 @@ public class ApiClient {
 
             BlockPos pos = new BlockPos(x, y, z);
             BlockState state = palette.get(paletteIndex);
-            construction.addBlock(pos, state);
+
+            // Se presente, leggi l'NBT del block entity
+            CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
+            if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                construction.addBlock(pos, state, blockEntityNbt);
+            } else {
+                construction.addBlock(pos, state);
+            }
+        }
+    }
+
+    /**
+     * Deserializza le entità da NBT compresso e le aggiunge alla costruzione.
+     */
+    private static void deserializeEntitiesFromNbt(Construction construction, byte[] nbtBytes) throws IOException {
+        ByteArrayInputStream bais = new ByteArrayInputStream(nbtBytes);
+        CompoundTag root = NbtIo.readCompressed(bais, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+
+        ListTag entitiesList = root.getList("entities").orElse(new ListTag());
+
+        for (int i = 0; i < entitiesList.size(); i++) {
+            CompoundTag entityTag = entitiesList.getCompound(i).orElseThrow();
+
+            String type = entityTag.getString("type").orElse("");
+            double x = entityTag.getDouble("x").orElse(0.0);
+            double y = entityTag.getDouble("y").orElse(0.0);
+            double z = entityTag.getDouble("z").orElse(0.0);
+            float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+            float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+            CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+
+            Vec3 relativePos = new Vec3(x, y, z);
+            EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+
+            // Genera un nuovo UUID per ogni entità
+            construction.addEntity(UUID.randomUUID(), data);
         }
     }
 

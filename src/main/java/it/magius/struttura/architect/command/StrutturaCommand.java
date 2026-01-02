@@ -24,6 +24,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -695,6 +696,8 @@ public class StrutturaCommand {
         int placedCount = 0;
 
         // Piazza i blocchi nel mondo con l'offset
+        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
         for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
             BlockPos originalPos = entry.getKey();
             BlockState state = entry.getValue();
@@ -703,20 +706,49 @@ public class StrutturaCommand {
             if (state.isAir()) continue;
 
             BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
-            level.setBlock(newPos, state, 3); // 3 = notify neighbors + update
+            level.setBlock(newPos, state, placementFlags);
+
+            // Se il blocco ha un NBT associato (block entity), applicalo
+            net.minecraft.nbt.CompoundTag blockEntityNbt = construction.getBlockEntityNbt(originalPos);
+            if (blockEntityNbt != null) {
+                net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(newPos);
+                if (blockEntity != null) {
+                    // MC 1.21.11: usa TagValueInput per creare un ValueInput dal CompoundTag
+                    net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
+                        net.minecraft.util.ProblemReporter.DISCARDING,
+                        level.registryAccess(),
+                        blockEntityNbt
+                    );
+                    blockEntity.loadCustomOnly(input);
+                    blockEntity.setChanged();
+                }
+            }
+
             placedCount++;
         }
+
+        // Spawna le entità con l'offset appropriato
+        // Le coordinate delle entità sono relative ai bounds minimi originali
+        int entityCount = NetworkHandler.spawnConstructionEntities(construction, level,
+            offsetX + bounds.getMinX(), offsetY + bounds.getMinY(), offsetZ + bounds.getMinZ());
 
         // Calcola la posizione effettiva dove è stata spawnata (per il messaggio)
         BlockPos spawnMin = bounds.getMin().offset(offsetX, offsetY, offsetZ);
 
         final int finalCount = placedCount;
-        Architect.LOGGER.info("Player {} spawned construction {} at {} ({} blocks)",
-            player.getName().getString(), id, spawnMin, finalCount);
+        final int finalEntityCount = entityCount;
+        Architect.LOGGER.info("Player {} spawned construction {} at {} ({} blocks, {} entities)",
+            player.getName().getString(), id, spawnMin, finalCount, finalEntityCount);
 
-        source.sendSuccess(() -> Component.literal(
-            I18n.tr(player, "spawn.success", id, finalCount, spawnMin.getX(), spawnMin.getY(), spawnMin.getZ())
-        ), true);
+        if (entityCount > 0) {
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "spawn.success_with_entities", id, finalCount, entityCount, spawnMin.getX(), spawnMin.getY(), spawnMin.getZ())
+            ), true);
+        } else {
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "spawn.success", id, finalCount, spawnMin.getX(), spawnMin.getY(), spawnMin.getZ())
+            ), true);
+        }
 
         return 1;
     }
@@ -759,11 +791,13 @@ public class StrutturaCommand {
         ServerLevel level = (ServerLevel) player.level();
 
         // Piazza i blocchi della costruzione nel mondo
+        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
         int placedCount = 0;
         for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
             BlockPos pos = entry.getKey();
             BlockState state = entry.getValue();
-            level.setBlock(pos, state, 3);
+            level.setBlock(pos, state, placementFlags);
             placedCount++;
         }
 
@@ -1756,6 +1790,8 @@ public class StrutturaCommand {
         int placedCount = 0;
 
         // Piazza i blocchi nel mondo E salva le nuove posizioni
+        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
         for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
             BlockPos originalPos = entry.getKey();
             BlockState state = entry.getValue();
@@ -1765,7 +1801,7 @@ public class StrutturaCommand {
 
             // Piazza nel mondo solo i blocchi non-aria
             if (!state.isAir()) {
-                level.setBlock(newPos, state, 3);
+                level.setBlock(newPos, state, placementFlags);
                 placedCount++;
             }
         }
@@ -1874,6 +1910,8 @@ public class StrutturaCommand {
         Map<BlockPos, BlockState> newBlocks = new HashMap<>();
         int placedCount = 0;
 
+        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
         for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
             BlockPos originalPos = entry.getKey();
             BlockState state = entry.getValue();
@@ -1882,7 +1920,7 @@ public class StrutturaCommand {
 
             // Piazza il blocco nel mondo
             if (!state.isAir()) {
-                level.setBlock(newPos, state, 3);
+                level.setBlock(newPos, state, placementFlags);
                 placedCount++;
             }
 

@@ -29,6 +29,7 @@ public class PanelManager {
     private int blockCount = 0;
     private int solidBlockCount = 0;
     private int airBlockCount = 0;
+    private int entityCount = 0;
     private String bounds = "";
     private String mode = "ADD";
 
@@ -84,12 +85,14 @@ public class PanelManager {
      * Update editing info from server packet.
      */
     public void updateEditingInfo(String constructionId, String title, int blockCount,
-                                   int solidBlockCount, int airBlockCount, String bounds, String mode) {
+                                   int solidBlockCount, int airBlockCount, int entityCount,
+                                   String bounds, String mode) {
         this.editingConstructionId = constructionId;
         this.editingTitle = title;
         this.blockCount = blockCount;
         this.solidBlockCount = solidBlockCount;
         this.airBlockCount = airBlockCount;
+        this.entityCount = entityCount;
         this.bounds = bounds;
         this.mode = mode;
         this.isEditing = true;
@@ -104,6 +107,7 @@ public class PanelManager {
         this.blockCount = 0;
         this.solidBlockCount = 0;
         this.airBlockCount = 0;
+        this.entityCount = 0;
         this.bounds = "";
         this.mode = "ADD";
         this.isEditing = false;
@@ -128,6 +132,10 @@ public class PanelManager {
 
     public int getAirBlockCount() {
         return airBlockCount;
+    }
+
+    public int getEntityCount() {
+        return entityCount;
     }
 
     public String getBounds() {

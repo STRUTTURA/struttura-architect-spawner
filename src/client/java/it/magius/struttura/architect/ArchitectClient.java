@@ -75,6 +75,7 @@ public class ArchitectClient implements ClientModInitializer {
                             packet.blockCount(),
                             packet.solidBlockCount(),
                             packet.airBlockCount(),
+                            packet.entityCount(),
                             packet.bounds(),
                             packet.mode()
                     );

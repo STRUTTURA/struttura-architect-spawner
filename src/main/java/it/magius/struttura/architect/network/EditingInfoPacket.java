@@ -17,6 +17,7 @@ public record EditingInfoPacket(
     int blockCount,
     int solidBlockCount,
     int airBlockCount,
+    int entityCount,
     String bounds,      // "10x20x15" format
     String mode         // "ADD" or "REMOVE"
 ) implements CustomPacketPayload {
@@ -31,7 +32,7 @@ public record EditingInfoPacket(
      * Create an empty packet (for when not editing).
      */
     public static EditingInfoPacket empty() {
-        return new EditingInfoPacket(false, "", "", 0, 0, 0, "", "ADD");
+        return new EditingInfoPacket(false, "", "", 0, 0, 0, 0, "", "ADD");
     }
 
     private static EditingInfoPacket read(FriendlyByteBuf buf) {
@@ -41,9 +42,10 @@ public record EditingInfoPacket(
         int blockCount = buf.readVarInt();
         int solidBlockCount = buf.readVarInt();
         int airBlockCount = buf.readVarInt();
+        int entityCount = buf.readVarInt();
         String bounds = buf.readUtf(64);
         String mode = buf.readUtf(16);
-        return new EditingInfoPacket(isEditing, constructionId, title, blockCount, solidBlockCount, airBlockCount, bounds, mode);
+        return new EditingInfoPacket(isEditing, constructionId, title, blockCount, solidBlockCount, airBlockCount, entityCount, bounds, mode);
     }
 
     private static void write(FriendlyByteBuf buf, EditingInfoPacket packet) {
@@ -53,6 +55,7 @@ public record EditingInfoPacket(
         buf.writeVarInt(packet.blockCount);
         buf.writeVarInt(packet.solidBlockCount);
         buf.writeVarInt(packet.airBlockCount);
+        buf.writeVarInt(packet.entityCount);
         buf.writeUtf(packet.bounds, 64);
         buf.writeUtf(packet.mode, 16);
     }

@@ -7,6 +7,7 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonElement;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -14,8 +15,10 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtAccounter;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -68,8 +71,11 @@ public class ConstructionStorage {
             // Salva blocchi
             saveBlocks(construction, constructionDir);
 
-            Architect.LOGGER.info("Saved construction: {} ({} blocks)",
-                construction.getId(), construction.getBlockCount());
+            // Salva entità
+            saveEntities(construction, constructionDir);
+
+            Architect.LOGGER.info("Saved construction: {} ({} blocks, {} entities)",
+                construction.getId(), construction.getBlockCount(), construction.getEntityCount());
             return true;
 
         } catch (Exception e) {
@@ -101,8 +107,11 @@ public class ConstructionStorage {
             // Carica blocchi
             loadBlocks(construction, constructionDir);
 
-            Architect.LOGGER.info("Loaded construction: {} ({} blocks)",
-                construction.getId(), construction.getBlockCount());
+            // Carica entità
+            loadEntities(construction, constructionDir);
+
+            Architect.LOGGER.info("Loaded construction: {} ({} blocks, {} entities)",
+                construction.getId(), construction.getBlockCount(), construction.getEntityCount());
             return construction;
 
         } catch (Exception e) {
@@ -277,6 +286,7 @@ public class ConstructionStorage {
 
         json.addProperty("blockCount", construction.getBlockCount());
         json.addProperty("solidBlockCount", construction.getSolidBlockCount());
+        json.addProperty("entityCount", construction.getEntityCount());
 
         // Bounds info
         JsonObject bounds = new JsonObject();
@@ -442,6 +452,13 @@ public class ConstructionStorage {
             blockTag.putInt("y", pos.getY());
             blockTag.putInt("z", pos.getZ());
             blockTag.putInt("p", paletteIndex); // palette index
+
+            // Se il blocco ha un NBT associato (block entity), includilo
+            CompoundTag blockEntityNbt = construction.getBlockEntityNbt(pos);
+            if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                blockTag.put("nbt", blockEntityNbt);
+            }
+
             blocksList.add(blockTag);
         }
 
@@ -492,7 +509,13 @@ public class ConstructionStorage {
             BlockPos pos = new BlockPos(x, y, z);
             BlockState state = palette.get(paletteIndex);
 
-            construction.addBlock(pos, state);
+            // Se presente, leggi l'NBT del block entity
+            CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
+            if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                construction.addBlock(pos, state, blockEntityNbt);
+            } else {
+                construction.addBlock(pos, state);
+            }
         }
     }
 
@@ -583,5 +606,94 @@ public class ConstructionStorage {
             }
         }
         return state;
+    }
+
+    // ===== Entities serialization (NBT) =====
+
+    /**
+     * Salva le entità della costruzione in entities.nbt.
+     * Struttura:
+     * root {
+     *     version: 1
+     *     entities: [
+     *         { type: "minecraft:armor_stand", x: 1.5, y: 0.0, z: 2.3, yaw: 90.0, pitch: 0.0, nbt: {...} },
+     *         ...
+     *     ]
+     * }
+     */
+    private void saveEntities(Construction construction, Path directory) throws IOException {
+        // Se non ci sono entità, elimina il file esistente se presente
+        if (construction.getEntities().isEmpty()) {
+            Path entitiesFile = directory.resolve("entities.nbt");
+            if (Files.exists(entitiesFile)) {
+                Files.delete(entitiesFile);
+            }
+            return;
+        }
+
+        CompoundTag root = new CompoundTag();
+        root.putInt("version", 1);
+
+        ListTag entitiesList = new ListTag();
+
+        for (Map.Entry<UUID, EntityData> entry : construction.getEntities().entrySet()) {
+            EntityData data = entry.getValue();
+
+            CompoundTag entityTag = new CompoundTag();
+            entityTag.putString("type", data.getEntityType());
+            entityTag.putDouble("x", data.getRelativePos().x);
+            entityTag.putDouble("y", data.getRelativePos().y);
+            entityTag.putDouble("z", data.getRelativePos().z);
+            entityTag.putFloat("yaw", data.getYaw());
+            entityTag.putFloat("pitch", data.getPitch());
+            entityTag.put("nbt", data.getNbt().copy()); // Copia per sicurezza
+
+            entitiesList.add(entityTag);
+        }
+
+        root.put("entities", entitiesList);
+
+        Path entitiesFile = directory.resolve("entities.nbt");
+        try (OutputStream os = Files.newOutputStream(entitiesFile)) {
+            NbtIo.writeCompressed(root, os);
+        }
+    }
+
+    /**
+     * Carica le entità da entities.nbt.
+     * Retrocompatibile: se il file non esiste, non fa nulla.
+     */
+    private void loadEntities(Construction construction, Path directory) throws IOException {
+        Path entitiesFile = directory.resolve("entities.nbt");
+
+        if (!Files.exists(entitiesFile)) {
+            // Retrocompatibilità: costruzioni vecchie senza entità
+            return;
+        }
+
+        CompoundTag root;
+        try (InputStream is = Files.newInputStream(entitiesFile)) {
+            root = NbtIo.readCompressed(is, NbtAccounter.unlimitedHeap());
+        }
+
+        ListTag entitiesList = root.getList("entities").orElse(new ListTag());
+
+        for (int i = 0; i < entitiesList.size(); i++) {
+            CompoundTag entityTag = entitiesList.getCompound(i).orElseThrow();
+
+            String type = entityTag.getString("type").orElse("");
+            double x = entityTag.getDouble("x").orElse(0.0);
+            double y = entityTag.getDouble("y").orElse(0.0);
+            double z = entityTag.getDouble("z").orElse(0.0);
+            float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+            float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+            CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+
+            Vec3 relativePos = new Vec3(x, y, z);
+            EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+
+            // Genera un nuovo UUID per ogni entità caricata
+            construction.addEntity(UUID.randomUUID(), data);
+        }
     }
 }

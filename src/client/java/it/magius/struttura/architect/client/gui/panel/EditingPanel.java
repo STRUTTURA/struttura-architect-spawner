@@ -49,8 +49,8 @@ public class EditingPanel {
         Font font = mc.font;
         PanelManager pm = PanelManager.getInstance();
 
-        // Calculate height based on content
-        height = PADDING * 2 + LINE_HEIGHT * 8 + BUTTON_HEIGHT * 4 + PADDING * 5;
+        // Calculate height based on content (compact stats: 4 lines instead of 5)
+        height = PADDING * 2 + LINE_HEIGHT * 7 + BUTTON_HEIGHT * 4 + PADDING * 5;
 
         // Draw background
         graphics.fill(x, y, x + WIDTH, y + height, 0xE0000000);
@@ -110,19 +110,21 @@ public class EditingPanel {
         graphics.drawString(font, truncate(nameValue, fieldWidth - 2, font), fieldX, currentY, nameColor, false);
         currentY += LINE_HEIGHT + PADDING;
 
-        // Stats
+        // Stats (compact layout)
         graphics.drawString(font, "Stats:", x + PADDING, currentY, 0xFF808080, false);
         currentY += LINE_HEIGHT;
 
-        graphics.drawString(font, "  Blocks: " + pm.getBlockCount(), x + PADDING, currentY, 0xFFCCCCCC, false);
+        // Row 1: Blocks | Solid
+        String row1 = "  Blocks: " + pm.getBlockCount() + " | Solid: " + pm.getSolidBlockCount();
+        graphics.drawString(font, row1, x + PADDING, currentY, 0xFFCCCCCC, false);
         currentY += LINE_HEIGHT;
 
-        graphics.drawString(font, "  Solid: " + pm.getSolidBlockCount(), x + PADDING, currentY, 0xFFCCCCCC, false);
+        // Row 2: Air | Entities
+        String row2 = "  Air: " + pm.getAirBlockCount() + " | Entities: " + pm.getEntityCount();
+        graphics.drawString(font, row2, x + PADDING, currentY, 0xFFCCCCCC, false);
         currentY += LINE_HEIGHT;
 
-        graphics.drawString(font, "  Air: " + pm.getAirBlockCount(), x + PADDING, currentY, 0xFFCCCCCC, false);
-        currentY += LINE_HEIGHT;
-
+        // Row 3: Bounds
         graphics.drawString(font, "  Bounds: " + pm.getBounds(), x + PADDING, currentY, 0xFFCCCCCC, false);
         currentY += LINE_HEIGHT + PADDING;
 
@@ -268,7 +270,8 @@ public class EditingPanel {
         editingRdns = false;
         editingName = false;
 
-        currentY += LINE_HEIGHT + PADDING + LINE_HEIGHT * 5 + PADDING;
+        // Skip stats section (Stats label + 3 data rows)
+        currentY += LINE_HEIGHT + PADDING + LINE_HEIGHT * 4 + PADDING;
 
         // Mode button
         if (mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT &&

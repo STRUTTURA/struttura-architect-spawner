@@ -6,6 +6,7 @@ import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EditMode;
+import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.registry.ModItems;
@@ -14,14 +15,21 @@ import it.magius.struttura.architect.session.EditingSession;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
+import java.util.UUID;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -491,18 +499,30 @@ public class NetworkHandler {
         ServerLevel level = (ServerLevel) player.level();
 
         // Piazza i blocchi della costruzione nel mondo
+        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
         int placedCount = 0;
         for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
             BlockPos pos = entry.getKey();
             BlockState state = entry.getValue();
-            level.setBlock(pos, state, 3);
+            level.setBlock(pos, state, placementFlags);
             placedCount++;
         }
 
+        // Spawna le entità (coordinate relative ai bounds minimi)
+        var bounds = construction.getBounds();
+        int entityCount = spawnConstructionEntities(construction, level,
+            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ());
+
         VISIBLE_CONSTRUCTIONS.add(id);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "show.success", id, placedCount)));
+        if (entityCount > 0) {
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                    I18n.tr(player, "show.success_with_entities", id, placedCount, entityCount)));
+        } else {
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                    I18n.tr(player, "show.success", id, placedCount)));
+        }
     }
 
     private static void handleGuiHide(ServerPlayer player, String id) {
@@ -1018,6 +1038,11 @@ public class NetworkHandler {
         int sizeX = bounds.getSizeX();
         int sizeZ = bounds.getSizeZ();
 
+        // Salva i bounds originali PRIMA di modificare la costruzione
+        int originalMinX = bounds.getMinX();
+        int originalMinY = bounds.getMinY();
+        int originalMinZ = bounds.getMinZ();
+
         // Calcola la posizione di spawn di fronte al giocatore
         float yaw = player.getYRot();
         double radians = Math.toRadians(yaw);
@@ -1027,13 +1052,19 @@ public class NetworkHandler {
         // Distanza di spawn basata sulla dimensione della costruzione
         int distance = Math.max(sizeX, sizeZ) / 2 + 3;
 
-        int offsetX = (int) Math.round(player.getX() + dirX * distance) - bounds.getMinX();
-        int offsetY = (int) player.getY() - bounds.getMinY();
-        int offsetZ = (int) Math.round(player.getZ() + dirZ * distance) - bounds.getMinZ();
+        int offsetX = (int) Math.round(player.getX() + dirX * distance) - originalMinX;
+        int offsetY = (int) player.getY() - originalMinY;
+        int offsetZ = (int) Math.round(player.getZ() + dirZ * distance) - originalMinZ;
 
         // Piazza i blocchi e aggiorna la costruzione con le nuove posizioni
+        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
+        // UPDATE_SKIP_ON_PLACE previene che onPlace() venga chiamato, evitando che le rotaie
+        // si auto-connettano ai vicini durante il piazzamento
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
+
         java.util.Map<BlockPos, BlockState> newBlocks = new java.util.HashMap<>();
         int placedCount = 0;
+        int blockEntityCount = 0;
 
         for (java.util.Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
             BlockPos originalPos = entry.getKey();
@@ -1041,9 +1072,35 @@ public class NetworkHandler {
             BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
             newBlocks.put(newPos, state);
             if (!state.isAir()) {
-                level.setBlock(newPos, state, 3);
+                level.setBlock(newPos, state, placementFlags);
                 placedCount++;
+
+                // Applica l'NBT del block entity se presente (casse, furnace, etc.)
+                CompoundTag blockNbt = construction.getBlockEntityNbt(originalPos);
+                if (blockNbt != null) {
+                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(newPos);
+                    if (blockEntity != null) {
+                        // Crea una copia dell'NBT e aggiorna le coordinate
+                        CompoundTag nbtCopy = blockNbt.copy();
+                        nbtCopy.putInt("x", newPos.getX());
+                        nbtCopy.putInt("y", newPos.getY());
+                        nbtCopy.putInt("z", newPos.getZ());
+                        // MC 1.21.11: usa TagValueInput per creare un ValueInput dal CompoundTag
+                        net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
+                            net.minecraft.util.ProblemReporter.DISCARDING,
+                            level.registryAccess(),
+                            nbtCopy
+                        );
+                        blockEntity.loadCustomOnly(input);
+                        blockEntity.setChanged();
+                        blockEntityCount++;
+                    }
+                }
             }
+        }
+
+        if (blockEntityCount > 0) {
+            Architect.LOGGER.info("Applied NBT to {} block entities", blockEntityCount);
         }
 
         // Aggiorna la costruzione con le nuove coordinate assolute
@@ -1052,6 +1109,14 @@ public class NetworkHandler {
         for (java.util.Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
             construction.addBlock(entry.getKey(), entry.getValue());
         }
+
+        // Spawna le entità con l'offset appropriato
+        // Le coordinate delle entità sono relative ai bounds minimi originali,
+        // quindi usiamo l'offset + bounds originali = posizione assoluta nel mondo
+        int originX = offsetX + originalMinX;
+        int originY = offsetY + originalMinY;
+        int originZ = offsetZ + originalMinZ;
+        spawnConstructionEntities(construction, level, originX, originY, originZ);
 
         return placedCount;
     }
@@ -1120,6 +1185,7 @@ public class NetworkHandler {
                 construction.getBlockCount(),
                 construction.getSolidBlockCount(),
                 airCount,
+                construction.getEntityCount(),
                 boundsStr,
                 session.getMode().name()
         );
@@ -1251,5 +1317,132 @@ public class NetworkHandler {
     private static void handleGuiPullConfirm(ServerPlayer player, String id) {
         // Il flusso è identico a handleGuiPull, ma viene chiamato solo dopo conferma
         handleGuiPull(player, id);
+    }
+
+    // ===== Entity spawning =====
+
+    /**
+     * Spawna le entità di una costruzione nel mondo.
+     *
+     * @param construction la costruzione
+     * @param level il ServerLevel dove spawnare
+     * @param originX offset X per le coordinate (0 per piazzamento originale)
+     * @param originY offset Y per le coordinate (0 per piazzamento originale)
+     * @param originZ offset Z per le coordinate (0 per piazzamento originale)
+     * @return il numero di entità spawnate
+     */
+    public static int spawnConstructionEntities(Construction construction, ServerLevel level,
+                                                 int originX, int originY, int originZ) {
+        if (construction.getEntities().isEmpty()) {
+            return 0;
+        }
+
+        int spawnedCount = 0;
+
+        for (Map.Entry<UUID, EntityData> entry : construction.getEntities().entrySet()) {
+            EntityData data = entry.getValue();
+
+            try {
+                // Calcola la posizione nel mondo
+                double worldX = originX + data.getRelativePos().x;
+                double worldY = originY + data.getRelativePos().y;
+                double worldZ = originZ + data.getRelativePos().z;
+
+                // Copia l'NBT e rimuovi/aggiorna i tag di posizione
+                CompoundTag nbt = data.getNbt().copy();
+                nbt.remove("Pos");      // Rimuovi posizione originale
+                nbt.remove("Motion");   // Rimuovi movimento
+                nbt.remove("UUID");     // UUID sarà generato nuovo
+
+                // Per item frame: rimuovi le mappe dall'NBT (le mappe non possono essere trasferite)
+                // L'item frame verrà spawnato vuoto invece che saltato
+                String entityType = data.getEntityType();
+                if (entityType.equals("minecraft:item_frame") || entityType.equals("minecraft:glow_item_frame")) {
+                    EntityData.removeMapFromItemFrameNbt(nbt);
+                }
+
+                // IMPORTANTE: Assicuriamoci che l'NBT contenga il tag "id" per EntityType.loadEntityRecursive
+                if (!nbt.contains("id")) {
+                    nbt.putString("id", data.getEntityType());
+                }
+
+                // Per le entità "hanging" (item frame, painting, etc.) aggiorna block_pos o TileX/Y/Z
+                // MC 1.21.11 usa "block_pos" come IntArrayTag [x, y, z], non CompoundTag!
+                if (nbt.contains("block_pos")) {
+                    net.minecraft.nbt.Tag rawTag = nbt.get("block_pos");
+                    if (rawTag instanceof net.minecraft.nbt.IntArrayTag intArrayTag) {
+                        int[] coords = intArrayTag.getAsIntArray();
+                        if (coords.length >= 3) {
+                            int relX = coords[0];
+                            int relY = coords[1];
+                            int relZ = coords[2];
+
+                            int newX = originX + relX;
+                            int newY = originY + relY;
+                            int newZ = originZ + relZ;
+
+                            // Crea un nuovo IntArrayTag con le coordinate assolute
+                            nbt.putIntArray("block_pos", new int[] { newX, newY, newZ });
+                        }
+                    }
+                }
+                // Fallback per vecchi formati (TileX/Y/Z)
+                else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+                    int relativeTileX = nbt.getIntOr("TileX", 0);
+                    int relativeTileY = nbt.getIntOr("TileY", 0);
+                    int relativeTileZ = nbt.getIntOr("TileZ", 0);
+
+                    int newTileX = originX + relativeTileX;
+                    int newTileY = originY + relativeTileY;
+                    int newTileZ = originZ + relativeTileZ;
+
+                    nbt.putInt("TileX", newTileX);
+                    nbt.putInt("TileY", newTileY);
+                    nbt.putInt("TileZ", newTileZ);
+                }
+
+                // Converti sleeping_pos per villager che dormono (da coordinate relative ad assolute)
+                // MC 1.21.11 usa IntArrayTag per sleeping_pos, come block_pos
+                if (nbt.contains("sleeping_pos")) {
+                    net.minecraft.nbt.Tag sleepingTag = nbt.get("sleeping_pos");
+                    if (sleepingTag instanceof net.minecraft.nbt.IntArrayTag sleepingIntArray) {
+                        int[] coords = sleepingIntArray.getAsIntArray();
+                        if (coords.length >= 3) {
+                            int relX = coords[0];
+                            int relY = coords[1];
+                            int relZ = coords[2];
+
+                            int newX = originX + relX;
+                            int newY = originY + relY;
+                            int newZ = originZ + relZ;
+
+                            nbt.putIntArray("sleeping_pos", new int[] { newX, newY, newZ });
+                        }
+                    }
+                }
+
+                // Crea l'entità dall'NBT (MC 1.21+ richiede EntitySpawnReason)
+                Entity entity = EntityType.loadEntityRecursive(nbt, level, EntitySpawnReason.LOAD, e -> e);
+
+                if (entity != null) {
+                    // Imposta posizione e rotazione DOPO la creazione
+                    entity.setPos(worldX, worldY, worldZ);
+                    entity.setYRot(data.getYaw());
+                    entity.setXRot(data.getPitch());
+                    // Genera un nuovo UUID per evitare conflitti
+                    entity.setUUID(UUID.randomUUID());
+
+                    level.addFreshEntity(entity);
+                    spawnedCount++;
+                } else {
+                    Architect.LOGGER.warn("Failed to create entity of type {}", data.getEntityType());
+                }
+            } catch (Exception e) {
+                Architect.LOGGER.error("Failed to spawn entity of type {}: {}",
+                    data.getEntityType(), e.getMessage());
+            }
+        }
+
+        return spawnedCount;
     }
 }

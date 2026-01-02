@@ -1,13 +1,23 @@
 package it.magius.struttura.architect.session;
 
+import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EditMode;
+import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.network.NetworkHandler;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -69,9 +79,17 @@ public class EditingSession {
 
     /**
      * Termina la sessione per un giocatore.
+     * Cattura automaticamente le entità e gli NBT dei block entities prima di terminare.
      */
     public static EditingSession endSession(ServerPlayer player) {
-        return ACTIVE_SESSIONS.remove(player.getUUID());
+        EditingSession session = ACTIVE_SESSIONS.remove(player.getUUID());
+        if (session != null) {
+            // Cattura NBT dei block entities (casse, furnace, etc.)
+            session.captureBlockEntityNbt();
+            // Cattura entità automaticamente prima di terminare
+            session.captureEntities();
+        }
+        return session;
     }
 
     /**
@@ -114,6 +132,86 @@ public class EditingSession {
             // Aggiorna info editing per la GUI
             NetworkHandler.sendEditingInfo(player);
         }
+    }
+
+    /**
+     * Cattura tutte le entità nell'area dei bounds della costruzione.
+     * Esclude Player e Projectile (come definito in EntityData.shouldSaveEntity).
+     * Chiamato automaticamente durante il save/exit.
+     */
+    public void captureEntities() {
+        var bounds = construction.getBounds();
+
+        // Se non ci sono bounds validi, non possiamo catturare entità
+        if (!bounds.isValid()) {
+            Architect.LOGGER.debug("Cannot capture entities: bounds not valid for {}", construction.getId());
+            return;
+        }
+
+        // Ottieni il ServerLevel dal player (MC 1.21: player.level() invece di player.serverLevel())
+        ServerLevel world = (ServerLevel) player.level();
+
+        // Crea AABB dai bounds (aggiungi 1 per includere il blocco completo)
+        AABB area = new AABB(
+            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
+            bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
+        );
+
+        // Cattura tutte le entità nell'area che passano il filtro
+        List<Entity> entities = world.getEntities(
+            (Entity) null,
+            area,
+            EntityData::shouldSaveEntity
+        );
+
+        // Pulisci le entità precedenti
+        construction.clearEntities();
+
+        // Aggiungi ogni entità catturata
+        // Passa il registryAccess per serializzare correttamente gli ItemStack (armor stand equipment, etc.)
+        for (Entity entity : entities) {
+            EntityData data = EntityData.fromEntity(entity, bounds, world.registryAccess());
+            construction.addEntity(entity.getUUID(), data);
+        }
+
+        Architect.LOGGER.info("Captured {} entities for construction {}",
+            entities.size(), construction.getId());
+    }
+
+    /**
+     * Cattura gli NBT di tutti i block entities nella costruzione.
+     * Salva il contenuto di casse, furnace, hoppers, etc.
+     * Chiamato automaticamente durante il save/exit.
+     */
+    public void captureBlockEntityNbt() {
+        // Ottieni il ServerLevel dal player
+        ServerLevel world = (ServerLevel) player.level();
+
+        int capturedCount = 0;
+
+        // Itera su tutti i blocchi della costruzione
+        for (BlockPos pos : construction.getBlocks().keySet()) {
+            BlockEntity blockEntity = world.getBlockEntity(pos);
+            if (blockEntity != null) {
+                // Salva l'NBT del block entity
+                CompoundTag nbt = blockEntity.saveWithoutMetadata(world.registryAccess());
+
+                // Rimuovi tag che non dovrebbero essere copiati
+                nbt.remove("x");
+                nbt.remove("y");
+                nbt.remove("z");
+                nbt.remove("id");  // Il tipo del block entity sarà dedotto dal blocco
+
+                // Salva solo se l'NBT contiene dati utili
+                if (!nbt.isEmpty()) {
+                    construction.setBlockEntityNbt(pos, nbt);
+                    capturedCount++;
+                }
+            }
+        }
+
+        Architect.LOGGER.info("Captured {} block entity NBTs for construction {}",
+            capturedCount, construction.getId());
     }
 
     // Getters e Setters
