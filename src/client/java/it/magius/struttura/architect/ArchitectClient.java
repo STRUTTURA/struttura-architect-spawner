@@ -10,6 +10,7 @@ import it.magius.struttura.architect.client.gui.panel.MainPanel;
 import it.magius.struttura.architect.network.BlockPositionsSyncPacket;
 import it.magius.struttura.architect.network.ConstructionListPacket;
 import it.magius.struttura.architect.network.EditingInfoPacket;
+import it.magius.struttura.architect.network.ModRequirementsPacket;
 import it.magius.struttura.architect.network.ScreenshotRequestPacket;
 import it.magius.struttura.architect.network.WireframeSyncPacket;
 import net.fabricmc.api.ClientModInitializer;
@@ -99,6 +100,18 @@ public class ArchitectClient implements ClientModInitializer {
                 }
                 PanelManager.getInstance().getMainPanel().updateConstructionList(list);
                 Architect.LOGGER.debug("Received construction list: {} items", list.size());
+            });
+        });
+
+        // Registra il receiver per i mod richiesti (prima del pull)
+        ClientPlayNetworking.registerGlobalReceiver(ModRequirementsPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                PanelManager.getInstance().getMainPanel().handleModRequirements(
+                    packet.constructionId(),
+                    packet.requiredMods()
+                );
+                Architect.LOGGER.debug("Received mod requirements for {}: {} mods",
+                    packet.constructionId(), packet.requiredMods().size());
             });
         });
 

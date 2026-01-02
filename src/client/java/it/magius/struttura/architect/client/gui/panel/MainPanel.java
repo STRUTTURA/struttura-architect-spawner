@@ -1,18 +1,24 @@
 package it.magius.struttura.architect.client.gui.panel;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.client.ModValidator;
 import it.magius.struttura.architect.client.gui.PanelManager;
+import it.magius.struttura.architect.model.ModInfo;
 import it.magius.struttura.architect.network.GuiActionPacket;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.util.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.Font;
 
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Main panel showing the list of constructions with actions.
@@ -49,6 +55,13 @@ public class MainPanel {
     private boolean showPullModal = false;
     private String pullIdText = "";
     private boolean pullIdFocused = true;
+
+    // Modal state for "MISSING MODS" dialog
+    private boolean showMissingModsDialog = false;
+    private String pendingPullId = null;
+    private Map<String, ModInfo> missingMods = new HashMap<>();
+    private int totalMissingBlocks = 0;
+    private int missingModsScrollOffset = 0;
 
     public record ConstructionInfo(String id, String title, int blockCount, boolean isBeingEdited) {}
 
@@ -268,10 +281,10 @@ public class MainPanel {
     }
 
     /**
-     * Check if the modal is currently open.
+     * Check if any modal/dialog is currently open.
      */
     public boolean isModalOpen() {
-        return showNewModal || showPullModal;
+        return showNewModal || showPullModal || showMissingModsDialog;
     }
 
     /**
@@ -286,6 +299,8 @@ public class MainPanel {
             renderNewModal(graphics, font, mouseX, mouseY);
         } else if (showPullModal) {
             renderPullModal(graphics, font, mouseX, mouseY);
+        } else if (showMissingModsDialog) {
+            renderMissingModsDialog(graphics, font, mouseX, mouseY);
         }
     }
 
@@ -421,6 +436,9 @@ public class MainPanel {
         }
         if (showPullModal) {
             return handlePullModalClick(mouseX, mouseY);
+        }
+        if (showMissingModsDialog) {
+            return handleMissingModsDialogClick(mouseX, mouseY);
         }
 
         // Top-right corner buttons (straddling panel edge - partially outside bounds)
@@ -604,7 +622,8 @@ public class MainPanel {
         if (mouseX >= pullX && mouseX < pullX + btnWidth &&
             mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
             if (!pullIdText.isEmpty()) {
-                executeAction("pull", pullIdText);
+                // First check mod requirements, then pull if all mods present
+                executeAction("pull_check", pullIdText);
                 showPullModal = false;
                 pullIdText = "";
             }
@@ -637,6 +656,13 @@ public class MainPanel {
     }
 
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        // Handle missing mods dialog scroll
+        if (showMissingModsDialog && missingMods.size() > 4) {
+            int maxScroll = missingMods.size() - 4;
+            missingModsScrollOffset = Math.max(0, Math.min(maxScroll, missingModsScrollOffset - (int) verticalAmount));
+            return true;
+        }
+
         // Check if mouse is over list area
         int currentY = y + PADDING + 12 + SEARCH_HEIGHT + PADDING;
         int buttonsAreaHeight = BUTTON_HEIGHT * 2 + 2 + PADDING; // 2 button rows + spacing + padding
@@ -690,13 +716,25 @@ public class MainPanel {
                 pullIdText = "";
                 return true;
             }
-            // Enter - pull
+            // Enter - pull (check mods first)
             if (keyCode == 257) {
                 if (!pullIdText.isEmpty()) {
-                    executeAction("pull", pullIdText);
+                    executeAction("pull_check", pullIdText);
                     showPullModal = false;
                     pullIdText = "";
                 }
+                return true;
+            }
+            return true; // Consume all key presses when modal is open
+        }
+
+        // Handle Missing Mods dialog
+        if (showMissingModsDialog) {
+            // Escape - close dialog
+            if (keyCode == 256) {
+                showMissingModsDialog = false;
+                pendingPullId = null;
+                missingMods.clear();
                 return true;
             }
             return true; // Consume all key presses when modal is open
@@ -766,5 +804,241 @@ public class MainPanel {
         newIdText = "";
         showPullModal = false;
         pullIdText = "";
+        showMissingModsDialog = false;
+        pendingPullId = null;
+        missingMods.clear();
+        totalMissingBlocks = 0;
+        missingModsScrollOffset = 0;
+    }
+
+    /**
+     * Handle mod requirements received from server before pull.
+     * Shows missing mods dialog if any mods are missing, otherwise proceeds with pull.
+     */
+    public void handleModRequirements(String constructionId, Map<String, ModInfo> requiredMods) {
+        Map<String, ModInfo> missing = ModValidator.getMissingMods(requiredMods);
+
+        if (missing.isEmpty()) {
+            // All mods present, proceed with pull immediately
+            executeAction("pull_confirm", constructionId);
+        } else {
+            // Show missing mods dialog
+            pendingPullId = constructionId;
+            missingMods = missing;
+            totalMissingBlocks = ModValidator.getTotalMissingBlocks(missing);
+            missingModsScrollOffset = 0;
+            showMissingModsDialog = true;
+            showPullModal = false; // Close the pull modal if open
+        }
+    }
+
+    private void renderMissingModsDialog(GuiGraphics graphics, Font font, int mouseX, int mouseY) {
+        Minecraft mc = Minecraft.getInstance();
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
+
+        int modalWidth = 280;
+        int itemHeight = 28;
+        int visibleItems = Math.min(4, missingMods.size());
+        int listHeight = visibleItems * itemHeight;
+        int modalHeight = 90 + listHeight;
+        int modalX = (screenWidth - modalWidth) / 2;
+        int modalY = (screenHeight - modalHeight) / 2;
+
+        // Dark overlay behind modal
+        graphics.fill(0, 0, screenWidth, screenHeight, 0x80000000);
+
+        // Modal background
+        graphics.fill(modalX, modalY, modalX + modalWidth, modalY + modalHeight, 0xF0202020);
+        graphics.renderOutline(modalX, modalY, modalWidth, modalHeight, 0xFFFF6060);
+
+        // Title with warning icon
+        graphics.drawString(font, "\u26A0 Missing Mods", modalX + 10, modalY + 8, 0xFFFF6666, false);
+
+        // Mod list
+        int listY = modalY + 25;
+        int listX = modalX + 10;
+        int listWidth = modalWidth - 20;
+
+        // List background
+        graphics.fill(listX, listY, listX + listWidth, listY + listHeight, 0xFF303030);
+        graphics.renderOutline(listX, listY, listWidth, listHeight, 0xFF505050);
+
+        // Render visible mods
+        int index = 0;
+        for (Map.Entry<String, ModInfo> entry : missingMods.entrySet()) {
+            if (index < missingModsScrollOffset) {
+                index++;
+                continue;
+            }
+            if (index >= missingModsScrollOffset + visibleItems) {
+                break;
+            }
+
+            ModInfo mod = entry.getValue();
+            int itemY = listY + (index - missingModsScrollOffset) * itemHeight;
+
+            // Mod name with version
+            String modNameText = mod.getDisplayName();
+            if (mod.getVersion() != null && !mod.getVersion().isEmpty()) {
+                modNameText += " v" + mod.getVersion();
+            } else {
+                Architect.LOGGER.debug("Mod {} has no version info", mod.getModId());
+            }
+            graphics.drawString(font, modNameText, listX + 5, itemY + 4, 0xFFFFFFFF, false);
+
+            // Block count
+            String blockText = mod.getBlockCount() + " blocks";
+            graphics.drawString(font, blockText, listX + 5, itemY + 15, 0xFF888888, false);
+
+            // Download link (if available)
+            if (mod.getDownloadUrl() != null && !mod.getDownloadUrl().isEmpty()) {
+                String linkText = "[Download]";
+                int linkWidth = font.width(linkText);
+                int linkX = listX + listWidth - linkWidth - 5;
+                // Use full item height for hover detection to match click area
+                boolean linkHovered = mouseX >= linkX && mouseX < linkX + linkWidth &&
+                                     mouseY >= itemY && mouseY < itemY + itemHeight;
+                graphics.drawString(font, linkText, linkX, itemY + 4,
+                    linkHovered ? 0xFF88AAFF : 0xFF6688CC, false);
+            }
+
+            index++;
+        }
+
+        // Scroll indicator if needed
+        if (missingMods.size() > visibleItems) {
+            int scrollY = listY + 2;
+            int scrollHeight = listHeight - 4;
+            int thumbHeight = Math.max(10, scrollHeight * visibleItems / missingMods.size());
+            int maxScroll = missingMods.size() - visibleItems;
+            int thumbY = scrollY + (scrollHeight - thumbHeight) * missingModsScrollOffset / maxScroll;
+
+            graphics.fill(listX + listWidth - 5, scrollY, listX + listWidth - 2, scrollY + scrollHeight, 0xFF404040);
+            graphics.fill(listX + listWidth - 5, thumbY, listX + listWidth - 2, thumbY + thumbHeight, 0xFF808080);
+        }
+
+        // Warning text
+        int warningY = listY + listHeight + 8;
+        String warningText = "\u26A0 " + totalMissingBlocks + " blocks will become air";
+        graphics.drawString(font, warningText, modalX + 10, warningY, 0xFFFFAA00, false);
+
+        // Buttons: CANCEL and PROCEED ANYWAY
+        int btnWidth = 90;
+        int btnY = warningY + 18;
+
+        // CANCEL button
+        int cancelX = modalX + modalWidth / 2 - btnWidth - 10;
+        boolean cancelHovered = mouseX >= cancelX && mouseX < cancelX + btnWidth &&
+                                mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT;
+        graphics.fill(cancelX, btnY, cancelX + btnWidth, btnY + BUTTON_HEIGHT,
+                     cancelHovered ? 0xFF404060 : 0xFF303050);
+        graphics.renderOutline(cancelX, btnY, btnWidth, BUTTON_HEIGHT, 0xFF6060A0);
+        int cancelTextW = font.width("CANCEL");
+        graphics.drawString(font, "CANCEL", cancelX + (btnWidth - cancelTextW) / 2, btnY + 4, 0xFF8888FF, false);
+
+        // PROCEED ANYWAY button
+        int proceedX = modalX + modalWidth / 2 + 10;
+        boolean proceedHovered = mouseX >= proceedX && mouseX < proceedX + btnWidth &&
+                                 mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT;
+        graphics.fill(proceedX, btnY, proceedX + btnWidth, btnY + BUTTON_HEIGHT,
+                     proceedHovered ? 0xFF604040 : 0xFF503030);
+        graphics.renderOutline(proceedX, btnY, btnWidth, BUTTON_HEIGHT, 0xFFA06060);
+        int proceedTextW = font.width("PROCEED");
+        graphics.drawString(font, "PROCEED", proceedX + (btnWidth - proceedTextW) / 2, btnY + 4, 0xFFFF8888, false);
+    }
+
+    private boolean handleMissingModsDialogClick(double mouseX, double mouseY) {
+        Minecraft mc = Minecraft.getInstance();
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
+
+        int modalWidth = 280;
+        int itemHeight = 28;
+        int visibleItems = Math.min(4, missingMods.size());
+        int listHeight = visibleItems * itemHeight;
+        int modalHeight = 90 + listHeight;
+        int modalX = (screenWidth - modalWidth) / 2;
+        int modalY = (screenHeight - modalHeight) / 2;
+
+        Font font = mc.font;
+
+        // Check download link clicks
+        int listY = modalY + 25;
+        int listX = modalX + 10;
+        int listWidth = modalWidth - 20;
+
+        int index = 0;
+        for (Map.Entry<String, ModInfo> entry : missingMods.entrySet()) {
+            if (index < missingModsScrollOffset) {
+                index++;
+                continue;
+            }
+            if (index >= missingModsScrollOffset + visibleItems) {
+                break;
+            }
+
+            ModInfo mod = entry.getValue();
+            int itemY = listY + (index - missingModsScrollOffset) * itemHeight;
+
+            // Check download link click
+            if (mod.getDownloadUrl() != null && !mod.getDownloadUrl().isEmpty()) {
+                String linkText = "[Download]";
+                int linkWidth = font.width(linkText);
+                int linkX = listX + listWidth - linkWidth - 5;
+                // Expand click area to full item height for easier clicking
+                if (mouseX >= linkX && mouseX < linkX + linkWidth &&
+                    mouseY >= itemY && mouseY < itemY + itemHeight) {
+                    // Open URL in browser
+                    try {
+                        Util.getPlatform().openUri(new URI(mod.getDownloadUrl()));
+                    } catch (Exception e) {
+                        Architect.LOGGER.warn("Failed to open URL: {}", mod.getDownloadUrl(), e);
+                    }
+                    return true;
+                }
+            }
+
+            index++;
+        }
+
+        // Check buttons
+        int warningY = listY + listHeight + 8;
+        int btnWidth = 90;
+        int btnY = warningY + 18;
+
+        // CANCEL button
+        int cancelX = modalX + modalWidth / 2 - btnWidth - 10;
+        if (mouseX >= cancelX && mouseX < cancelX + btnWidth &&
+            mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
+            showMissingModsDialog = false;
+            pendingPullId = null;
+            missingMods.clear();
+            return true;
+        }
+
+        // PROCEED ANYWAY button
+        int proceedX = modalX + modalWidth / 2 + 10;
+        if (mouseX >= proceedX && mouseX < proceedX + btnWidth &&
+            mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
+            if (pendingPullId != null) {
+                executeAction("pull_confirm", pendingPullId);
+            }
+            showMissingModsDialog = false;
+            pendingPullId = null;
+            missingMods.clear();
+            return true;
+        }
+
+        // Click outside modal closes it
+        if (mouseX < modalX || mouseX > modalX + modalWidth ||
+            mouseY < modalY || mouseY > modalY + modalHeight) {
+            showMissingModsDialog = false;
+            pendingPullId = null;
+            missingMods.clear();
+            return true;
+        }
+
+        return true; // Consume click within modal
     }
 }

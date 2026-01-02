@@ -6,6 +6,7 @@ import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EditMode;
+import it.magius.struttura.architect.model.ModInfo;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.registry.ModItems;
 import it.magius.struttura.architect.selection.SelectionManager;
@@ -52,6 +53,8 @@ public class NetworkHandler {
         PayloadTypeRegistry.playC2S().register(GuiActionPacket.TYPE, GuiActionPacket.STREAM_CODEC);
         PayloadTypeRegistry.playS2C().register(EditingInfoPacket.TYPE, EditingInfoPacket.STREAM_CODEC);
         PayloadTypeRegistry.playS2C().register(ConstructionListPacket.TYPE, ConstructionListPacket.STREAM_CODEC);
+        // Registra il packet per i mod richiesti (S2C)
+        PayloadTypeRegistry.playS2C().register(ModRequirementsPacket.TYPE, ModRequirementsPacket.STREAM_CODEC);
 
         // Registra il receiver per i dati dello screenshot
         ServerPlayNetworking.registerGlobalReceiver(ScreenshotDataPacket.TYPE, NetworkHandler::handleScreenshotData);
@@ -451,6 +454,8 @@ public class NetworkHandler {
             case "request_list" -> sendConstructionList(player);
             case "push" -> handleGuiPush(player, targetId);
             case "pull" -> handleGuiPull(player, targetId);
+            case "pull_check" -> handleGuiPullCheck(player, targetId);
+            case "pull_confirm" -> handleGuiPullConfirm(player, targetId);
             default -> Architect.LOGGER.warn("Unknown GUI action: {}", action);
         }
     }
@@ -1164,5 +1169,87 @@ public class NetworkHandler {
         }
 
         ServerPlayNetworking.send(player, new ConstructionListPacket(list));
+    }
+
+    // ===== Pull con validazione mod =====
+
+    /**
+     * Prima fase del pull: scarica solo i metadati e invia i mod richiesti al client.
+     * Il client mostrerà una dialog se ci sono mod mancanti.
+     */
+    private static void handleGuiPullCheck(ServerPlayer player, String id) {
+        // Verifica che la costruzione non sia in editing
+        if (isConstructionBeingEdited(id)) {
+            EditingSession existingSession = getSessionForConstruction(id);
+            String otherPlayerName = existingSession != null
+                ? existingSession.getPlayer().getName().getString()
+                : "unknown";
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "pull.in_editing", id, otherPlayerName)));
+            return;
+        }
+
+        // Verifica che non sia già in corso un pull per questa costruzione
+        if (PULLING_CONSTRUCTIONS.contains(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "pull.already_pulling", id)));
+            return;
+        }
+
+        // Verifica che non ci sia già una richiesta API in corso
+        if (ApiClient.isRequestInProgress()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.request_in_progress")));
+            return;
+        }
+
+        // Messaggio di inizio
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "pull.checking", id)));
+
+        Architect.LOGGER.info("Player {} checking mod requirements for {} via GUI",
+            player.getName().getString(), id);
+
+        // Cattura il server per il callback sul main thread
+        var server = ((ServerLevel) player.level()).getServer();
+
+        // Esegui il pull dei soli metadati
+        boolean started = ApiClient.pullMetadataOnly(id, response -> {
+            if (server != null) {
+                server.execute(() -> {
+                    if (response.success() && response.requiredMods() != null) {
+                        // Invia i mod richiesti al client
+                        ModRequirementsPacket packet = new ModRequirementsPacket(
+                            response.constructionId(),
+                            response.requiredMods()
+                        );
+                        ServerPlayNetworking.send(player, packet);
+
+                        Architect.LOGGER.info("Sent mod requirements for {} to {}: {} mods",
+                            id, player.getName().getString(), response.requiredMods().size());
+                    } else {
+                        player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                            I18n.tr(player, "pull.failed", id, response.statusCode(), response.message())
+                        ));
+                        Architect.LOGGER.warn("Pull check failed for {}: {} - {}",
+                            id, response.statusCode(), response.message());
+                    }
+                });
+            }
+        });
+
+        if (!started) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.request_in_progress")));
+        }
+    }
+
+    /**
+     * Seconda fase del pull: scarica la costruzione completa dopo conferma dell'utente.
+     * Chiamato dal client dopo aver mostrato la dialog dei mod mancanti.
+     */
+    private static void handleGuiPullConfirm(ServerPlayer player, String id) {
+        // Il flusso è identico a handleGuiPull, ma viene chiamato solo dopo conferma
+        handleGuiPull(player, id);
     }
 }

@@ -4,8 +4,10 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonElement;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ModInfo;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
@@ -56,6 +58,9 @@ public class ConstructionStorage {
         try {
             Path constructionDir = getConstructionDirectory(construction.getId());
             ensureDirectoryExists(constructionDir);
+
+            // Calcola i mod richiesti dai blocchi prima di salvare
+            construction.computeRequiredMods();
 
             // Salva metadata
             saveMetadata(construction, constructionDir);
@@ -119,8 +124,9 @@ public class ConstructionStorage {
         }
 
         try {
-            // Scansiona namespace/category/name
-            Files.walk(baseDirectory, 3)
+            // Scansiona fino a 10 livelli per supportare ID con molti segmenti
+            // (es: it.magius.category.subcategory.name -> 5 livelli)
+            Files.walk(baseDirectory, 10)
                 .filter(path -> Files.isDirectory(path))
                 .filter(path -> Files.exists(path.resolve("metadata.json")))
                 .forEach(path -> {
@@ -285,6 +291,26 @@ public class ConstructionStorage {
         }
         json.add("bounds", bounds);
 
+        // Mod richiesti
+        JsonObject modsObject = new JsonObject();
+        for (ModInfo mod : construction.getRequiredMods().values()) {
+            JsonObject modJson = new JsonObject();
+            modJson.addProperty("displayName", mod.getDisplayName());
+            modJson.addProperty("blockCount", mod.getBlockCount());
+            modJson.addProperty("entityCount", mod.getEntityCount());
+            if (mod.getVersion() != null) {
+                modJson.addProperty("version", mod.getVersion());
+            }
+            if (mod.getDownloadUrl() != null) {
+                modJson.addProperty("downloadUrl", mod.getDownloadUrl());
+            }
+            modsObject.add(mod.getModId(), modJson);
+        }
+        json.add("mods", modsObject);
+
+        // Versione del mod Struttura
+        json.addProperty("strutturaVersion", Architect.MOD_VERSION);
+
         Path metadataFile = directory.resolve("metadata.json");
         try (Writer writer = Files.newBufferedWriter(metadataFile, StandardCharsets.UTF_8)) {
             GSON.toJson(json, writer);
@@ -348,7 +374,38 @@ public class ConstructionStorage {
                 }
             }
 
-            return new Construction(id, authorId, authorName, createdAt, titles, shortDescriptions, descriptions);
+            Construction construction = new Construction(id, authorId, authorName, createdAt, titles, shortDescriptions, descriptions);
+
+            // Carica mod richiesti
+            Map<String, ModInfo> requiredMods = new HashMap<>();
+            if (json.has("mods") && json.get("mods").isJsonObject()) {
+                JsonObject modsObject = json.getAsJsonObject("mods");
+                for (Map.Entry<String, JsonElement> entry : modsObject.entrySet()) {
+                    String modId = entry.getKey();
+                    JsonObject modJson = entry.getValue().getAsJsonObject();
+
+                    ModInfo info = new ModInfo(modId);
+                    if (modJson.has("displayName")) {
+                        info.setDisplayName(modJson.get("displayName").getAsString());
+                    }
+                    if (modJson.has("blockCount")) {
+                        info.setBlockCount(modJson.get("blockCount").getAsInt());
+                    }
+                    if (modJson.has("entityCount")) {
+                        info.setEntityCount(modJson.get("entityCount").getAsInt());
+                    }
+                    if (modJson.has("version") && !modJson.get("version").isJsonNull()) {
+                        info.setVersion(modJson.get("version").getAsString());
+                    }
+                    if (modJson.has("downloadUrl") && !modJson.get("downloadUrl").isJsonNull()) {
+                        info.setDownloadUrl(modJson.get("downloadUrl").getAsString());
+                    }
+                    requiredMods.put(modId, info);
+                }
+            }
+            construction.setRequiredMods(requiredMods);
+
+            return construction;
         }
     }
 

@@ -3,9 +3,11 @@ package it.magius.struttura.architect.api;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonElement;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ModInfo;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
@@ -170,6 +172,27 @@ public class ApiClient {
             bounds.addProperty("maxZ", b.getMaxZ());
         }
         json.add("bounds", bounds);
+
+        // Calcola e aggiungi i mod richiesti
+        construction.computeRequiredMods();
+        JsonObject modsObject = new JsonObject();
+        for (ModInfo mod : construction.getRequiredMods().values()) {
+            JsonObject modJson = new JsonObject();
+            modJson.addProperty("displayName", mod.getDisplayName());
+            modJson.addProperty("blockCount", mod.getBlockCount());
+            modJson.addProperty("entityCount", mod.getEntityCount());
+            if (mod.getVersion() != null) {
+                modJson.addProperty("version", mod.getVersion());
+            }
+            if (mod.getDownloadUrl() != null) {
+                modJson.addProperty("downloadUrl", mod.getDownloadUrl());
+            }
+            modsObject.add(mod.getModId(), modJson);
+        }
+        json.add("mods", modsObject);
+
+        // Versione del mod Struttura
+        json.addProperty("strutturaVersion", Architect.MOD_VERSION);
 
         // Blocchi in formato NBT compresso e codificato base64
         byte[] nbtBytes = serializeBlocksToNbt(construction);
@@ -592,6 +615,35 @@ public class ApiClient {
                 }
             }
 
+            // Parse mod richiesti dai metadati
+            Map<String, ModInfo> requiredMods = new HashMap<>();
+            if (metadata.has("mods") && metadata.get("mods").isJsonObject()) {
+                JsonObject modsObject = metadata.getAsJsonObject("mods");
+                for (Map.Entry<String, JsonElement> entry : modsObject.entrySet()) {
+                    String modId = entry.getKey();
+                    JsonObject modJson = entry.getValue().getAsJsonObject();
+
+                    ModInfo info = new ModInfo(modId);
+                    if (modJson.has("displayName")) {
+                        info.setDisplayName(modJson.get("displayName").getAsString());
+                    }
+                    if (modJson.has("blockCount")) {
+                        info.setBlockCount(modJson.get("blockCount").getAsInt());
+                    }
+                    if (modJson.has("entityCount")) {
+                        info.setEntityCount(modJson.get("entityCount").getAsInt());
+                    }
+                    if (modJson.has("version") && !modJson.get("version").isJsonNull()) {
+                        info.setVersion(modJson.get("version").getAsString());
+                    }
+                    if (modJson.has("downloadUrl") && !modJson.get("downloadUrl").isJsonNull()) {
+                        info.setDownloadUrl(modJson.get("downloadUrl").getAsString());
+                    }
+                    requiredMods.put(modId, info);
+                }
+            }
+            construction.setRequiredMods(requiredMods);
+
             // Deserializza i blocchi da NBT compresso (dati binari diretti, non base64)
             if (blocksData != null && blocksData.length > 0) {
                 deserializeBlocksFromNbt(construction, blocksData);
@@ -712,5 +764,113 @@ public class ApiClient {
             }
         }
         return state;
+    }
+
+    /**
+     * Risultato di una richiesta di metadata only.
+     */
+    public record MetadataResponse(int statusCode, String message, boolean success,
+                                    String constructionId, Map<String, ModInfo> requiredMods) {}
+
+    /**
+     * Esegue il pull dei soli metadati (senza blocchi) per validare i mod richiesti.
+     *
+     * @param constructionId l'ID della costruzione
+     * @param onComplete callback chiamato al completamento
+     * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
+     */
+    public static boolean pullMetadataOnly(String constructionId, Consumer<MetadataResponse> onComplete) {
+        if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
+            return false;
+        }
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return executePullMetadataOnly(constructionId);
+            } catch (Exception e) {
+                Architect.LOGGER.error("Pull metadata request failed", e);
+                return new MetadataResponse(0, "Error: " + e.getMessage(), false, constructionId, null);
+            } finally {
+                REQUEST_IN_PROGRESS.set(false);
+            }
+        }).thenAccept(onComplete);
+
+        return true;
+    }
+
+    /**
+     * Esegue il download dei soli metadati di una costruzione.
+     */
+    private static MetadataResponse executePullMetadataOnly(String constructionId) throws Exception {
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String endpoint = config.getEndpoint();
+
+        // Scarica solo i metadati (JSON)
+        String metadataUrl = endpoint + "/building/" + constructionId + "/metadata";
+        Architect.LOGGER.info("Pulling metadata only for {} from {}", constructionId, metadataUrl);
+
+        String metadataBody;
+        int metadataStatus;
+
+        HttpURLConnection metadataConn = (HttpURLConnection) URI.create(metadataUrl).toURL().openConnection();
+        try {
+            metadataConn.setRequestMethod("GET");
+            metadataConn.setInstanceFollowRedirects(true);
+            metadataConn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            metadataConn.setReadTimeout(config.getRequestTimeout() * 1000);
+            metadataConn.setRequestProperty("Accept", "application/json");
+            metadataConn.setRequestProperty("Authorization", config.getAuth());
+            metadataConn.setRequestProperty("X-Api-Key", config.getApikey());
+
+            metadataStatus = metadataConn.getResponseCode();
+            metadataBody = readResponse(metadataConn);
+
+            Architect.LOGGER.info("Metadata response: {} - {} bytes", metadataStatus, metadataBody.length());
+
+            if (metadataStatus < 200 || metadataStatus >= 300) {
+                String message = parseResponseMessage(metadataBody, metadataStatus);
+                return new MetadataResponse(metadataStatus, message, false, constructionId, null);
+            }
+        } finally {
+            metadataConn.disconnect();
+        }
+
+        // Parse i mod richiesti dai metadati
+        try {
+            JsonObject metadata = GSON.fromJson(metadataBody, JsonObject.class);
+            Map<String, ModInfo> requiredMods = new HashMap<>();
+
+            if (metadata.has("mods") && metadata.get("mods").isJsonObject()) {
+                JsonObject modsObject = metadata.getAsJsonObject("mods");
+                for (Map.Entry<String, JsonElement> entry : modsObject.entrySet()) {
+                    String modId = entry.getKey();
+                    JsonObject modJson = entry.getValue().getAsJsonObject();
+
+                    ModInfo info = new ModInfo(modId);
+                    if (modJson.has("displayName")) {
+                        info.setDisplayName(modJson.get("displayName").getAsString());
+                    }
+                    if (modJson.has("blockCount")) {
+                        info.setBlockCount(modJson.get("blockCount").getAsInt());
+                    }
+                    if (modJson.has("entityCount")) {
+                        info.setEntityCount(modJson.get("entityCount").getAsInt());
+                    }
+                    if (modJson.has("version") && !modJson.get("version").isJsonNull()) {
+                        info.setVersion(modJson.get("version").getAsString());
+                    }
+                    if (modJson.has("downloadUrl") && !modJson.get("downloadUrl").isJsonNull()) {
+                        info.setDownloadUrl(modJson.get("downloadUrl").getAsString());
+                    }
+                    requiredMods.put(modId, info);
+                }
+            }
+
+            return new MetadataResponse(metadataStatus, "Success", true, constructionId, requiredMods);
+
+        } catch (Exception e) {
+            Architect.LOGGER.error("Failed to parse metadata response", e);
+            return new MetadataResponse(metadataStatus, "Failed to parse metadata", false, constructionId, null);
+        }
     }
 }

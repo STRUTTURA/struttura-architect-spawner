@@ -3,6 +3,7 @@ package it.magius.struttura.architect.client;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.NativeImage;
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.client.gui.StrutturaScreen;
 import it.magius.struttura.architect.network.ScreenshotDataPacket;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
@@ -23,8 +24,9 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Gestisce la cattura e l'elaborazione degli screenshot lato client.
  * La cattura avviene in due fasi:
- * 1. Hide UI e attendi un frame
+ * 1. Chiudi la GUI Struttura, nascondi la UI di MC e attendi un frame
  * 2. Cattura il framebuffer al frame successivo
+ * 3. Riapri la GUI Struttura se era aperta
  */
 public class ScreenshotCapture {
 
@@ -37,6 +39,7 @@ public class ScreenshotCapture {
     private static String pendingTitle = null;
     private static int frameCounter = 0;
     private static boolean wasGuiHidden = false;
+    private static boolean wasStrutturaScreenOpen = false;
 
     /**
      * Richiede la cattura di uno screenshot.
@@ -49,6 +52,13 @@ public class ScreenshotCapture {
         }
 
         Minecraft mc = Minecraft.getInstance();
+
+        // Controlla se la GUI Struttura e' aperta e chiudila
+        wasStrutturaScreenOpen = mc.screen instanceof StrutturaScreen;
+        if (wasStrutturaScreenOpen) {
+            mc.setScreen(null);
+            Architect.LOGGER.debug("Closed StrutturaScreen for screenshot capture");
+        }
 
         // Salva lo stato corrente della GUI e nascondila
         wasGuiHidden = mc.options.hideGui;
@@ -90,6 +100,13 @@ public class ScreenshotCapture {
             // Ripristina lo stato della GUI
             Minecraft mc = Minecraft.getInstance();
             mc.options.hideGui = wasGuiHidden;
+
+            // Riapri la GUI Struttura se era aperta
+            if (wasStrutturaScreenOpen) {
+                mc.setScreen(new StrutturaScreen());
+                Architect.LOGGER.debug("Reopened StrutturaScreen after screenshot capture");
+            }
+            wasStrutturaScreenOpen = false;
         }
     }
 

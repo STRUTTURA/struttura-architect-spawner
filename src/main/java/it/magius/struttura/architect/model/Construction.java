@@ -1,6 +1,9 @@
 package it.magius.struttura.architect.model;
 
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.time.Instant;
@@ -43,6 +46,9 @@ public class Construction {
 
     // Bounds calcolati dai blocchi
     private final ConstructionBounds bounds = new ConstructionBounds();
+
+    // Mod richiesti dalla costruzione (namespace -> info mod)
+    private Map<String, ModInfo> requiredMods = new HashMap<>();
 
     public Construction(String id, UUID authorId, String authorName) {
         this.id = id;
@@ -303,6 +309,55 @@ public class Construction {
             copy.addBlock(entry.getKey(), entry.getValue());
         }
 
+        // Copia i mod richiesti
+        copy.setRequiredMods(this.requiredMods);
+
         return copy;
+    }
+
+    // Getter/Setter per mod richiesti
+    public Map<String, ModInfo> getRequiredMods() {
+        return requiredMods;
+    }
+
+    public void setRequiredMods(Map<String, ModInfo> mods) {
+        this.requiredMods = mods != null ? new HashMap<>(mods) : new HashMap<>();
+    }
+
+    /**
+     * Calcola i mod richiesti analizzando i blocchi della costruzione.
+     * Per ogni blocco non vanilla, estrae il namespace e popola le info del mod.
+     */
+    public void computeRequiredMods() {
+        requiredMods.clear();
+
+        // Conta i blocchi per ogni mod non-vanilla
+        for (BlockState state : blocks.values()) {
+            Identifier blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+            String namespace = blockId.getNamespace();
+
+            // Ignora i blocchi vanilla
+            if (!"minecraft".equals(namespace)) {
+                ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
+                info.incrementBlockCount();
+            }
+        }
+
+        // Popola displayName, version e downloadUrl dai mod caricati (se disponibili)
+        for (ModInfo info : requiredMods.values()) {
+            FabricLoader.getInstance().getModContainer(info.getModId()).ifPresent(container -> {
+                info.setDisplayName(container.getMetadata().getName());
+                info.setVersion(container.getMetadata().getVersion().getFriendlyString());
+                container.getMetadata().getContact().get("homepage")
+                    .ifPresent(info::setDownloadUrl);
+            });
+        }
+    }
+
+    /**
+     * Verifica se la costruzione richiede mod non-vanilla.
+     */
+    public boolean hasModdedBlocks() {
+        return !requiredMods.isEmpty();
     }
 }
