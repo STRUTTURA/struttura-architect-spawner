@@ -38,6 +38,11 @@ public class ApiClient {
     public record ApiResponse(int statusCode, String message, boolean success) {}
 
     /**
+     * Risultato di una richiesta pull con i dati della costruzione.
+     */
+    public record PullResponse(int statusCode, String message, boolean success, Construction construction) {}
+
+    /**
      * Verifica se una richiesta è attualmente in corso.
      */
     public static boolean isRequestInProgress() {
@@ -179,9 +184,18 @@ public class ApiClient {
 
     /**
      * Serializza i blocchi della costruzione in formato NBT compresso.
+     * Le coordinate vengono normalizzate (relative a 0,0,0) sottraendo i bounds minimi.
      */
     private static byte[] serializeBlocksToNbt(Construction construction) throws IOException {
         CompoundTag root = new CompoundTag();
+
+        // Ottieni i bounds per normalizzare le coordinate
+        var bounds = construction.getBounds();
+        int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
+        int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
+        int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
+
+        Architect.LOGGER.debug("Serializing blocks with offset ({},{},{})", offsetX, offsetY, offsetZ);
 
         // Palette: mappa blockState -> index
         Map<String, Integer> palette = new LinkedHashMap<>();
@@ -205,11 +219,11 @@ public class ApiClient {
                 return palette.size();
             });
 
-            // Aggiungi il blocco
+            // Aggiungi il blocco con coordinate RELATIVE (normalizzate a 0,0,0)
             CompoundTag blockTag = new CompoundTag();
-            blockTag.putInt("x", pos.getX());
-            blockTag.putInt("y", pos.getY());
-            blockTag.putInt("z", pos.getZ());
+            blockTag.putInt("x", pos.getX() - offsetX);
+            blockTag.putInt("y", pos.getY() - offsetY);
+            blockTag.putInt("z", pos.getZ() - offsetZ);
             blockTag.putInt("p", paletteIndex);
             blocksList.add(blockTag);
         }
@@ -406,5 +420,297 @@ public class ApiClient {
         } finally {
             conn.disconnect();
         }
+    }
+
+    /**
+     * Esegue il pull di una costruzione dal server in modo asincrono.
+     *
+     * @param constructionId l'ID della costruzione da scaricare
+     * @param onComplete callback chiamato al completamento
+     * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
+     */
+    public static boolean pullConstruction(String constructionId, Consumer<PullResponse> onComplete) {
+        if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
+            return false;
+        }
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return executePull(constructionId);
+            } catch (Exception e) {
+                Architect.LOGGER.error("Pull request failed", e);
+                return new PullResponse(0, "Error: " + e.getMessage(), false, null);
+            } finally {
+                REQUEST_IN_PROGRESS.set(false);
+            }
+        }).thenAccept(onComplete);
+
+        return true;
+    }
+
+    /**
+     * Esegue il download di una costruzione.
+     * Usa due chiamate separate:
+     * - GET /building/:id/metadata per i metadati (redirect a CDN, ritorna JSON)
+     * - GET /building/:id/blocks per i blocchi (redirect a CDN, ritorna NBT binario compresso)
+     */
+    private static PullResponse executePull(String constructionId) throws Exception {
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String endpoint = config.getEndpoint();
+
+        // 1. Scarica i metadati (JSON)
+        String metadataUrl = endpoint + "/building/" + constructionId + "/metadata";
+        Architect.LOGGER.info("Pulling metadata for {} from {}", constructionId, metadataUrl);
+
+        String metadataBody;
+        int metadataStatus;
+
+        HttpURLConnection metadataConn = (HttpURLConnection) URI.create(metadataUrl).toURL().openConnection();
+        try {
+            metadataConn.setRequestMethod("GET");
+            metadataConn.setInstanceFollowRedirects(true); // Segui redirect al CDN
+            metadataConn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            metadataConn.setReadTimeout(config.getRequestTimeout() * 1000);
+            metadataConn.setRequestProperty("Accept", "application/json");
+            metadataConn.setRequestProperty("Authorization", config.getAuth());
+            metadataConn.setRequestProperty("X-Api-Key", config.getApikey());
+
+            metadataStatus = metadataConn.getResponseCode();
+            metadataBody = readResponse(metadataConn);
+
+            Architect.LOGGER.info("Metadata response: {} - {} bytes", metadataStatus, metadataBody.length());
+
+            if (metadataStatus < 200 || metadataStatus >= 300) {
+                String message = parseResponseMessage(metadataBody, metadataStatus);
+                return new PullResponse(metadataStatus, message, false, null);
+            }
+        } finally {
+            metadataConn.disconnect();
+        }
+
+        // 2. Scarica i blocchi (NBT binario compresso, non base64)
+        String blocksUrl = endpoint + "/building/" + constructionId + "/blocks";
+        Architect.LOGGER.info("Pulling blocks for {} from {}", constructionId, blocksUrl);
+
+        byte[] blocksData;
+        int blocksStatus;
+
+        HttpURLConnection blocksConn = (HttpURLConnection) URI.create(blocksUrl).toURL().openConnection();
+        try {
+            blocksConn.setRequestMethod("GET");
+            blocksConn.setInstanceFollowRedirects(true); // Segui redirect al CDN
+            blocksConn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            blocksConn.setReadTimeout(config.getRequestTimeout() * 1000);
+            blocksConn.setRequestProperty("Accept", "application/octet-stream");
+            blocksConn.setRequestProperty("Authorization", config.getAuth());
+            blocksConn.setRequestProperty("X-Api-Key", config.getApikey());
+
+            blocksStatus = blocksConn.getResponseCode();
+
+            if (blocksStatus < 200 || blocksStatus >= 300) {
+                String errorBody = readResponse(blocksConn);
+                String message = parseResponseMessage(errorBody, blocksStatus);
+                return new PullResponse(blocksStatus, message, false, null);
+            }
+
+            // Leggi i dati binari
+            blocksData = readBinaryResponse(blocksConn);
+            Architect.LOGGER.info("Blocks response: {} - {} bytes", blocksStatus, blocksData.length);
+
+        } finally {
+            blocksConn.disconnect();
+        }
+
+        // 3. Parse e combina i dati
+        Construction construction = parseConstructionFromResponses(constructionId, metadataBody, blocksData);
+        if (construction == null) {
+            return new PullResponse(metadataStatus, "Failed to parse construction data", false, null);
+        }
+
+        return new PullResponse(metadataStatus, "Success", true, construction);
+    }
+
+    /**
+     * Legge la risposta binaria dalla connessione.
+     */
+    private static byte[] readBinaryResponse(HttpURLConnection conn) throws IOException {
+        try (InputStream is = conn.getInputStream();
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = is.read(buffer)) != -1) {
+                baos.write(buffer, 0, bytesRead);
+            }
+            return baos.toByteArray();
+        }
+    }
+
+    /**
+     * Parsa le risposte (metadati JSON e blocchi NBT binari) e crea un oggetto Construction.
+     *
+     * @param constructionId l'ID della costruzione
+     * @param metadataBody la risposta JSON di /building/:id/metadata
+     * @param blocksData i dati NBT binari compressi di /building/:id/blocks
+     */
+    private static Construction parseConstructionFromResponses(String constructionId, String metadataBody, byte[] blocksData) {
+        try {
+            JsonObject metadata = GSON.fromJson(metadataBody, JsonObject.class);
+
+            // Parse autore dai metadati
+            String authorName = "remote";
+            if (metadata.has("author") && metadata.get("author").isJsonObject()) {
+                JsonObject author = metadata.getAsJsonObject("author");
+                if (author.has("nickname")) {
+                    authorName = author.get("nickname").getAsString();
+                }
+            }
+
+            // Crea la costruzione con l'ID (usa UUID placeholder per costruzioni remote)
+            Construction construction = new Construction(constructionId, new java.util.UUID(0, 0), authorName);
+
+            // Parse titoli dai metadati
+            if (metadata.has("titles") && metadata.get("titles").isJsonObject()) {
+                JsonObject titles = metadata.getAsJsonObject("titles");
+                for (String lang : titles.keySet()) {
+                    construction.setTitle(lang, titles.get(lang).getAsString());
+                }
+            }
+
+            // Parse descrizioni brevi dai metadati
+            if (metadata.has("short_descriptions") && metadata.get("short_descriptions").isJsonObject()) {
+                JsonObject shortDescs = metadata.getAsJsonObject("short_descriptions");
+                for (String lang : shortDescs.keySet()) {
+                    construction.setShortDescription(lang, shortDescs.get(lang).getAsString());
+                }
+            }
+
+            // Parse descrizioni complete dai metadati
+            if (metadata.has("descriptions") && metadata.get("descriptions").isJsonObject()) {
+                JsonObject descs = metadata.getAsJsonObject("descriptions");
+                for (String lang : descs.keySet()) {
+                    construction.setDescription(lang, descs.get(lang).getAsString());
+                }
+            }
+
+            // Deserializza i blocchi da NBT compresso (dati binari diretti, non base64)
+            if (blocksData != null && blocksData.length > 0) {
+                deserializeBlocksFromNbt(construction, blocksData);
+            }
+
+            Architect.LOGGER.info("Parsed construction {} with {} blocks",
+                constructionId, construction.getBlockCount());
+
+            return construction;
+
+        } catch (Exception e) {
+            Architect.LOGGER.error("Failed to parse construction response", e);
+            return null;
+        }
+    }
+
+    /**
+     * Deserializza i blocchi da NBT compresso e li aggiunge alla costruzione.
+     * I blocchi hanno coordinate relative (normalizzate a 0,0,0).
+     */
+    private static void deserializeBlocksFromNbt(Construction construction, byte[] nbtBytes) throws IOException {
+        ByteArrayInputStream bais = new ByteArrayInputStream(nbtBytes);
+        CompoundTag root = NbtIo.readCompressed(bais, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+
+        // Leggi la palette - MC 1.21 API con Optional
+        ListTag paletteList = root.getList("palette").orElse(new ListTag());
+        List<BlockState> palette = new ArrayList<>();
+
+        for (int i = 0; i < paletteList.size(); i++) {
+            CompoundTag paletteEntry = paletteList.getCompound(i).orElseThrow();
+            String stateString = paletteEntry.getString("state").orElse("");
+            BlockState state = parseBlockState(stateString);
+            palette.add(state);
+        }
+
+        // Leggi i blocchi (coordinate relative)
+        ListTag blocksList = root.getList("blocks").orElse(new ListTag());
+        for (int i = 0; i < blocksList.size(); i++) {
+            CompoundTag blockTag = blocksList.getCompound(i).orElseThrow();
+            int x = blockTag.getInt("x").orElse(0);
+            int y = blockTag.getInt("y").orElse(0);
+            int z = blockTag.getInt("z").orElse(0);
+            int paletteIndex = blockTag.getInt("p").orElse(0);
+
+            BlockPos pos = new BlockPos(x, y, z);
+            BlockState state = palette.get(paletteIndex);
+            construction.addBlock(pos, state);
+        }
+    }
+
+    /**
+     * Parsa una stringa di BlockState (es: "minecraft:oak_stairs[facing=north,half=bottom]")
+     */
+    private static BlockState parseBlockState(String stateString) {
+        try {
+            // Separa l'ID del blocco dalle proprietà
+            String blockIdStr;
+            String propertiesStr = null;
+
+            int bracketIndex = stateString.indexOf('[');
+            if (bracketIndex != -1) {
+                blockIdStr = stateString.substring(0, bracketIndex);
+                propertiesStr = stateString.substring(bracketIndex + 1, stateString.length() - 1);
+            } else {
+                blockIdStr = stateString;
+            }
+
+            // Ottieni il blocco cercando nel registro
+            net.minecraft.world.level.block.Block block = net.minecraft.world.level.block.Blocks.AIR;
+
+            for (net.minecraft.world.level.block.Block b : BuiltInRegistries.BLOCK) {
+                String registeredId = BuiltInRegistries.BLOCK.getKey(b).toString();
+                if (registeredId.equals(blockIdStr)) {
+                    block = b;
+                    break;
+                }
+            }
+
+            BlockState state = block.defaultBlockState();
+
+            // Applica le proprietà se presenti
+            if (propertiesStr != null && !propertiesStr.isEmpty()) {
+                state = applyProperties(state, propertiesStr);
+            }
+
+            return state;
+
+        } catch (Exception e) {
+            Architect.LOGGER.warn("Failed to parse block state: {}", stateString, e);
+            return net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        }
+    }
+
+    /**
+     * Applica le proprietà a un BlockState.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static BlockState applyProperties(BlockState state, String propertiesStr) {
+        String[] pairs = propertiesStr.split(",");
+        for (String pair : pairs) {
+            String[] keyValue = pair.split("=");
+            if (keyValue.length != 2) continue;
+
+            String propName = keyValue[0].trim();
+            String propValue = keyValue[1].trim();
+
+            // Trova la proprietà nel blocco
+            for (net.minecraft.world.level.block.state.properties.Property<?> prop :
+                    state.getProperties()) {
+                if (prop.getName().equals(propName)) {
+                    Optional<?> value = prop.getValue(propValue);
+                    if (value.isPresent()) {
+                        state = state.setValue((net.minecraft.world.level.block.state.properties.Property) prop,
+                                              (Comparable) value.get());
+                    }
+                    break;
+                }
+            }
+        }
+        return state;
     }
 }

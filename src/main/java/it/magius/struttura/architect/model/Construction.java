@@ -289,4 +289,20 @@ public class Construction {
         }
         return descriptions.values().stream().filter(d -> d != null && !d.isEmpty()).findFirst().orElse("");
     }
+
+    /**
+     * Crea una copia della costruzione con un nuovo ID.
+     * Tutti i dati (blocchi, titoli, descrizioni, etc.) vengono copiati.
+     */
+    public Construction copyWithNewId(String newId) {
+        Construction copy = new Construction(newId, this.authorId, this.authorName, this.createdAt,
+            this.titles, this.shortDescriptions, this.descriptions);
+
+        // Copia tutti i blocchi
+        for (Map.Entry<BlockPos, BlockState> entry : this.blocks.entrySet()) {
+            copy.addBlock(entry.getKey(), entry.getValue());
+        }
+
+        return copy;
+    }
 }

@@ -21,7 +21,7 @@ import java.util.Locale;
 public class MainPanel {
 
     private static final int WIDTH = 180;
-    private static final int HEIGHT = 200;
+    private static final int HEIGHT = 220;
     private static final int PADDING = 5;
     private static final int BUTTON_HEIGHT = 16;
     private static final int ITEM_HEIGHT = 20;
@@ -44,6 +44,11 @@ public class MainPanel {
     private boolean showNewModal = false;
     private String newIdText = "";
     private boolean newIdFocused = true;
+
+    // Modal state for "PULL" dialog
+    private boolean showPullModal = false;
+    private String pullIdText = "";
+    private boolean pullIdFocused = true;
 
     public record ConstructionInfo(String id, String title, int blockCount, boolean isBeingEdited) {}
 
@@ -83,7 +88,8 @@ public class MainPanel {
     }
 
     private int getVisibleItemCount() {
-        int listHeight = HEIGHT - PADDING * 4 - SEARCH_HEIGHT - BUTTON_HEIGHT - 20;
+        int buttonsAreaHeight = BUTTON_HEIGHT * 2 + 2 + PADDING; // 2 button rows + spacing + padding
+        int listHeight = HEIGHT - PADDING * 3 - SEARCH_HEIGHT - buttonsAreaHeight - 12;
         return listHeight / ITEM_HEIGHT;
     }
 
@@ -117,8 +123,9 @@ public class MainPanel {
 
         currentY += SEARCH_HEIGHT + PADDING;
 
-        // Construction list
-        int listHeight = HEIGHT - (currentY - y) - BUTTON_HEIGHT - PADDING * 2;
+        // Construction list - leave space for 2 rows of buttons at bottom
+        int buttonsAreaHeight = BUTTON_HEIGHT * 2 + 2 + PADDING; // 2 button rows + spacing + padding
+        int listHeight = HEIGHT - (currentY - y) - buttonsAreaHeight - PADDING;
         int listEndY = currentY + listHeight;
 
         graphics.fill(x + PADDING, currentY, x + WIDTH - PADDING, listEndY, 0xFF101010);
@@ -168,42 +175,93 @@ public class MainPanel {
 
         currentY = listEndY + PADDING;
 
-        // NEW button (positioned at top-right corner, straddling the panel edge)
-        int newBtnSize = 13;
-        int newBtnX = x + WIDTH - newBtnSize / 2 - 2;
-        int newBtnY = y - newBtnSize / 2 + 2;
-        boolean newBtnHovered = mouseX >= newBtnX && mouseX < newBtnX + newBtnSize &&
-                                mouseY >= newBtnY && mouseY < newBtnY + newBtnSize;
+        // Top-right corner buttons: PULL (download arrow) and NEW (+)
+        int btnSize = 13;
+        int btnSpacing = 2;
+
+        // NEW button (rightmost, straddling the panel edge)
+        int newBtnX = x + WIDTH - btnSize / 2 - 2;
+        int newBtnY = y - btnSize / 2 + 2;
+        boolean newBtnHovered = mouseX >= newBtnX && mouseX < newBtnX + btnSize &&
+                                mouseY >= newBtnY && mouseY < newBtnY + btnSize;
         int newBgColor = newBtnHovered ? 0xFF406040 : 0xFF305030;
-        graphics.fill(newBtnX, newBtnY, newBtnX + newBtnSize, newBtnY + newBtnSize, newBgColor);
-        graphics.renderOutline(newBtnX, newBtnY, newBtnSize, newBtnSize, 0xFF60A060);
+        graphics.fill(newBtnX, newBtnY, newBtnX + btnSize, newBtnY + btnSize, newBgColor);
+        graphics.renderOutline(newBtnX, newBtnY, btnSize, btnSize, 0xFF60A060);
         int newTextWidth = font.width("+");
-        graphics.drawString(font, "+", newBtnX + (newBtnSize - newTextWidth) / 2 + 1, newBtnY + 3, 0xFF88FF88, false);
+        graphics.drawString(font, "+", newBtnX + (btnSize - newTextWidth) / 2 + 1, newBtnY + 3, 0xFF88FF88, false);
+
+        // PULL button (left of NEW, with down arrow symbol)
+        int pullBtnX = newBtnX - btnSize - btnSpacing;
+        int pullBtnY = newBtnY;
+        boolean pullBtnHovered = mouseX >= pullBtnX && mouseX < pullBtnX + btnSize &&
+                                 mouseY >= pullBtnY && mouseY < pullBtnY + btnSize;
+        int pullBgColor = pullBtnHovered ? 0xFF404060 : 0xFF303050;
+        graphics.fill(pullBtnX, pullBtnY, pullBtnX + btnSize, pullBtnY + btnSize, pullBgColor);
+        graphics.renderOutline(pullBtnX, pullBtnY, btnSize, btnSize, 0xFF6060A0);
+        // Draw down arrow centered (adjusted +1px right and +1px down)
+        String pullIcon = "\u2193"; // Down arrow ↓
+        int pullTextWidth = font.width(pullIcon);
+        int pullIconX = pullBtnX + (btnSize - pullTextWidth) / 2 + 1;
+        int pullIconY = pullBtnY + (btnSize - 8) / 2 + 1;
+        graphics.drawString(font, pullIcon, pullIconX, pullIconY, 0xFF8888FF, false);
 
         // Action buttons (only if something is selected)
         if (selectedIndex >= 0 && selectedIndex < filteredConstructions.size()) {
             ConstructionInfo selected = filteredConstructions.get(selectedIndex);
-            String[] buttons = {"SHOW", "HIDE", "TP", "EDIT", "SHOT", "DEL"};
-            int buttonWidth = (WIDTH - PADDING * 2 - (buttons.length - 1) * 2) / buttons.length;
+            // Row 1: SHOW, HIDE, TP, EDIT, SHOT, DEL
+            String[] buttons1 = {"SHOW", "HIDE", "TP", "EDIT", "SHOT", "DEL"};
+            int buttonWidth1 = (WIDTH - PADDING * 2 - (buttons1.length - 1) * 2) / buttons1.length;
 
-            for (int i = 0; i < buttons.length; i++) {
-                int btnX = x + PADDING + i * (buttonWidth + 2);
+            for (int i = 0; i < buttons1.length; i++) {
+                int btnX = x + PADDING + i * (buttonWidth1 + 2);
                 int btnY = currentY;
 
-                boolean btnHovered = mouseX >= btnX && mouseX < btnX + buttonWidth &&
+                boolean btnHovered = mouseX >= btnX && mouseX < btnX + buttonWidth1 &&
                                      mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT;
                 if (btnHovered) {
                     hoveredButton = i;
                 }
 
                 int bgColor = btnHovered ? 0xFF505050 : 0xFF303030;
-                graphics.fill(btnX, btnY, btnX + buttonWidth, btnY + BUTTON_HEIGHT, bgColor);
-                graphics.renderOutline(btnX, btnY, buttonWidth, BUTTON_HEIGHT, 0xFF606060);
+                graphics.fill(btnX, btnY, btnX + buttonWidth1, btnY + BUTTON_HEIGHT, bgColor);
+                graphics.renderOutline(btnX, btnY, buttonWidth1, BUTTON_HEIGHT, 0xFF606060);
 
-                int textWidth = font.width(buttons[i]);
-                graphics.drawString(font, buttons[i],
-                                   btnX + (buttonWidth - textWidth) / 2, btnY + 4, 0xFFFFFFFF, false);
+                int textWidth = font.width(buttons1[i]);
+                graphics.drawString(font, buttons1[i],
+                                   btnX + (buttonWidth1 - textWidth) / 2, btnY + 4, 0xFFFFFFFF, false);
             }
+
+            // Row 2: PUSH only (full width)
+            int row2Y = currentY + BUTTON_HEIGHT + 2;
+            int pushBtnX = x + PADDING;
+            int pushBtnWidth = WIDTH - PADDING * 2;
+
+            boolean pushHovered = mouseX >= pushBtnX && mouseX < pushBtnX + pushBtnWidth &&
+                                  mouseY >= row2Y && mouseY < row2Y + BUTTON_HEIGHT;
+
+            // PUSH is disabled if construction is being edited
+            boolean pushDisabled = selected.isBeingEdited();
+
+            if (pushHovered && !pushDisabled) {
+                hoveredButton = buttons1.length; // Index after row 1 buttons
+            }
+
+            int pushBgColor;
+            int pushTextColor;
+            if (pushDisabled) {
+                pushBgColor = 0xFF202020;
+                pushTextColor = 0xFF606060;
+            } else {
+                pushBgColor = pushHovered ? 0xFF505050 : 0xFF303030;
+                pushTextColor = 0xFFFFFFFF;
+            }
+
+            graphics.fill(pushBtnX, row2Y, pushBtnX + pushBtnWidth, row2Y + BUTTON_HEIGHT, pushBgColor);
+            graphics.renderOutline(pushBtnX, row2Y, pushBtnWidth, BUTTON_HEIGHT, pushDisabled ? 0xFF404040 : 0xFF606060);
+
+            int pushTextWidth = font.width("PUSH");
+            graphics.drawString(font, "PUSH",
+                               pushBtnX + (pushBtnWidth - pushTextWidth) / 2, row2Y + 4, pushTextColor, false);
         }
 
         // Modal is rendered separately via renderModal() to ensure it's on top
@@ -213,7 +271,7 @@ public class MainPanel {
      * Check if the modal is currently open.
      */
     public boolean isModalOpen() {
-        return showNewModal;
+        return showNewModal || showPullModal;
     }
 
     /**
@@ -221,12 +279,14 @@ public class MainPanel {
      * Should be called after all panels are rendered.
      */
     public void renderModal(GuiGraphics graphics, int mouseX, int mouseY) {
-        if (!showNewModal) {
-            return;
-        }
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;
-        renderNewModal(graphics, font, mouseX, mouseY);
+
+        if (showNewModal) {
+            renderNewModal(graphics, font, mouseX, mouseY);
+        } else if (showPullModal) {
+            renderPullModal(graphics, font, mouseX, mouseY);
+        }
     }
 
     private void renderNewModal(GuiGraphics graphics, Font font, int mouseX, int mouseY) {
@@ -287,23 +347,106 @@ public class MainPanel {
         graphics.drawString(font, "CANCEL", cancelX + (btnWidth - cancelTextW) / 2, btnY + 4, 0xFFFF8888, false);
     }
 
+    private void renderPullModal(GuiGraphics graphics, Font font, int mouseX, int mouseY) {
+        Minecraft mc = Minecraft.getInstance();
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
+
+        int modalWidth = 200;
+        int modalHeight = 80;
+        int modalX = (screenWidth - modalWidth) / 2;
+        int modalY = (screenHeight - modalHeight) / 2;
+
+        // Dark overlay behind modal
+        graphics.fill(0, 0, screenWidth, screenHeight, 0x80000000);
+
+        // Modal background
+        graphics.fill(modalX, modalY, modalX + modalWidth, modalY + modalHeight, 0xF0202020);
+        graphics.renderOutline(modalX, modalY, modalWidth, modalHeight, 0xFF6060A0);
+
+        // Title with down arrow
+        graphics.drawString(font, "\u2193 Pull Construction", modalX + 10, modalY + 8, 0xFF8888FF, false);
+
+        // ID input box
+        int inputY = modalY + 25;
+        int inputWidth = modalWidth - 20;
+        graphics.fill(modalX + 10, inputY, modalX + 10 + inputWidth, inputY + 16,
+                     pullIdFocused ? 0xFF404040 : 0xFF303030);
+        graphics.renderOutline(modalX + 10, inputY, inputWidth, 16,
+                              pullIdFocused ? 0xFFFFFFFF : 0xFF606060);
+
+        // Show placeholder when text is empty, cursor when focused
+        if (pullIdText.isEmpty()) {
+            graphics.drawString(font, "it.example.myhouse", modalX + 13, inputY + 4, 0xFF606060, false);
+            if (pullIdFocused) {
+                // Draw cursor at the start
+                graphics.drawString(font, "_", modalX + 13, inputY + 4, 0xFFFFFFFF, false);
+            }
+        } else {
+            graphics.drawString(font, pullIdText + (pullIdFocused ? "_" : ""),
+                               modalX + 13, inputY + 4, 0xFFFFFFFF, false);
+        }
+
+        // Buttons: PULL and CANCEL
+        int btnWidth = 60;
+        int btnY = modalY + 50;
+
+        // PULL button
+        int pullX = modalX + modalWidth / 2 - btnWidth - 5;
+        boolean pullHovered = mouseX >= pullX && mouseX < pullX + btnWidth &&
+                              mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT;
+        graphics.fill(pullX, btnY, pullX + btnWidth, btnY + BUTTON_HEIGHT,
+                     pullHovered ? 0xFF404060 : 0xFF303050);
+        graphics.renderOutline(pullX, btnY, btnWidth, BUTTON_HEIGHT, 0xFF6060A0);
+        int pullTextW = font.width("PULL");
+        graphics.drawString(font, "PULL", pullX + (btnWidth - pullTextW) / 2, btnY + 4, 0xFF8888FF, false);
+
+        // CANCEL button
+        int cancelX = modalX + modalWidth / 2 + 5;
+        boolean cancelHovered = mouseX >= cancelX && mouseX < cancelX + btnWidth &&
+                                mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT;
+        graphics.fill(cancelX, btnY, cancelX + btnWidth, btnY + BUTTON_HEIGHT,
+                     cancelHovered ? 0xFF604040 : 0xFF503030);
+        graphics.renderOutline(cancelX, btnY, btnWidth, BUTTON_HEIGHT, 0xFFA06060);
+        int cancelTextW = font.width("CANCEL");
+        graphics.drawString(font, "CANCEL", cancelX + (btnWidth - cancelTextW) / 2, btnY + 4, 0xFFFF8888, false);
+    }
+
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button != 0) return false;
 
         // Handle modal clicks first if modal is open
         if (showNewModal) {
-            return handleModalClick(mouseX, mouseY);
+            return handleNewModalClick(mouseX, mouseY);
+        }
+        if (showPullModal) {
+            return handlePullModalClick(mouseX, mouseY);
         }
 
-        // Check NEW button click FIRST (top right corner, straddling panel edge - partially outside bounds)
-        int newBtnSize = 13;
-        int newBtnX = x + WIDTH - newBtnSize / 2 - 2;
-        int newBtnY = y - newBtnSize / 2 + 2;
-        if (mouseX >= newBtnX && mouseX < newBtnX + newBtnSize &&
-            mouseY >= newBtnY && mouseY < newBtnY + newBtnSize) {
+        // Top-right corner buttons (straddling panel edge - partially outside bounds)
+        int btnSize = 13;
+        int btnSpacing = 2;
+
+        // Check NEW button click (rightmost)
+        int newBtnX = x + WIDTH - btnSize / 2 - 2;
+        int newBtnY = y - btnSize / 2 + 2;
+        if (mouseX >= newBtnX && mouseX < newBtnX + btnSize &&
+            mouseY >= newBtnY && mouseY < newBtnY + btnSize) {
             showNewModal = true;
             newIdText = "";
             newIdFocused = true;
+            searchFocused = false;
+            return true;
+        }
+
+        // Check PULL button click (left of NEW)
+        int pullBtnX = newBtnX - btnSize - btnSpacing;
+        int pullBtnY = newBtnY;
+        if (mouseX >= pullBtnX && mouseX < pullBtnX + btnSize &&
+            mouseY >= pullBtnY && mouseY < pullBtnY + btnSize) {
+            showPullModal = true;
+            pullIdText = "";
+            pullIdFocused = true;
             searchFocused = false;
             return true;
         }
@@ -331,7 +474,8 @@ public class MainPanel {
         currentY += SEARCH_HEIGHT + PADDING;
 
         // List click
-        int listHeight = HEIGHT - (currentY - y) - BUTTON_HEIGHT - PADDING * 2;
+        int buttonsAreaHeight = BUTTON_HEIGHT * 2 + 2 + PADDING; // 2 button rows + spacing + padding
+        int listHeight = HEIGHT - (currentY - y) - buttonsAreaHeight - PADDING;
         int listEndY = currentY + listHeight;
 
         if (mouseX >= x + PADDING && mouseX < x + WIDTH - PADDING &&
@@ -345,28 +489,43 @@ public class MainPanel {
 
         currentY = listEndY + PADDING;
 
-        // Action buttons click
+        // Action buttons click - Row 1
         if (selectedIndex >= 0 && selectedIndex < filteredConstructions.size()) {
             ConstructionInfo selected = filteredConstructions.get(selectedIndex);
-            String[] actions = {"show", "hide", "tp", "edit", "shot", "destroy"};
-            int buttonWidth = (WIDTH - PADDING * 2 - (actions.length - 1) * 2) / actions.length;
+            String[] actions1 = {"show", "hide", "tp", "edit", "shot", "destroy"};
+            int buttonWidth1 = (WIDTH - PADDING * 2 - (actions1.length - 1) * 2) / actions1.length;
 
-            for (int i = 0; i < actions.length; i++) {
-                int btnX = x + PADDING + i * (buttonWidth + 2);
+            for (int i = 0; i < actions1.length; i++) {
+                int btnX = x + PADDING + i * (buttonWidth1 + 2);
                 int btnY = currentY;
 
-                if (mouseX >= btnX && mouseX < btnX + buttonWidth &&
+                if (mouseX >= btnX && mouseX < btnX + buttonWidth1 &&
                     mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
-                    executeAction(actions[i], selected.id());
+                    executeAction(actions1[i], selected.id());
                     return true;
                 }
+            }
+
+            // Action buttons click - Row 2 (PUSH only, full width)
+            int row2Y = currentY + BUTTON_HEIGHT + 2;
+            int pushBtnX = x + PADDING;
+            int pushBtnWidth = WIDTH - PADDING * 2;
+
+            if (mouseX >= pushBtnX && mouseX < pushBtnX + pushBtnWidth &&
+                mouseY >= row2Y && mouseY < row2Y + BUTTON_HEIGHT) {
+                // PUSH is disabled if construction is being edited
+                if (selected.isBeingEdited()) {
+                    return true; // Consume click but don't execute
+                }
+                executeAction("push", selected.id());
+                return true;
             }
         }
 
         return true; // Consume click even if nothing hit within panel
     }
 
-    private boolean handleModalClick(double mouseX, double mouseY) {
+    private boolean handleNewModalClick(double mouseX, double mouseY) {
         Minecraft mc = Minecraft.getInstance();
         int screenWidth = mc.getWindow().getGuiScaledWidth();
         int screenHeight = mc.getWindow().getGuiScaledHeight();
@@ -419,6 +578,59 @@ public class MainPanel {
         return true; // Consume click within modal
     }
 
+    private boolean handlePullModalClick(double mouseX, double mouseY) {
+        Minecraft mc = Minecraft.getInstance();
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
+
+        int modalWidth = 200;
+        int modalHeight = 80;
+        int modalX = (screenWidth - modalWidth) / 2;
+        int modalY = (screenHeight - modalHeight) / 2;
+
+        // Check input field click
+        int inputY = modalY + 25;
+        int inputWidth = modalWidth - 20;
+        if (mouseX >= modalX + 10 && mouseX < modalX + 10 + inputWidth &&
+            mouseY >= inputY && mouseY < inputY + 16) {
+            pullIdFocused = true;
+            return true;
+        }
+
+        // Check PULL button
+        int btnWidth = 60;
+        int btnY = modalY + 50;
+        int pullX = modalX + modalWidth / 2 - btnWidth - 5;
+        if (mouseX >= pullX && mouseX < pullX + btnWidth &&
+            mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
+            if (!pullIdText.isEmpty()) {
+                executeAction("pull", pullIdText);
+                showPullModal = false;
+                pullIdText = "";
+            }
+            return true;
+        }
+
+        // Check CANCEL button
+        int cancelX = modalX + modalWidth / 2 + 5;
+        if (mouseX >= cancelX && mouseX < cancelX + btnWidth &&
+            mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
+            showPullModal = false;
+            pullIdText = "";
+            return true;
+        }
+
+        // Click outside modal closes it
+        if (mouseX < modalX || mouseX > modalX + modalWidth ||
+            mouseY < modalY || mouseY > modalY + modalHeight) {
+            showPullModal = false;
+            pullIdText = "";
+            return true;
+        }
+
+        return true; // Consume click within modal
+    }
+
     private void executeAction(String action, String targetId) {
         Architect.LOGGER.debug("GUI action: {} on {}", action, targetId);
         ClientPlayNetworking.send(new GuiActionPacket(action, targetId != null ? targetId : "", ""));
@@ -427,7 +639,8 @@ public class MainPanel {
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         // Check if mouse is over list area
         int currentY = y + PADDING + 12 + SEARCH_HEIGHT + PADDING;
-        int listHeight = HEIGHT - (currentY - y) - BUTTON_HEIGHT - PADDING * 2;
+        int buttonsAreaHeight = BUTTON_HEIGHT * 2 + 2 + PADDING; // 2 button rows + spacing + padding
+        int listHeight = HEIGHT - (currentY - y) - buttonsAreaHeight - PADDING;
 
         if (mouseX >= x + PADDING && mouseX < x + WIDTH - PADDING &&
             mouseY >= currentY && mouseY < currentY + listHeight) {
@@ -439,7 +652,7 @@ public class MainPanel {
     }
 
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        // Handle modal input first
+        // Handle NEW modal input first
         if (showNewModal && newIdFocused) {
             // Backspace
             if (keyCode == 259 && !newIdText.isEmpty()) {
@@ -458,6 +671,31 @@ public class MainPanel {
                     executeAction("edit", newIdText);
                     showNewModal = false;
                     newIdText = "";
+                }
+                return true;
+            }
+            return true; // Consume all key presses when modal is open
+        }
+
+        // Handle PULL modal input
+        if (showPullModal && pullIdFocused) {
+            // Backspace
+            if (keyCode == 259 && !pullIdText.isEmpty()) {
+                pullIdText = pullIdText.substring(0, pullIdText.length() - 1);
+                return true;
+            }
+            // Escape - close modal
+            if (keyCode == 256) {
+                showPullModal = false;
+                pullIdText = "";
+                return true;
+            }
+            // Enter - pull
+            if (keyCode == 257) {
+                if (!pullIdText.isEmpty()) {
+                    executeAction("pull", pullIdText);
+                    showPullModal = false;
+                    pullIdText = "";
                 }
                 return true;
             }
@@ -489,10 +727,19 @@ public class MainPanel {
     }
 
     public boolean charTyped(char chr, int modifiers) {
-        // Handle modal input first
+        // Handle NEW modal input first
         if (showNewModal && newIdFocused) {
             if (Character.isLetterOrDigit(chr) || chr == '.' || chr == '_') {
                 newIdText += chr;
+                return true;
+            }
+            return true; // Consume all chars when modal is open
+        }
+
+        // Handle PULL modal input
+        if (showPullModal && pullIdFocused) {
+            if (Character.isLetterOrDigit(chr) || chr == '.' || chr == '_') {
+                pullIdText += chr;
                 return true;
             }
             return true; // Consume all chars when modal is open
@@ -517,5 +764,7 @@ public class MainPanel {
         filteredConstructions.clear();
         showNewModal = false;
         newIdText = "";
+        showPullModal = false;
+        pullIdText = "";
     }
 }

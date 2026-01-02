@@ -449,6 +449,8 @@ public class NetworkHandler {
             case "rename" -> handleGuiRename(player, targetId);
             case "destroy" -> handleGuiDestroy(player, targetId);
             case "request_list" -> sendConstructionList(player);
+            case "push" -> handleGuiPush(player, targetId);
+            case "pull" -> handleGuiPull(player, targetId);
             default -> Architect.LOGGER.warn("Unknown GUI action: {}", action);
         }
     }
@@ -713,9 +715,65 @@ public class NetworkHandler {
     }
 
     private static void handleGuiRename(ServerPlayer player, String newId) {
-        // Rename is complex - for now just inform user to use commands
-        player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
-                "Rename is not supported via GUI yet. Use /struttura exit and /struttura edit <new_id>"));
+        // Il giocatore deve essere in editing
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        String oldId = session.getConstruction().getId();
+
+        // Se l'ID non è cambiato, ignora
+        if (oldId.equals(newId)) {
+            return;
+        }
+
+        // Valida il nuovo ID
+        if (!Construction.isValidId(newId)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "edit.invalid_id", newId)));
+            return;
+        }
+
+        // Verifica che il nuovo ID non esista già (nel registry o in altre sessioni)
+        if (ConstructionRegistry.getInstance().exists(newId)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "rename.id_exists", newId)));
+            return;
+        }
+
+        // Verifica che un altro giocatore non stia già modificando una costruzione con il nuovo ID
+        for (EditingSession otherSession : EditingSession.getAllSessions()) {
+            if (otherSession != session && otherSession.getConstruction().getId().equals(newId)) {
+                player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                        I18n.tr(player, "rename.id_exists", newId)));
+                return;
+            }
+        }
+
+        // Crea la nuova costruzione con il nuovo ID
+        Construction oldConstruction = session.getConstruction();
+        Construction newConstruction = oldConstruction.copyWithNewId(newId);
+
+        // Aggiorna la sessione con la nuova costruzione
+        session.setConstruction(newConstruction);
+
+        // Rimuovi la vecchia costruzione dal registry se esisteva
+        if (ConstructionRegistry.getInstance().exists(oldId)) {
+            ConstructionRegistry.getInstance().unregister(oldId);
+        }
+
+        Architect.LOGGER.info("Player {} renamed construction from {} to {}",
+                player.getName().getString(), oldId, newId);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "rename.success", oldId, newId)));
+
+        // Aggiorna le info di editing e la lista costruzioni sul client
+        sendEditingInfo(player);
+        sendConstructionList(player);
     }
 
     private static void handleGuiDestroy(ServerPlayer player, String id) {
@@ -777,6 +835,220 @@ public class NetworkHandler {
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "destroy.success", id)));
+    }
+
+    private static void handleGuiPush(ServerPlayer player, String id) {
+        // Verifica che la costruzione NON sia in modalità editing
+        if (isConstructionBeingEdited(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.in_editing", id)));
+            return;
+        }
+
+        // Verifica che la costruzione esista nel registry
+        ConstructionRegistry registry = ConstructionRegistry.getInstance();
+        if (!registry.exists(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.not_found", id)));
+            return;
+        }
+
+        // Verifica che non ci sia già una richiesta in corso
+        if (ApiClient.isRequestInProgress()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.request_in_progress")));
+            return;
+        }
+
+        Construction construction = registry.get(id);
+        if (construction == null || construction.getBlockCount() == 0) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.empty", id)));
+            return;
+        }
+
+        // Verifica che la costruzione abbia un titolo (obbligatorio per l'API)
+        if (!construction.hasValidTitle()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.no_title", id)));
+            return;
+        }
+
+        // Messaggio di invio
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "push.sending", id, construction.getBlockCount())));
+
+        Architect.LOGGER.info("Player {} pushing construction {} ({} blocks) via GUI",
+            player.getName().getString(), id, construction.getBlockCount());
+
+        // Cattura il server per il callback sul main thread
+        var server = ((ServerLevel) player.level()).getServer();
+
+        // Esegui push asincrono
+        boolean started = ApiClient.pushConstruction(construction, response -> {
+            // Callback viene eseguito su thread async, schedula sul main thread
+            if (server != null) {
+                server.execute(() -> {
+                    if (response.success()) {
+                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                            I18n.tr(player, "push.success", id, response.statusCode(), response.message())
+                        ));
+                        Architect.LOGGER.info("Push successful for {}: {} - {}",
+                            id, response.statusCode(), response.message());
+                    } else {
+                        player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                            I18n.tr(player, "push.failed", id, response.statusCode(), response.message())
+                        ));
+                        Architect.LOGGER.warn("Push failed for {}: {} - {}",
+                            id, response.statusCode(), response.message());
+                    }
+                });
+            }
+        });
+
+        if (!started) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.request_in_progress")));
+        }
+    }
+
+    // Set per tracciare le costruzioni attualmente in pull
+    private static final Set<String> PULLING_CONSTRUCTIONS = new HashSet<>();
+
+    private static void handleGuiPull(ServerPlayer player, String id) {
+        // Verifica che la costruzione non sia in editing
+        if (isConstructionBeingEdited(id)) {
+            EditingSession existingSession = getSessionForConstruction(id);
+            String otherPlayerName = existingSession != null
+                ? existingSession.getPlayer().getName().getString()
+                : "unknown";
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "pull.in_editing", id, otherPlayerName)));
+            return;
+        }
+
+        // Verifica che non sia già in corso un pull per questa costruzione
+        if (PULLING_CONSTRUCTIONS.contains(id)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "pull.already_pulling", id)));
+            return;
+        }
+
+        // Verifica che non ci sia già una richiesta API in corso
+        if (ApiClient.isRequestInProgress()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.request_in_progress")));
+            return;
+        }
+
+        // Blocca la costruzione per il pull
+        PULLING_CONSTRUCTIONS.add(id);
+
+        // Messaggio di inizio
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "pull.starting", id)));
+
+        Architect.LOGGER.info("Player {} pulling construction {} via GUI", player.getName().getString(), id);
+
+        // Cattura il server per il callback sul main thread
+        var server = ((ServerLevel) player.level()).getServer();
+
+        // Esegui pull asincrono
+        boolean started = ApiClient.pullConstruction(id, response -> {
+            // Callback viene eseguito su thread async, schedula sul main thread
+            if (server != null) {
+                server.execute(() -> {
+                    // Sblocca la costruzione
+                    PULLING_CONSTRUCTIONS.remove(id);
+
+                    if (response.success() && response.construction() != null) {
+                        Construction construction = response.construction();
+
+                        // Registra la costruzione nel registry
+                        ConstructionRegistry.getInstance().register(construction);
+
+                        // Piazza la costruzione di fronte al giocatore
+                        int placedCount = spawnConstructionInFrontOfPlayer(player, construction);
+
+                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                            I18n.tr(player, "pull.success", id, placedCount)
+                        ));
+
+                        // Aggiorna la lista costruzioni
+                        sendConstructionList(player);
+
+                        Architect.LOGGER.info("Pull successful for {}: {} blocks placed",
+                            id, placedCount);
+                    } else {
+                        player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                            I18n.tr(player, "pull.failed", id, response.statusCode(), response.message())
+                        ));
+                        Architect.LOGGER.warn("Pull failed for {}: {} - {}",
+                            id, response.statusCode(), response.message());
+                    }
+                });
+            } else {
+                // Sblocca comunque se il server non è disponibile
+                PULLING_CONSTRUCTIONS.remove(id);
+            }
+        });
+
+        if (!started) {
+            PULLING_CONSTRUCTIONS.remove(id);
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "push.request_in_progress")));
+        }
+    }
+
+    /**
+     * Piazza una costruzione di fronte al giocatore e aggiorna le coordinate interne.
+     */
+    private static int spawnConstructionInFrontOfPlayer(ServerPlayer player, Construction construction) {
+        if (construction.getBlockCount() == 0) {
+            return 0;
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+        var bounds = construction.getBounds();
+        int sizeX = bounds.getSizeX();
+        int sizeZ = bounds.getSizeZ();
+
+        // Calcola la posizione di spawn di fronte al giocatore
+        float yaw = player.getYRot();
+        double radians = Math.toRadians(yaw);
+        double dirX = -Math.sin(radians);
+        double dirZ = Math.cos(radians);
+
+        // Distanza di spawn basata sulla dimensione della costruzione
+        int distance = Math.max(sizeX, sizeZ) / 2 + 3;
+
+        int offsetX = (int) Math.round(player.getX() + dirX * distance) - bounds.getMinX();
+        int offsetY = (int) player.getY() - bounds.getMinY();
+        int offsetZ = (int) Math.round(player.getZ() + dirZ * distance) - bounds.getMinZ();
+
+        // Piazza i blocchi e aggiorna la costruzione con le nuove posizioni
+        java.util.Map<BlockPos, BlockState> newBlocks = new java.util.HashMap<>();
+        int placedCount = 0;
+
+        for (java.util.Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+            BlockPos originalPos = entry.getKey();
+            BlockState state = entry.getValue();
+            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
+            newBlocks.put(newPos, state);
+            if (!state.isAir()) {
+                level.setBlock(newPos, state, 3);
+                placedCount++;
+            }
+        }
+
+        // Aggiorna la costruzione con le nuove coordinate assolute
+        construction.getBlocks().clear();
+        construction.getBounds().reset();
+        for (java.util.Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
+            construction.addBlock(entry.getKey(), entry.getValue());
+        }
+
+        return placedCount;
     }
 
     // ===== Helper Methods =====

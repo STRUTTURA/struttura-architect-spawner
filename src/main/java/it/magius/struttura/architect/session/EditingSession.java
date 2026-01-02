@@ -23,8 +23,8 @@ public class EditingSession {
     // Giocatore proprietario della sessione
     private final ServerPlayer player;
 
-    // Costruzione in editing
-    private final Construction construction;
+    // Costruzione in editing (può essere sostituita durante rename)
+    private Construction construction;
 
     // Modalita' corrente (ADD o REMOVE)
     private EditMode mode = EditMode.ADD;
@@ -119,6 +119,7 @@ public class EditingSession {
     // Getters e Setters
     public ServerPlayer getPlayer() { return player; }
     public Construction getConstruction() { return construction; }
+    public void setConstruction(Construction construction) { this.construction = construction; }
 
     public EditMode getMode() { return mode; }
     public void setMode(EditMode mode) { this.mode = mode; }
