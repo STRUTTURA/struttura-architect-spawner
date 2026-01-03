@@ -735,16 +735,8 @@ public class StrutturaCommand {
 
         ServerLevel level = (ServerLevel) player.level();
 
-        // Piazza i blocchi della costruzione nel mondo
-        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
-        int placedCount = 0;
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
-            BlockPos pos = entry.getKey();
-            BlockState state = entry.getValue();
-            level.setBlock(pos, state, placementFlags);
-            placedCount++;
-        }
+        // Usa la funzione centralizzata per mostrare la costruzione nella sua posizione originale
+        int placedCount = NetworkHandler.showConstructionInPlace(level, construction);
 
         VISIBLE_CONSTRUCTIONS.add(id);
 

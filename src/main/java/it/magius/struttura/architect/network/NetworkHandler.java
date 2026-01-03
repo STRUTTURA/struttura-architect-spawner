@@ -508,31 +508,13 @@ public class NetworkHandler {
 
         ServerLevel level = (ServerLevel) player.level();
 
-        // Piazza i blocchi della costruzione nel mondo
-        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
-        int placedCount = 0;
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
-            BlockPos pos = entry.getKey();
-            BlockState state = entry.getValue();
-            level.setBlock(pos, state, placementFlags);
-            placedCount++;
-        }
-
-        // Spawna le entità (coordinate relative ai bounds minimi)
-        var bounds = construction.getBounds();
-        int entityCount = spawnConstructionEntities(construction, level,
-            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ());
+        // Usa la funzione centralizzata per mostrare la costruzione nella sua posizione originale
+        int placedCount = showConstructionInPlace(level, construction);
 
         VISIBLE_CONSTRUCTIONS.add(id);
 
-        if (entityCount > 0) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "show.success_with_entities", id, placedCount, entityCount)));
-        } else {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "show.success", id, placedCount)));
-        }
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "show.success", id, placedCount)));
     }
 
     private static void handleGuiHide(ServerPlayer player, String id) {
@@ -1077,8 +1059,19 @@ public class NetworkHandler {
         double dirX = -Math.sin(radians);
         double dirZ = Math.cos(radians);
 
-        // Distanza di spawn basata sulla dimensione della costruzione
-        int distance = Math.max(sizeX, sizeZ) / 2 + 3;
+        // Calcola la distanza minima per garantire che il player sia fuori dai bounds di 2 blocchi
+        // La costruzione viene centrata sulla direzione del player, quindi dobbiamo considerare
+        // metà della dimensione nella direzione di sguardo + metà della dimensione perpendicolare
+        // per coprire il caso peggiore (angoli)
+        int halfSizeX = (sizeX + 1) / 2;
+        int halfSizeZ = (sizeZ + 1) / 2;
+
+        // Distanza dal centro della costruzione al bordo più vicino nella direzione del player
+        // Usiamo il massimo delle due metà per sicurezza
+        int halfSize = Math.max(halfSizeX, halfSizeZ);
+
+        // Distanza totale: metà dimensione + 2 blocchi di margine
+        int distance = halfSize + 2;
 
         int offsetX = (int) Math.round(player.getX() + dirX * distance) - originalMinX;
         int offsetY = (int) player.getY() - originalMinY;
@@ -1174,6 +1167,75 @@ public class NetworkHandler {
         int originY = offsetY + originalMinY;
         int originZ = offsetZ + originalMinZ;
         spawnConstructionEntities(construction, level, originX, originY, originZ);
+
+        return placedCount;
+    }
+
+    /**
+     * Mostra una costruzione nella sua posizione originale (usato per SHOW dopo HIDE).
+     * Piazza i blocchi nelle coordinate memorizzate, applica NBT dei block entity e spawna le entità.
+     *
+     * @param level Il ServerLevel
+     * @param construction La costruzione da mostrare
+     * @return Il numero di blocchi piazzati
+     */
+    public static int showConstructionInPlace(ServerLevel level, Construction construction) {
+        if (construction == null || construction.getBlockCount() == 0) {
+            return 0;
+        }
+
+        var bounds = construction.getBounds();
+        if (!bounds.isValid()) {
+            return 0;
+        }
+
+        // Piazza i blocchi nelle loro posizioni originali
+        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
+        int placedCount = 0;
+        int blockEntityCount = 0;
+
+        // Ordina i blocchi per Y crescente per piazzare prima i blocchi di supporto
+        java.util.List<java.util.Map.Entry<BlockPos, BlockState>> sortedBlocks =
+            new java.util.ArrayList<>(construction.getBlocks().entrySet());
+        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
+
+        for (java.util.Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
+            BlockPos pos = entry.getKey();
+            BlockState state = entry.getValue();
+            if (!state.isAir()) {
+                level.setBlock(pos, state, placementFlags);
+                placedCount++;
+
+                // Applica l'NBT del block entity se presente (casse, furnace, etc.)
+                CompoundTag blockNbt = construction.getBlockEntityNbt(pos);
+                if (blockNbt != null) {
+                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(pos);
+                    if (blockEntity != null) {
+                        // L'NBT è già nelle coordinate corrette
+                        net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
+                            net.minecraft.util.ProblemReporter.DISCARDING,
+                            level.registryAccess(),
+                            blockNbt
+                        );
+                        blockEntity.loadCustomOnly(input);
+                        blockEntity.setChanged();
+                        blockEntityCount++;
+                    }
+                }
+            }
+        }
+
+        if (blockEntityCount > 0) {
+            Architect.LOGGER.info("ShowInPlace: Applied NBT to {} block entities", blockEntityCount);
+        }
+
+        // Spawna le entità nelle loro posizioni originali
+        // Le coordinate delle entità sono relative ai bounds minimi
+        int entityCount = spawnConstructionEntities(construction, level,
+            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ());
+
+        Architect.LOGGER.info("ShowInPlace: placed {} blocks, {} entities", placedCount, entityCount);
 
         return placedCount;
     }
@@ -1861,8 +1923,7 @@ public class NetworkHandler {
     }
 
     /**
-     * Nasconde una costruzione dal mondo rimuovendo tutti i blocchi nell'area bounds.
-     * Rimuove solo XP orbs e item drops, NON le entità della costruzione.
+     * Nasconde una costruzione dal mondo rimuovendo tutti i blocchi e le entità nell'area bounds.
      * La costruzione rimane in memoria per future operazioni SHOW.
      *
      * @param level Il ServerLevel
@@ -1870,7 +1931,7 @@ public class NetworkHandler {
      * @return Il numero di blocchi rimossi
      */
     public static int hideConstructionFromWorld(ServerLevel level, Construction construction) {
-        return hideConstructionFromWorld(level, construction, false);
+        return hideConstructionFromWorld(level, construction, true);
     }
 
     /**
