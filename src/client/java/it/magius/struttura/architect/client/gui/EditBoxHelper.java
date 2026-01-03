@@ -132,8 +132,14 @@ public class EditBoxHelper {
         // Draw placeholder if empty and not focused
         if (editBox.getValue().isEmpty() && !isFocused()) {
             graphics.drawString(font, placeholder, x + 3, y + (height - 8) / 2, 0xFF808080, false);
+        } else if (!isFocused()) {
+            // When not focused, render truncated text from the beginning (not from cursor position)
+            String text = editBox.getValue();
+            int availableWidth = width - 6;
+            String displayText = truncateFromEnd(text, availableWidth, font);
+            graphics.drawString(font, displayText, x + 3, y + (height - 8) / 2, 0xFFE0E0E0, false);
         } else {
-            // Render the EditBox content
+            // Render the EditBox content (allows cursor positioning and selection)
             editBox.render(graphics, mouseX, mouseY, tickDelta);
         }
     }
@@ -219,6 +225,28 @@ public class EditBoxHelper {
      */
     public void clear() {
         editBox.setValue("");
+    }
+
+    /**
+     * Truncate text from the end, adding "..." if it doesn't fit.
+     * Shows the beginning of the text, not the end.
+     */
+    private String truncateFromEnd(String text, int maxWidth, Font font) {
+        if (font.width(text) <= maxWidth) {
+            return text;
+        }
+        String ellipsis = "...";
+        int ellipsisWidth = font.width(ellipsis);
+        int availableWidth = maxWidth - ellipsisWidth;
+
+        StringBuilder sb = new StringBuilder();
+        for (char c : text.toCharArray()) {
+            if (font.width(sb.toString() + c) > availableWidth) {
+                break;
+            }
+            sb.append(c);
+        }
+        return sb + ellipsis;
     }
 
     // Static factory methods for common configurations

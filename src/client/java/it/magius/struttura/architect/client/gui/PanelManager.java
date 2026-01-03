@@ -7,6 +7,9 @@ import net.fabricmc.api.Environment;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Manages the state of GUI panels.
  * Coordinates between the HUD icon, main panel, and editing panel.
@@ -30,8 +33,22 @@ public class PanelManager {
     private int solidBlockCount = 0;
     private int airBlockCount = 0;
     private int entityCount = 0;
+    private int mobCount = 0;
     private String bounds = "";
     private String mode = "ADD";
+    private String shortDesc = "";
+
+    // Block list for editing (synced from server)
+    private List<BlockInfo> blockList = new ArrayList<>();
+
+    // Translations (all languages)
+    private java.util.Map<String, String> allTitles = new java.util.HashMap<>();
+    private java.util.Map<String, String> allShortDescriptions = new java.util.HashMap<>();
+
+    /**
+     * Info about a block type in the construction.
+     */
+    public record BlockInfo(String blockId, String displayName, int count) {}
 
     private PanelManager() {
     }
@@ -86,16 +103,22 @@ public class PanelManager {
      */
     public void updateEditingInfo(String constructionId, String title, int blockCount,
                                    int solidBlockCount, int airBlockCount, int entityCount,
-                                   String bounds, String mode) {
+                                   int mobCount, String bounds, String mode, String shortDesc) {
         this.editingConstructionId = constructionId;
         this.editingTitle = title;
         this.blockCount = blockCount;
         this.solidBlockCount = solidBlockCount;
         this.airBlockCount = airBlockCount;
         this.entityCount = entityCount;
+        this.mobCount = mobCount;
         this.bounds = bounds;
         this.mode = mode;
+        this.shortDesc = shortDesc;
         this.isEditing = true;
+        // Update EditingPanel with shortDesc
+        if (editingPanel != null) {
+            editingPanel.setShortDescText(shortDesc);
+        }
     }
 
     /**
@@ -108,9 +131,19 @@ public class PanelManager {
         this.solidBlockCount = 0;
         this.airBlockCount = 0;
         this.entityCount = 0;
+        this.mobCount = 0;
         this.bounds = "";
         this.mode = "ADD";
+        this.shortDesc = "";
         this.isEditing = false;
+        this.blockList.clear();
+        this.allTitles.clear();
+        this.allShortDescriptions.clear();
+        // Clear EditingPanel
+        if (editingPanel != null) {
+            editingPanel.setShortDescText("");
+            editingPanel.clearTranslations();
+        }
     }
 
     // Getters for editing info
@@ -138,12 +171,84 @@ public class PanelManager {
         return entityCount;
     }
 
+    public int getMobCount() {
+        return mobCount;
+    }
+
     public String getBounds() {
         return bounds;
     }
 
     public String getMode() {
         return mode;
+    }
+
+    public String getShortDesc() {
+        return shortDesc;
+    }
+
+    /**
+     * Get the list of block types in the current construction.
+     */
+    public List<BlockInfo> getBlockList() {
+        return blockList;
+    }
+
+    /**
+     * Update the block list from server packet.
+     * Blocks are sorted alphabetically by display name.
+     */
+    public void updateBlockList(List<BlockInfo> blocks) {
+        this.blockList = new ArrayList<>(blocks);
+        // Sort alphabetically by display name
+        this.blockList.sort((a, b) -> a.displayName().compareToIgnoreCase(b.displayName()));
+    }
+
+    /**
+     * Clear the block list.
+     */
+    public void clearBlockList() {
+        this.blockList.clear();
+    }
+
+    /**
+     * Update translations from server packet.
+     */
+    public void updateTranslations(java.util.Map<String, String> titles, java.util.Map<String, String> shortDescriptions) {
+        this.allTitles = new java.util.HashMap<>(titles);
+        this.allShortDescriptions = new java.util.HashMap<>(shortDescriptions);
+        // Update EditingPanel
+        if (editingPanel != null) {
+            editingPanel.updateTranslations(titles, shortDescriptions);
+        }
+    }
+
+    /**
+     * Get all titles (langId -> title).
+     */
+    public java.util.Map<String, String> getAllTitles() {
+        return allTitles;
+    }
+
+    /**
+     * Get all short descriptions (langId -> shortDesc).
+     */
+    public java.util.Map<String, String> getAllShortDescriptions() {
+        return allShortDescriptions;
+    }
+
+    /**
+     * Get title for specific language.
+     */
+    public String getTitle(String langId) {
+        return allTitles.getOrDefault(langId, "");
+    }
+
+    /**
+     * Get short description for specific language.
+     */
+    public String getShortDescription(String langId) {
+        return allShortDescriptions.getOrDefault(langId, "");
     }
 
     public MainPanel getMainPanel() {

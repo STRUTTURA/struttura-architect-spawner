@@ -64,7 +64,7 @@ public class MainPanel {
     private int totalMissingBlocks = 0;
     private int missingModsScrollOffset = 0;
 
-    public record ConstructionInfo(String id, String title, int blockCount, boolean isBeingEdited) {}
+    public record ConstructionInfo(String id, String title, int blockCount, int entityCount, boolean isBeingEdited) {}
 
     public int getWidth() {
         return WIDTH;
@@ -128,9 +128,9 @@ public class MainPanel {
         return listHeight / ITEM_HEIGHT;
     }
 
-    public void render(GuiGraphics graphics, int x, int y, int mouseX, int mouseY, float tickDelta) {
-        this.x = x;
-        this.y = y;
+    public void render(GuiGraphics graphics, int panelX, int panelY, int mouseX, int mouseY, float tickDelta) {
+        this.x = panelX;
+        this.y = panelY;
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;
 
@@ -192,14 +192,18 @@ public class MainPanel {
                 int idColor = info.isBeingEdited() ? 0xFFFFAA00 : 0xFFFFFFFF;
                 graphics.drawString(font, idText, x + PADDING + 3, itemY + 2, idColor, false);
 
-                // Title (max 30 chars) + block count
+                // Title (max 20 chars) + block/entity count
                 String titleText = info.title().isEmpty() ? "(no title)" : info.title();
-                if (titleText.length() > 30) {
-                    titleText = titleText.substring(0, 27) + "...";
+                if (titleText.length() > 20) {
+                    titleText = titleText.substring(0, 17) + "...";
                 }
-                String detailText = titleText + " - " + info.blockCount() + " blk";
-                if (detailText.length() > 35) {
-                    detailText = detailText.substring(0, 32) + "...";
+                // Format: title - Xblk, Yent (or just Xblk if entityCount == 0)
+                String countPart = info.entityCount() > 0
+                    ? info.blockCount() + "blk, " + info.entityCount() + "ent"
+                    : info.blockCount() + " blk";
+                String detailText = titleText + " - " + countPart;
+                if (detailText.length() > 38) {
+                    detailText = detailText.substring(0, 35) + "...";
                 }
                 graphics.drawString(font, detailText, x + PADDING + 3, itemY + 11, 0xFF808080, false);
             }
@@ -240,8 +244,9 @@ public class MainPanel {
         // Action buttons (only if something is selected)
         if (selectedIndex >= 0 && selectedIndex < filteredConstructions.size()) {
             ConstructionInfo selected = filteredConstructions.get(selectedIndex);
-            // Row 1: SHOW, HIDE, TP, EDIT, SHOT, DEL
-            String[] buttons1 = {"SHOW", "HIDE", "TP", "EDIT", "SHOT", "DEL"};
+
+            // Row 1: EDIT, SHOT, DEL, PUSH (4 pulsanti)
+            String[] buttons1 = {"EDIT", "SHOT", "DEL", "PUSH"};
             int buttonWidth1 = (WIDTH - PADDING * 2 - (buttons1.length - 1) * 2) / buttons1.length;
 
             for (int i = 0; i < buttons1.length; i++) {
@@ -250,50 +255,70 @@ public class MainPanel {
 
                 boolean btnHovered = mouseX >= btnX && mouseX < btnX + buttonWidth1 &&
                                      mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT;
-                if (btnHovered) {
+
+                // PUSH is disabled if construction is being edited
+                boolean isPush = buttons1[i].equals("PUSH");
+                boolean btnDisabled = isPush && selected.isBeingEdited();
+
+                if (btnHovered && !btnDisabled) {
                     hoveredButton = i;
                 }
 
-                int bgColor = btnHovered ? 0xFF505050 : 0xFF303030;
+                int bgColor;
+                int textColor;
+                if (btnDisabled) {
+                    bgColor = 0xFF202020;
+                    textColor = 0xFF606060;
+                } else {
+                    bgColor = btnHovered ? 0xFF505050 : 0xFF303030;
+                    textColor = 0xFFFFFFFF;
+                }
+
                 graphics.fill(btnX, btnY, btnX + buttonWidth1, btnY + BUTTON_HEIGHT, bgColor);
-                graphics.renderOutline(btnX, btnY, buttonWidth1, BUTTON_HEIGHT, 0xFF606060);
+                graphics.renderOutline(btnX, btnY, buttonWidth1, BUTTON_HEIGHT, btnDisabled ? 0xFF404040 : 0xFF606060);
 
                 int textWidth = font.width(buttons1[i]);
                 graphics.drawString(font, buttons1[i],
-                                   btnX + (buttonWidth1 - textWidth) / 2, btnY + 4, 0xFFFFFFFF, false);
+                                   btnX + (buttonWidth1 - textWidth) / 2, btnY + 4, textColor, false);
             }
 
-            // Row 2: PUSH only (full width)
+            // Row 2: TP, SHOW, HIDE, SPAWN, MOVE (5 pulsanti)
             int row2Y = currentY + BUTTON_HEIGHT + 2;
-            int pushBtnX = x + PADDING;
-            int pushBtnWidth = WIDTH - PADDING * 2;
+            String[] buttons2 = {"TP", "SHOW", "HIDE", "SPAWN", "MOVE"};
+            int buttonWidth2 = (WIDTH - PADDING * 2 - (buttons2.length - 1) * 2) / buttons2.length;
 
-            boolean pushHovered = mouseX >= pushBtnX && mouseX < pushBtnX + pushBtnWidth &&
-                                  mouseY >= row2Y && mouseY < row2Y + BUTTON_HEIGHT;
+            for (int i = 0; i < buttons2.length; i++) {
+                int btnX = x + PADDING + i * (buttonWidth2 + 2);
+                int btnY = row2Y;
 
-            // PUSH is disabled if construction is being edited
-            boolean pushDisabled = selected.isBeingEdited();
+                boolean btnHovered = mouseX >= btnX && mouseX < btnX + buttonWidth2 &&
+                                     mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT;
 
-            if (pushHovered && !pushDisabled) {
-                hoveredButton = buttons1.length; // Index after row 1 buttons
+                // MOVE is disabled if construction is being edited
+                boolean isMove = buttons2[i].equals("MOVE");
+                boolean btnDisabled = isMove && selected.isBeingEdited();
+
+                if (btnHovered && !btnDisabled) {
+                    hoveredButton = buttons1.length + i;
+                }
+
+                int bgColor;
+                int textColor;
+                if (btnDisabled) {
+                    bgColor = 0xFF202020;
+                    textColor = 0xFF606060;
+                } else {
+                    bgColor = btnHovered ? 0xFF505050 : 0xFF303030;
+                    textColor = 0xFFFFFFFF;
+                }
+
+                graphics.fill(btnX, btnY, btnX + buttonWidth2, btnY + BUTTON_HEIGHT, bgColor);
+                graphics.renderOutline(btnX, btnY, buttonWidth2, BUTTON_HEIGHT, btnDisabled ? 0xFF404040 : 0xFF606060);
+
+                int textWidth = font.width(buttons2[i]);
+                graphics.drawString(font, buttons2[i],
+                                   btnX + (buttonWidth2 - textWidth) / 2, btnY + 4, textColor, false);
             }
-
-            int pushBgColor;
-            int pushTextColor;
-            if (pushDisabled) {
-                pushBgColor = 0xFF202020;
-                pushTextColor = 0xFF606060;
-            } else {
-                pushBgColor = pushHovered ? 0xFF505050 : 0xFF303030;
-                pushTextColor = 0xFFFFFFFF;
-            }
-
-            graphics.fill(pushBtnX, row2Y, pushBtnX + pushBtnWidth, row2Y + BUTTON_HEIGHT, pushBgColor);
-            graphics.renderOutline(pushBtnX, row2Y, pushBtnWidth, BUTTON_HEIGHT, pushDisabled ? 0xFF404040 : 0xFF606060);
-
-            int pushTextWidth = font.width("PUSH");
-            graphics.drawString(font, "PUSH",
-                               pushBtnX + (pushBtnWidth - pushTextWidth) / 2, row2Y + 4, pushTextColor, false);
         }
 
         // Modal is rendered separately via renderModal() to ensure it's on top
@@ -503,10 +528,10 @@ public class MainPanel {
 
         currentY = listEndY + PADDING;
 
-        // Action buttons click - Row 1
+        // Action buttons click - Row 1: EDIT, SHOT, DEL, PUSH
         if (selectedIndex >= 0 && selectedIndex < filteredConstructions.size()) {
             ConstructionInfo selected = filteredConstructions.get(selectedIndex);
-            String[] actions1 = {"show", "hide", "tp", "edit", "shot", "destroy"};
+            String[] actions1 = {"edit", "shot", "destroy", "push"};
             int buttonWidth1 = (WIDTH - PADDING * 2 - (actions1.length - 1) * 2) / actions1.length;
 
             for (int i = 0; i < actions1.length; i++) {
@@ -515,24 +540,33 @@ public class MainPanel {
 
                 if (mouseX >= btnX && mouseX < btnX + buttonWidth1 &&
                     mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
+                    // PUSH is disabled if construction is being edited
+                    if (actions1[i].equals("push") && selected.isBeingEdited()) {
+                        return true; // Consume click but don't execute
+                    }
                     executeAction(actions1[i], selected.id());
                     return true;
                 }
             }
 
-            // Action buttons click - Row 2 (PUSH only, full width)
+            // Action buttons click - Row 2: TP, SHOW, HIDE, SPAWN, MOVE
             int row2Y = currentY + BUTTON_HEIGHT + 2;
-            int pushBtnX = x + PADDING;
-            int pushBtnWidth = WIDTH - PADDING * 2;
+            String[] actions2 = {"tp", "show", "hide", "spawn", "move"};
+            int buttonWidth2 = (WIDTH - PADDING * 2 - (actions2.length - 1) * 2) / actions2.length;
 
-            if (mouseX >= pushBtnX && mouseX < pushBtnX + pushBtnWidth &&
-                mouseY >= row2Y && mouseY < row2Y + BUTTON_HEIGHT) {
-                // PUSH is disabled if construction is being edited
-                if (selected.isBeingEdited()) {
-                    return true; // Consume click but don't execute
+            for (int i = 0; i < actions2.length; i++) {
+                int btnX = x + PADDING + i * (buttonWidth2 + 2);
+                int btnY = row2Y;
+
+                if (mouseX >= btnX && mouseX < btnX + buttonWidth2 &&
+                    mouseY >= btnY && mouseY < btnY + BUTTON_HEIGHT) {
+                    // MOVE is disabled if construction is being edited
+                    if (actions2[i].equals("move") && selected.isBeingEdited()) {
+                        return true; // Consume click but don't execute
+                    }
+                    executeAction(actions2[i], selected.id());
+                    return true;
                 }
-                executeAction("push", selected.id());
-                return true;
             }
         }
 
@@ -640,6 +674,12 @@ public class MainPanel {
 
     private void executeAction(String action, String targetId) {
         Architect.LOGGER.debug("GUI action: {} on {}", action, targetId);
+
+        // Chiudi GUI per azioni che spostano il player
+        if (action.equals("tp")) {
+            Minecraft.getInstance().setScreen(null);
+        }
+
         ClientPlayNetworking.send(new GuiActionPacket(action, targetId != null ? targetId : "", ""));
     }
 

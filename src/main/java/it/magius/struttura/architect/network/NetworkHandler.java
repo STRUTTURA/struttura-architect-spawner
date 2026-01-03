@@ -63,6 +63,8 @@ public class NetworkHandler {
         PayloadTypeRegistry.playS2C().register(ConstructionListPacket.TYPE, ConstructionListPacket.STREAM_CODEC);
         // Registra il packet per i mod richiesti (S2C)
         PayloadTypeRegistry.playS2C().register(ModRequirementsPacket.TYPE, ModRequirementsPacket.STREAM_CODEC);
+        PayloadTypeRegistry.playS2C().register(BlockListPacket.TYPE, BlockListPacket.STREAM_CODEC);
+        PayloadTypeRegistry.playS2C().register(TranslationsPacket.TYPE, TranslationsPacket.STREAM_CODEC);
 
         // Registra il receiver per i dati dello screenshot
         ServerPlayNetworking.registerGlobalReceiver(ScreenshotDataPacket.TYPE, NetworkHandler::handleScreenshotData);
@@ -401,6 +403,7 @@ public class NetworkHandler {
             // Pulisci la selezione dopo l'aggiunta
             SelectionManager.getInstance().clearSelection(player);
             sendWireframeSync(player);
+            sendBlockList(player);
 
             player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "select.apply.add_success", addedCount, skippedAir, construction.getBlockCount())));
@@ -428,6 +431,7 @@ public class NetworkHandler {
             // Pulisci la selezione dopo la rimozione
             SelectionManager.getInstance().clearSelection(player);
             sendWireframeSync(player);
+            sendBlockList(player);
 
             player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "select.apply.remove_success", removedCount, skippedNotInConstruction, construction.getBlockCount())));
@@ -453,10 +457,12 @@ public class NetworkHandler {
             case "hide" -> handleGuiHide(player, targetId);
             case "tp" -> handleGuiTp(player, targetId);
             case "edit" -> handleGuiEdit(player, targetId);
-            case "exit" -> handleGuiExit(player);
+            case "exit" -> handleGuiDone(player, true);  // Legacy compatibility
+            case "done" -> handleGuiDone(player, true);
+            case "done_nomob" -> handleGuiDone(player, false);
             case "give" -> handleGuiGive(player);
             case "shot" -> handleGuiShot(player, targetId, extraData);
-            case "title" -> handleGuiTitle(player, extraData);
+            case "title" -> handleGuiTitle(player, targetId, extraData);  // targetId = langId
             case "rename" -> handleGuiRename(player, targetId);
             case "destroy" -> handleGuiDestroy(player, targetId);
             case "request_list" -> sendConstructionList(player);
@@ -464,6 +470,10 @@ public class NetworkHandler {
             case "pull" -> handleGuiPull(player, targetId);
             case "pull_check" -> handleGuiPullCheck(player, targetId);
             case "pull_confirm" -> handleGuiPullConfirm(player, targetId);
+            case "spawn" -> handleGuiSpawn(player, targetId);
+            case "move" -> handleGuiMove(player, targetId);
+            case "remove_block" -> handleGuiRemoveBlock(player, targetId);
+            case "short_desc" -> handleGuiShortDesc(player, targetId, extraData);  // targetId = langId
             default -> Architect.LOGGER.warn("Unknown GUI action: {}", action);
         }
     }
@@ -549,12 +559,8 @@ public class NetworkHandler {
 
         ServerLevel level = (ServerLevel) player.level();
 
-        // Sostituisci i blocchi della costruzione con AIR
-        int removedCount = 0;
-        for (BlockPos pos : construction.getBlocks().keySet()) {
-            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-            removedCount++;
-        }
+        // Usa la stessa logica di destroy per rimuovere completamente i blocchi
+        int removedCount = hideConstructionFromWorld(level, construction);
 
         VISIBLE_CONSTRUCTIONS.remove(id);
 
@@ -657,7 +663,7 @@ public class NetworkHandler {
                 I18n.tr(player, "edit.success", id)));
     }
 
-    private static void handleGuiExit(ServerPlayer player) {
+    private static void handleGuiDone(ServerPlayer player, boolean saveEntities) {
         if (!EditingSession.hasSession(player)) {
             player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
@@ -666,6 +672,13 @@ public class NetworkHandler {
 
         EditingSession session = EditingSession.endSession(player);
         Construction construction = session.getConstruction();
+
+        // Se nomob, rimuovi le entità dalla costruzione prima di salvare
+        if (!saveEntities) {
+            construction.clearEntities();
+            Architect.LOGGER.info("Cleared entities from construction {} (done nomob)",
+                construction.getId());
+        }
 
         // Registra la costruzione nel registro (solo se ha blocchi)
         if (construction.getBlockCount() > 0) {
@@ -681,7 +694,7 @@ public class NetworkHandler {
         sendConstructionList(player);
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "exit.success", construction.getId(), construction.getBlockCount())));
+                I18n.tr(player, "done.success", construction.getId(), construction.getBlockCount())));
     }
 
     private static void handleGuiGive(ServerPlayer player) {
@@ -716,7 +729,7 @@ public class NetworkHandler {
         sendScreenshotRequest(player, constructionId, screenshotTitle);
     }
 
-    private static void handleGuiTitle(ServerPlayer player, String title) {
+    private static void handleGuiTitle(ServerPlayer player, String langId, String title) {
         EditingSession session = EditingSession.getSession(player);
         if (session == null) {
             player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
@@ -724,10 +737,13 @@ public class NetworkHandler {
             return;
         }
 
-        // Set title for player's language (default to "en")
-        String lang = I18n.getPlayerLanguage(player);
+        // Use provided langId, fallback to player's language or "en"
+        String lang = langId;
         if (lang == null || lang.isEmpty()) {
-            lang = "en";
+            lang = I18n.getPlayerLanguage(player);
+            if (lang == null || lang.isEmpty()) {
+                lang = "en";
+            }
         }
 
         session.getConstruction().setTitle(lang, title);
@@ -735,8 +751,8 @@ public class NetworkHandler {
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "title.success", lang, title)));
 
-        // Update editing info on client
-        sendEditingInfo(player);
+        // Update translations on client
+        sendTranslations(player);
     }
 
     private static void handleGuiRename(ServerPlayer player, String newId) {
@@ -823,12 +839,10 @@ public class NetworkHandler {
         ServerLevel level = (ServerLevel) player.level();
         Construction construction = getConstructionIncludingEditing(id);
 
-        // 1. Sostituisci i blocchi della costruzione con AIR
-        if (construction != null && construction.getBlockCount() > 0) {
-            for (BlockPos pos : construction.getBlocks().keySet()) {
-                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-            }
-            Architect.LOGGER.info("GUI Destroy: removed {} blocks for construction {}", construction.getBlockCount(), id);
+        // 1. Rimuovi entità, svuota container e rimuovi blocchi
+        int blocksRemoved = clearConstructionFromWorld(level, construction);
+        if (blocksRemoved > 0) {
+            Architect.LOGGER.info("GUI Destroy: removed {} blocks for construction {}", blocksRemoved, id);
         }
 
         // 2. Pulisci i dati di visibilità
@@ -1027,8 +1041,22 @@ public class NetworkHandler {
 
     /**
      * Piazza una costruzione di fronte al giocatore e aggiorna le coordinate interne.
+     * Usato da PULL per aggiornare la costruzione dopo il download.
      */
     private static int spawnConstructionInFrontOfPlayer(ServerPlayer player, Construction construction) {
+        return spawnConstructionInFrontOfPlayer(player, construction, true);
+    }
+
+    /**
+     * Piazza una costruzione di fronte al giocatore.
+     *
+     * @param player Il giocatore
+     * @param construction La costruzione da piazzare
+     * @param updateConstruction Se true, aggiorna la costruzione con le nuove coordinate (usato per PULL).
+     *                           Se false, piazza solo i blocchi senza modificare la costruzione (usato per SPAWN).
+     * @return Il numero di blocchi piazzati
+     */
+    public static int spawnConstructionInFrontOfPlayer(ServerPlayer player, Construction construction, boolean updateConstruction) {
         if (construction.getBlockCount() == 0) {
             return 0;
         }
@@ -1056,7 +1084,7 @@ public class NetworkHandler {
         int offsetY = (int) player.getY() - originalMinY;
         int offsetZ = (int) Math.round(player.getZ() + dirZ * distance) - originalMinZ;
 
-        // Piazza i blocchi e aggiorna la costruzione con le nuove posizioni
+        // Piazza i blocchi
         // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
         // UPDATE_SKIP_ON_PLACE previene che onPlace() venga chiamato, evitando che le rotaie
         // si auto-connettano ai vicini durante il piazzamento
@@ -1066,7 +1094,13 @@ public class NetworkHandler {
         int placedCount = 0;
         int blockEntityCount = 0;
 
-        for (java.util.Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+        // Ordina i blocchi per Y crescente per piazzare prima i blocchi di supporto
+        // (es. trapdoor prima dei carpet che ci stanno sopra)
+        java.util.List<java.util.Map.Entry<BlockPos, BlockState>> sortedBlocks =
+            new java.util.ArrayList<>(construction.getBlocks().entrySet());
+        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
+
+        for (java.util.Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
             BlockPos originalPos = entry.getKey();
             BlockState state = entry.getValue();
             BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
@@ -1103,11 +1137,34 @@ public class NetworkHandler {
             Architect.LOGGER.info("Applied NBT to {} block entities", blockEntityCount);
         }
 
-        // Aggiorna la costruzione con le nuove coordinate assolute
-        construction.getBlocks().clear();
-        construction.getBounds().reset();
-        for (java.util.Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
-            construction.addBlock(entry.getKey(), entry.getValue());
+        // Aggiorna la costruzione con le nuove coordinate assolute (solo se richiesto)
+        if (updateConstruction) {
+            // Crea una nuova mappa per l'NBT con le coordinate aggiornate
+            java.util.Map<BlockPos, CompoundTag> newBlockEntityNbt = new java.util.HashMap<>();
+            for (java.util.Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+                BlockPos originalPos = entry.getKey();
+                CompoundTag nbt = construction.getBlockEntityNbt(originalPos);
+                if (nbt != null) {
+                    BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
+                    // Aggiorna le coordinate nell'NBT
+                    CompoundTag nbtCopy = nbt.copy();
+                    nbtCopy.putInt("x", newPos.getX());
+                    nbtCopy.putInt("y", newPos.getY());
+                    nbtCopy.putInt("z", newPos.getZ());
+                    newBlockEntityNbt.put(newPos, nbtCopy);
+                }
+            }
+
+            // Aggiorna i blocchi
+            construction.getBlocks().clear();
+            construction.getBounds().reset();
+            for (java.util.Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
+                construction.addBlock(entry.getKey(), entry.getValue());
+            }
+
+            // Aggiorna l'NBT dei block entity
+            construction.getBlockEntityNbtMap().clear();
+            construction.getBlockEntityNbtMap().putAll(newBlockEntityNbt);
         }
 
         // Spawna le entità con l'offset appropriato
@@ -1119,6 +1176,294 @@ public class NetworkHandler {
         spawnConstructionEntities(construction, level, originX, originY, originZ);
 
         return placedCount;
+    }
+
+    // ===== GUI Spawn/Move handlers =====
+
+    /**
+     * Gestisce l'azione spawn via GUI.
+     * Usa la funzione centralizzata spawnConstructionInFrontOfPlayer senza modificare la costruzione.
+     */
+    private static void handleGuiSpawn(ServerPlayer player, String id) {
+        // Verifica che la costruzione esista (incluse quelle in editing)
+        Construction construction = getConstructionIncludingEditing(id);
+        if (construction == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "spawn.not_found", id)));
+            return;
+        }
+
+        if (construction.getBlockCount() == 0) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "spawn.empty", id)));
+            return;
+        }
+
+        // Usa la funzione centralizzata con updateConstruction=false per non modificare la costruzione
+        int placedCount = spawnConstructionInFrontOfPlayer(player, construction, false);
+
+        Architect.LOGGER.info("Player {} spawned construction {} via GUI ({} blocks)",
+            player.getName().getString(), id, placedCount);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "spawn.success", id, placedCount)));
+    }
+
+    /**
+     * Gestisce l'azione short_desc via GUI.
+     * Salva la descrizione breve della costruzione.
+     */
+    private static void handleGuiShortDesc(ServerPlayer player, String langId, String description) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+        Construction construction = session.getConstruction();
+
+        // Truncate if too long
+        if (description.length() > 512) {
+            description = description.substring(0, 512);
+        }
+
+        // Use provided langId, fallback to player's language
+        String lang = langId;
+        if (lang == null || lang.isEmpty()) {
+            lang = I18n.getPlayerLanguage(player);
+        }
+
+        // Set short description
+        construction.setShortDescription(lang, description);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "short_desc.saved")));
+
+        // Update translations on client
+        sendTranslations(player);
+    }
+
+    /**
+     * Gestisce l'azione remove_block via GUI.
+     * Rimuove tutti i blocchi di un tipo specifico dalla costruzione.
+     */
+    private static void handleGuiRemoveBlock(ServerPlayer player, String blockId) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+        Construction construction = session.getConstruction();
+
+        // Conta e rimuovi i blocchi del tipo specificato
+        int removedCount = 0;
+        java.util.List<BlockPos> toRemove = new java.util.ArrayList<>();
+
+        for (java.util.Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+            String entryBlockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                .getKey(entry.getValue().getBlock())
+                .toString();
+
+            if (entryBlockId.equals(blockId)) {
+                toRemove.add(entry.getKey());
+            }
+        }
+
+        for (BlockPos pos : toRemove) {
+            construction.removeBlock(pos);
+            removedCount++;
+        }
+
+        if (removedCount > 0) {
+            // Aggiorna il client
+            sendWireframeSync(player);
+            sendEditingInfo(player);
+
+            String displayName = blockId;
+            net.minecraft.resources.Identifier loc = net.minecraft.resources.Identifier.tryParse(blockId);
+            if (loc != null) {
+                net.minecraft.world.level.block.Block block = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getValue(loc);
+                if (block != null) {
+                    displayName = block.getName().getString();
+                }
+            }
+
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                    I18n.tr(player, "remove_block.success", removedCount, displayName)));
+        } else {
+            player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+                    I18n.tr(player, "remove_block.not_found", blockId)));
+        }
+    }
+
+    /**
+     * Gestisce l'azione move via GUI.
+     * Ordine corretto:
+     * 1. Calcola nuova posizione
+     * 2. SPAWN nella nuova posizione
+     * 3. DESTROY della vecchia posizione
+     * 4. Aggiorna la costruzione nel registry
+     */
+    private static void handleGuiMove(ServerPlayer player, String id) {
+        // Verifica che la costruzione esista
+        Construction construction = getConstructionIncludingEditing(id);
+        if (construction == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "move.not_found", id)));
+            return;
+        }
+
+        // Verifica che la costruzione non sia in editing
+        if (isConstructionBeingEdited(id)) {
+            EditingSession existingSession = getSessionForConstruction(id);
+            String otherPlayerName = existingSession != null
+                ? existingSession.getPlayer().getName().getString()
+                : "unknown";
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "move.in_editing", id, otherPlayerName)));
+            return;
+        }
+
+        if (construction.getBlockCount() == 0) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "move.empty", id)));
+            return;
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+        var bounds = construction.getBounds();
+
+        // 1. Salva i vecchi bounds PRIMA di modificare la costruzione
+        int oldMinX = bounds.getMinX();
+        int oldMinY = bounds.getMinY();
+        int oldMinZ = bounds.getMinZ();
+        int oldMaxX = bounds.getMaxX();
+        int oldMaxY = bounds.getMaxY();
+        int oldMaxZ = bounds.getMaxZ();
+
+        // 2. Calcola la nuova posizione davanti al giocatore
+        int sizeX = bounds.getSizeX();
+        int sizeZ = bounds.getSizeZ();
+
+        float yaw = player.getYRot();
+        yaw = ((yaw % 360) + 360) % 360;
+
+        int offsetX, offsetZ;
+        BlockPos playerPos = player.blockPosition();
+
+        if (yaw >= 315 || yaw < 45) {
+            offsetX = playerPos.getX() - bounds.getMinX() - (sizeX / 2);
+            offsetZ = playerPos.getZ() + 2 - bounds.getMinZ();
+        } else if (yaw >= 45 && yaw < 135) {
+            offsetX = playerPos.getX() - 2 - bounds.getMaxX();
+            offsetZ = playerPos.getZ() - bounds.getMinZ() - (sizeZ / 2);
+        } else if (yaw >= 135 && yaw < 225) {
+            offsetX = playerPos.getX() - bounds.getMinX() - (sizeX / 2);
+            offsetZ = playerPos.getZ() - 2 - bounds.getMaxZ();
+        } else {
+            offsetX = playerPos.getX() + 2 - bounds.getMinX();
+            offsetZ = playerPos.getZ() - bounds.getMinZ() - (sizeZ / 2);
+        }
+
+        int offsetY = playerPos.getY() - bounds.getMinY();
+
+        // 4. Piazza e aggiorna la costruzione
+        java.util.Map<BlockPos, BlockState> newBlocks = new java.util.HashMap<>();
+        java.util.Map<BlockPos, CompoundTag> newBlockEntityNbt = new java.util.HashMap<>();
+        int placedCount = 0;
+        int blockEntityCount = 0;
+
+        // Ordina i blocchi per Y crescente per piazzare prima i blocchi di supporto
+        // (es. trapdoor prima dei carpet che ci stanno sopra)
+        java.util.List<Map.Entry<BlockPos, BlockState>> sortedBlocks =
+            new java.util.ArrayList<>(construction.getBlocks().entrySet());
+        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
+
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
+        for (Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
+            BlockPos originalPos = entry.getKey();
+            BlockState state = entry.getValue();
+
+            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
+
+            if (!state.isAir()) {
+                level.setBlock(newPos, state, placementFlags);
+                placedCount++;
+
+                // Applica l'NBT del block entity se presente (casse, furnace, etc.)
+                CompoundTag blockNbt = construction.getBlockEntityNbt(originalPos);
+                if (blockNbt != null) {
+                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(newPos);
+                    if (blockEntity != null) {
+                        // Crea una copia dell'NBT e aggiorna le coordinate
+                        CompoundTag nbtCopy = blockNbt.copy();
+                        nbtCopy.putInt("x", newPos.getX());
+                        nbtCopy.putInt("y", newPos.getY());
+                        nbtCopy.putInt("z", newPos.getZ());
+                        // MC 1.21.11: usa TagValueInput per creare un ValueInput dal CompoundTag
+                        net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
+                            net.minecraft.util.ProblemReporter.DISCARDING,
+                            level.registryAccess(),
+                            nbtCopy
+                        );
+                        blockEntity.loadCustomOnly(input);
+                        blockEntity.setChanged();
+                        blockEntityCount++;
+
+                        // Salva l'NBT aggiornato per la nuova posizione
+                        newBlockEntityNbt.put(newPos, nbtCopy);
+                    }
+                }
+            }
+
+            newBlocks.put(newPos, state);
+        }
+
+        if (blockEntityCount > 0) {
+            Architect.LOGGER.info("Move: Applied NBT to {} block entities", blockEntityCount);
+        }
+
+        // Spawna le entità con l'offset appropriato
+        int entityCount = spawnConstructionEntities(construction, level,
+            offsetX + bounds.getMinX(), offsetY + bounds.getMinY(), offsetZ + bounds.getMinZ());
+
+        // 4. DESTROY: Rimuovi i blocchi dalla vecchia posizione usando i bounds salvati
+        clearAreaFromWorld(level, oldMinX, oldMinY, oldMinZ, oldMaxX, oldMaxY, oldMaxZ);
+
+        // 5. Aggiorna la costruzione con le nuove posizioni
+        construction.getBlocks().clear();
+        construction.getBlockEntityNbtMap().clear();
+        construction.getBounds().reset();
+        for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
+            BlockPos pos = entry.getKey();
+            BlockState state = entry.getValue();
+            CompoundTag nbt = newBlockEntityNbt.get(pos);
+            if (nbt != null) {
+                construction.addBlock(pos, state, nbt);
+            } else {
+                construction.addBlock(pos, state);
+            }
+        }
+
+        // 6. Salva la costruzione aggiornata
+        ConstructionRegistry.getInstance().register(construction);
+
+        // 7. Aggiorna lo stato di visibilità
+        VISIBLE_CONSTRUCTIONS.add(id);
+
+        Architect.LOGGER.info("Player {} moved construction {} via GUI to new position ({} blocks, {} entities)",
+            player.getName().getString(), id, placedCount, entityCount);
+
+        if (entityCount > 0) {
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                    I18n.tr(player, "move.success_with_entities", id, placedCount, entityCount)));
+        } else {
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                    I18n.tr(player, "move.success", id, placedCount)));
+        }
     }
 
     // ===== Helper Methods =====
@@ -1176,6 +1521,10 @@ public class NetworkHandler {
             if (title == null) title = "";
         }
 
+        // Get short description in player's language
+        String shortDesc = construction.getShortDescriptionWithFallback(lang);
+        if (shortDesc == null) shortDesc = "";
+
         int airCount = construction.getBlockCount() - construction.getSolidBlockCount();
 
         EditingInfoPacket packet = new EditingInfoPacket(
@@ -1186,11 +1535,17 @@ public class NetworkHandler {
                 construction.getSolidBlockCount(),
                 airCount,
                 construction.getEntityCount(),
+                construction.getMobCount(),
                 boundsStr,
-                session.getMode().name()
+                session.getMode().name(),
+                shortDesc
         );
 
         ServerPlayNetworking.send(player, packet);
+
+        // Invia anche la lista blocchi e le traduzioni
+        sendBlockList(player);
+        sendTranslations(player);
     }
 
     /**
@@ -1198,6 +1553,63 @@ public class NetworkHandler {
      */
     public static void sendEditingInfoEmpty(ServerPlayer player) {
         ServerPlayNetworking.send(player, EditingInfoPacket.empty());
+        ServerPlayNetworking.send(player, BlockListPacket.empty());
+        ServerPlayNetworking.send(player, TranslationsPacket.empty());
+    }
+
+    /**
+     * Invia tutte le traduzioni (titles e shortDescriptions) al client.
+     */
+    public static void sendTranslations(ServerPlayer player) {
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            ServerPlayNetworking.send(player, TranslationsPacket.empty());
+            return;
+        }
+
+        Construction construction = session.getConstruction();
+        TranslationsPacket packet = new TranslationsPacket(
+                construction.getTitles(),
+                construction.getShortDescriptions()
+        );
+        ServerPlayNetworking.send(player, packet);
+    }
+
+    /**
+     * Invia la lista blocchi al client per il dropdown nel pannello editing.
+     */
+    public static void sendBlockList(ServerPlayer player) {
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            ServerPlayNetworking.send(player, BlockListPacket.empty());
+            return;
+        }
+
+        Construction construction = session.getConstruction();
+        java.util.Map<String, Integer> blockCounts = construction.getBlockCounts();
+
+        List<BlockListPacket.BlockInfo> blocks = new ArrayList<>();
+        for (java.util.Map.Entry<String, Integer> entry : blockCounts.entrySet()) {
+            String blockId = entry.getKey();
+            int count = entry.getValue();
+
+            // Get display name from registry
+            net.minecraft.resources.Identifier loc = net.minecraft.resources.Identifier.tryParse(blockId);
+            String displayName = blockId; // fallback
+            if (loc != null) {
+                net.minecraft.world.level.block.Block block = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getValue(loc);
+                if (block != null) {
+                    displayName = block.getName().getString();
+                }
+            }
+
+            blocks.add(new BlockListPacket.BlockInfo(blockId, displayName, count));
+        }
+
+        // Sort by count descending
+        blocks.sort((a, b) -> Integer.compare(b.count(), a.count()));
+
+        ServerPlayNetworking.send(player, new BlockListPacket(blocks));
     }
 
     /**
@@ -1216,6 +1628,7 @@ public class NetworkHandler {
                     c.getId(),
                     c.getTitleWithFallback(lang),
                     c.getBlockCount(),
+                    c.getEntityCount(),
                     isEditing
             ));
         }
@@ -1229,6 +1642,7 @@ public class NetworkHandler {
                         c.getId(),
                         c.getTitleWithFallback(lang),
                         c.getBlockCount(),
+                        c.getEntityCount(),
                         true
                 ));
             }
@@ -1444,5 +1858,219 @@ public class NetworkHandler {
         }
 
         return spawnedCount;
+    }
+
+    /**
+     * Nasconde una costruzione dal mondo rimuovendo tutti i blocchi nell'area bounds.
+     * Rimuove solo XP orbs e item drops, NON le entità della costruzione.
+     * La costruzione rimane in memoria per future operazioni SHOW.
+     *
+     * @param level Il ServerLevel
+     * @param construction La costruzione da nascondere
+     * @return Il numero di blocchi rimossi
+     */
+    public static int hideConstructionFromWorld(ServerLevel level, Construction construction) {
+        return hideConstructionFromWorld(level, construction, false);
+    }
+
+    /**
+     * Nasconde una costruzione dal mondo rimuovendo tutti i blocchi nell'area bounds.
+     * La costruzione rimane in memoria per future operazioni SHOW.
+     *
+     * @param level Il ServerLevel
+     * @param construction La costruzione da nascondere
+     * @param removeAllEntities Se true, rimuove TUTTE le entità (usato per MOVE). Se false, rimuove solo XP e items.
+     * @return Il numero di blocchi rimossi
+     */
+    public static int hideConstructionFromWorld(ServerLevel level, Construction construction, boolean removeAllEntities) {
+        if (construction == null || construction.getBlockCount() == 0) {
+            return 0;
+        }
+
+        var bounds = construction.getBounds();
+        if (!bounds.isValid()) {
+            return 0;
+        }
+
+        // 1. Svuota tutti i container prima di rimuovere i blocchi
+        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) {
+            for (int y = bounds.getMinY(); y <= bounds.getMaxY(); y++) {
+                for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(pos);
+                    if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
+                        clearable.clearContent();
+                    }
+                }
+            }
+        }
+
+        // 2. Rimuovi TUTTI i blocchi nell'area dei bounds (incluse sorgenti acqua/lava)
+        int removeFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
+        int blocksRemoved = 0;
+        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) {
+            for (int y = bounds.getMinY(); y <= bounds.getMaxY(); y++) {
+                for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState currentState = level.getBlockState(pos);
+                    if (!currentState.is(Blocks.AIR)) {
+                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), removeFlags);
+                        blocksRemoved++;
+                    }
+                }
+            }
+        }
+
+        // 3. Rimuovi le entità nell'area
+        net.minecraft.world.phys.AABB area = new net.minecraft.world.phys.AABB(
+            bounds.getMinX() - 1, bounds.getMinY() - 1, bounds.getMinZ() - 1,
+            bounds.getMaxX() + 2, bounds.getMaxY() + 2, bounds.getMaxZ() + 2
+        );
+        java.util.List<Entity> entitiesToRemove;
+        if (removeAllEntities) {
+            // Per MOVE: rimuovi tutte le entità (esclusi i giocatori)
+            entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
+                e -> !(e instanceof net.minecraft.world.entity.player.Player));
+        } else {
+            // Per HIDE: rimuovi solo XP orbs e item drops
+            entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
+                e -> e instanceof net.minecraft.world.entity.ExperienceOrb ||
+                     e instanceof net.minecraft.world.entity.item.ItemEntity);
+        }
+        for (Entity entity : entitiesToRemove) {
+            entity.discard();
+        }
+
+        Architect.LOGGER.info("Hide: removed {} blocks, {} entities from bounds area", blocksRemoved, entitiesToRemove.size());
+
+        return blocksRemoved;
+    }
+
+    /**
+     * Rimuove tutti i blocchi e le entità in un'area specificata dai bounds.
+     * Usato per MOVE quando i nuovi blocchi sono già stati piazzati nella nuova posizione.
+     *
+     * @param level Il ServerLevel
+     * @param minX, minY, minZ, maxX, maxY, maxZ I bounds dell'area da pulire
+     * @return Il numero di blocchi rimossi
+     */
+    public static int clearAreaFromWorld(ServerLevel level, int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        // 1. Svuota tutti i container prima di rimuovere i blocchi
+        for (int x = minX; x <= maxX; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(pos);
+                    if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
+                        clearable.clearContent();
+                    }
+                }
+            }
+        }
+
+        // 2. Rimuovi TUTTI i blocchi nell'area (incluse sorgenti acqua/lava)
+        int removeFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
+        int blocksRemoved = 0;
+        for (int x = minX; x <= maxX; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState currentState = level.getBlockState(pos);
+                    if (!currentState.is(Blocks.AIR)) {
+                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), removeFlags);
+                        blocksRemoved++;
+                    }
+                }
+            }
+        }
+
+        // 3. Rimuovi tutte le entità nell'area (esclusi i giocatori)
+        net.minecraft.world.phys.AABB area = new net.minecraft.world.phys.AABB(
+            minX - 1, minY - 1, minZ - 1,
+            maxX + 2, maxY + 2, maxZ + 2
+        );
+        java.util.List<Entity> entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
+            e -> !(e instanceof net.minecraft.world.entity.player.Player));
+        for (Entity entity : entitiesToRemove) {
+            entity.discard();
+        }
+
+        Architect.LOGGER.info("ClearArea: removed {} blocks, {} entities", blocksRemoved, entitiesToRemove.size());
+
+        return blocksRemoved;
+    }
+
+    /**
+     * Rimuove completamente una costruzione dal mondo senza causare drop di oggetti.
+     * Ordine di rimozione:
+     * 1. Svuota contenuto dei container (casse, hopper, furnace, etc.)
+     * 2. Rimuovi i blocchi della costruzione (senza drop)
+     * 3. Rimuovi tutte le entità nell'area (inclusi XP orbs e item drops generati)
+     *
+     * @param level Il ServerLevel
+     * @param construction La costruzione da rimuovere
+     * @return Il numero di blocchi rimossi
+     */
+    public static int clearConstructionFromWorld(ServerLevel level, Construction construction) {
+        if (construction == null || construction.getBlockCount() == 0) {
+            return 0;
+        }
+
+        var bounds = construction.getBounds();
+        if (!bounds.isValid()) {
+            return 0;
+        }
+
+        // 1. Svuota tutti i container prima di rimuovere i blocchi
+        int containersCleared = 0;
+        for (BlockPos pos : construction.getBlocks().keySet()) {
+            net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(pos);
+            if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
+                clearable.clearContent();
+                containersCleared++;
+            }
+        }
+        if (containersCleared > 0) {
+            Architect.LOGGER.debug("Destroy: Cleared {} containers", containersCleared);
+        }
+
+        // 2. Rimuovi TUTTI i blocchi nell'area dei bounds (incluse sorgenti acqua/lava)
+        // Usa UPDATE_CLIENTS | UPDATE_KNOWN_SHAPE per:
+        // - UPDATE_CLIENTS (2): invia l'update ai client
+        // - UPDATE_KNOWN_SHAPE (64): salta la chiamata a updateShape che può causare drop
+        // NON usare UPDATE_NEIGHBORS (1) che triggera onRemove con drop
+        int removeFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
+        int blocksRemoved = 0;
+        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) {
+            for (int y = bounds.getMinY(); y <= bounds.getMaxY(); y++) {
+                for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState currentState = level.getBlockState(pos);
+                    // Rimuovi qualsiasi blocco che non sia già aria (inclusi fluidi)
+                    if (!currentState.is(Blocks.AIR)) {
+                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), removeFlags);
+                        blocksRemoved++;
+                    }
+                }
+            }
+        }
+
+        // 3. Rimuovi tutte le entità nell'area DOPO aver rimosso i blocchi
+        // Questo cattura anche XP orbs e item drops che potrebbero essere stati generati
+        net.minecraft.world.phys.AABB area = new net.minecraft.world.phys.AABB(
+            bounds.getMinX() - 1, bounds.getMinY() - 1, bounds.getMinZ() - 1,
+            bounds.getMaxX() + 2, bounds.getMaxY() + 2, bounds.getMaxZ() + 2
+        );
+        java.util.List<Entity> entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
+            e -> !(e instanceof net.minecraft.world.entity.player.Player));
+        for (Entity entity : entitiesToRemove) {
+            entity.discard();
+        }
+        Architect.LOGGER.debug("Destroy: Removed {} entities", entitiesToRemove.size());
+
+        Architect.LOGGER.info("Destroy: removed {} blocks, {} entities, {} containers cleared",
+            blocksRemoved, entitiesToRemove.size(), containersCleared);
+
+        return blocksRemoved;
     }
 }

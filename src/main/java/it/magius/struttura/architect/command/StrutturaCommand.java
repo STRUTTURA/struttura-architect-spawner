@@ -73,8 +73,11 @@ public class StrutturaCommand {
                         .executes(StrutturaCommand::executeEdit)
                     )
                 )
-                .then(Commands.literal("exit")
-                    .executes(StrutturaCommand::executeExit)
+                .then(Commands.literal("done")
+                    .executes(StrutturaCommand::executeDone)
+                    .then(Commands.literal("nomob")
+                        .executes(StrutturaCommand::executeDoneNoMob)
+                    )
                 )
                 .then(Commands.literal("mode")
                     .then(Commands.literal("add")
@@ -310,7 +313,15 @@ public class StrutturaCommand {
         return 1;
     }
 
-    private static int executeExit(CommandContext<CommandSourceStack> ctx) {
+    private static int executeDone(CommandContext<CommandSourceStack> ctx) {
+        return executeDoneCommon(ctx, true);
+    }
+
+    private static int executeDoneNoMob(CommandContext<CommandSourceStack> ctx) {
+        return executeDoneCommon(ctx, false);
+    }
+
+    private static int executeDoneCommon(CommandContext<CommandSourceStack> ctx, boolean saveEntities) {
         CommandSourceStack source = ctx.getSource();
 
         if (!(source.getEntity() instanceof ServerPlayer player)) {
@@ -326,17 +337,25 @@ public class StrutturaCommand {
         EditingSession session = EditingSession.endSession(player);
         Construction construction = session.getConstruction();
 
+        // Se nomob, rimuovi le entità dalla costruzione prima di salvare
+        if (!saveEntities) {
+            construction.clearEntities();
+            Architect.LOGGER.info("Cleared entities from construction {} (done nomob)",
+                construction.getId());
+        }
+
         // Registra la costruzione nel registro (solo se ha blocchi)
         if (construction.getBlockCount() > 0) {
             ConstructionRegistry.getInstance().register(construction);
-            Architect.LOGGER.info("Construction {} registered with {} blocks",
-                construction.getId(), construction.getBlockCount());
+            Architect.LOGGER.info("Construction {} registered with {} blocks, {} entities",
+                construction.getId(), construction.getBlockCount(), construction.getEntityCount());
         }
 
-        Architect.LOGGER.info("Player {} exited construction: {} ({} blocks)",
+        Architect.LOGGER.info("Player {} finished editing construction: {} ({} blocks, {} entities)",
             player.getName().getString(),
             construction.getId(),
-            construction.getBlockCount()
+            construction.getBlockCount(),
+            construction.getEntityCount()
         );
 
         // Pulisci anche la selezione
@@ -348,8 +367,11 @@ public class StrutturaCommand {
         // Invia stato editing vuoto al client per la GUI
         NetworkHandler.sendEditingInfoEmpty(player);
 
+        // Invia lista costruzioni aggiornata
+        NetworkHandler.sendConstructionList(player);
+
         source.sendSuccess(() -> Component.literal(
-            I18n.tr(player, "exit.success", construction.getId(), construction.getBlockCount())
+            I18n.tr(player, "done.success", construction.getId(), construction.getBlockCount())
         ), false);
 
         return 1;
@@ -656,98 +678,21 @@ public class StrutturaCommand {
             return 0;
         }
 
-        // Ottieni dimensioni della costruzione
-        var bounds = construction.getBounds();
-        int sizeX = bounds.getSizeX();
-        int sizeZ = bounds.getSizeZ();
+        // Usa la funzione centralizzata per spawnare la costruzione
+        // updateConstruction=false: non modifica le coordinate della costruzione nel registry
+        int placedCount = NetworkHandler.spawnConstructionInFrontOfPlayer(player, construction, false);
 
-        // Ottieni la direzione in cui il player sta guardando (solo asse orizzontale)
-        float yaw = player.getYRot();
-        // Normalizza yaw a 0-360
-        yaw = ((yaw % 360) + 360) % 360;
+        if (placedCount > 0) {
+            Architect.LOGGER.info("Player {} spawned construction {} ({} blocks)",
+                player.getName().getString(), id, placedCount);
 
-        // Determina la direzione cardinale principale
-        // yaw: 0 = sud (+Z), 90 = ovest (-X), 180 = nord (-Z), 270 = est (+X)
-        int offsetX, offsetZ;
-        BlockPos playerPos = player.blockPosition();
-
-        if (yaw >= 315 || yaw < 45) {
-            // Sud (+Z): costruzione davanti al player, player sul lato -Z
-            offsetX = playerPos.getX() - bounds.getMinX() - (sizeX / 2); // Centra su X
-            offsetZ = playerPos.getZ() + 1 - bounds.getMinZ(); // Davanti al player
-        } else if (yaw >= 45 && yaw < 135) {
-            // Ovest (-X): costruzione davanti al player, player sul lato +X
-            offsetX = playerPos.getX() - 1 - bounds.getMaxX(); // Davanti al player (verso -X)
-            offsetZ = playerPos.getZ() - bounds.getMinZ() - (sizeZ / 2); // Centra su Z
-        } else if (yaw >= 135 && yaw < 225) {
-            // Nord (-Z): costruzione davanti al player, player sul lato +Z
-            offsetX = playerPos.getX() - bounds.getMinX() - (sizeX / 2); // Centra su X
-            offsetZ = playerPos.getZ() - 1 - bounds.getMaxZ(); // Davanti al player (verso -Z)
-        } else {
-            // Est (+X): costruzione davanti al player, player sul lato -X
-            offsetX = playerPos.getX() + 1 - bounds.getMinX(); // Davanti al player (verso +X)
-            offsetZ = playerPos.getZ() - bounds.getMinZ() - (sizeZ / 2); // Centra su Z
-        }
-
-        // Offset Y: la costruzione parte dal livello del player
-        int offsetY = playerPos.getY() - bounds.getMinY();
-
-        ServerLevel level = (ServerLevel) player.level();
-        int placedCount = 0;
-
-        // Piazza i blocchi nel mondo con l'offset
-        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
-            BlockPos originalPos = entry.getKey();
-            BlockState state = entry.getValue();
-
-            // Salta i blocchi aria
-            if (state.isAir()) continue;
-
-            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
-            level.setBlock(newPos, state, placementFlags);
-
-            // Se il blocco ha un NBT associato (block entity), applicalo
-            net.minecraft.nbt.CompoundTag blockEntityNbt = construction.getBlockEntityNbt(originalPos);
-            if (blockEntityNbt != null) {
-                net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(newPos);
-                if (blockEntity != null) {
-                    // MC 1.21.11: usa TagValueInput per creare un ValueInput dal CompoundTag
-                    net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
-                        net.minecraft.util.ProblemReporter.DISCARDING,
-                        level.registryAccess(),
-                        blockEntityNbt
-                    );
-                    blockEntity.loadCustomOnly(input);
-                    blockEntity.setChanged();
-                }
-            }
-
-            placedCount++;
-        }
-
-        // Spawna le entità con l'offset appropriato
-        // Le coordinate delle entità sono relative ai bounds minimi originali
-        int entityCount = NetworkHandler.spawnConstructionEntities(construction, level,
-            offsetX + bounds.getMinX(), offsetY + bounds.getMinY(), offsetZ + bounds.getMinZ());
-
-        // Calcola la posizione effettiva dove è stata spawnata (per il messaggio)
-        BlockPos spawnMin = bounds.getMin().offset(offsetX, offsetY, offsetZ);
-
-        final int finalCount = placedCount;
-        final int finalEntityCount = entityCount;
-        Architect.LOGGER.info("Player {} spawned construction {} at {} ({} blocks, {} entities)",
-            player.getName().getString(), id, spawnMin, finalCount, finalEntityCount);
-
-        if (entityCount > 0) {
+            final int finalCount = placedCount;
             source.sendSuccess(() -> Component.literal(
-                I18n.tr(player, "spawn.success_with_entities", id, finalCount, entityCount, spawnMin.getX(), spawnMin.getY(), spawnMin.getZ())
+                I18n.tr(player, "spawn.success_simple", id, finalCount)
             ), true);
         } else {
-            source.sendSuccess(() -> Component.literal(
-                I18n.tr(player, "spawn.success", id, finalCount, spawnMin.getX(), spawnMin.getY(), spawnMin.getZ())
-            ), true);
+            source.sendFailure(Component.literal(I18n.tr(player, "spawn.failed", id)));
+            return 0;
         }
 
         return 1;
@@ -845,12 +790,8 @@ public class StrutturaCommand {
 
         ServerLevel level = (ServerLevel) player.level();
 
-        // Sostituisci i blocchi della costruzione con AIR
-        int removedCount = 0;
-        for (BlockPos pos : construction.getBlocks().keySet()) {
-            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-            removedCount++;
-        }
+        // Usa la funzione centralizzata per rimuovere tutti i blocchi
+        int removedCount = NetworkHandler.hideConstructionFromWorld(level, construction);
 
         VISIBLE_CONSTRUCTIONS.remove(id);
 
@@ -1587,12 +1528,10 @@ public class StrutturaCommand {
         ServerLevel level = (ServerLevel) player.level();
         Construction construction = getConstructionIncludingEditing(constructionId);
 
-        // 1. Sostituisci i blocchi della costruzione con AIR
-        if (construction != null && construction.getBlockCount() > 0) {
-            for (BlockPos pos : construction.getBlocks().keySet()) {
-                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-            }
-            Architect.LOGGER.info("Destroy: removed {} blocks for construction {}", construction.getBlockCount(), constructionId);
+        // 1. Rimuovi entità, svuota container e rimuovi blocchi
+        int blocksRemoved = NetworkHandler.clearConstructionFromWorld(level, construction);
+        if (blocksRemoved > 0) {
+            Architect.LOGGER.info("Destroy: removed {} blocks for construction {}", blocksRemoved, constructionId);
         }
 
         // 2. Pulisci i dati di visibilità
@@ -1699,8 +1638,9 @@ public class StrutturaCommand {
                         // Registra la costruzione nel registry
                         ConstructionRegistry.getInstance().register(construction);
 
-                        // Piazza la costruzione di fronte al giocatore
-                        int placedCount = spawnConstructionInFrontOfPlayer(player, construction);
+                        // Piazza la costruzione di fronte al giocatore usando la funzione centralizzata
+                        // updateConstruction=true perché PULL deve aggiornare le coordinate della costruzione
+                        int placedCount = NetworkHandler.spawnConstructionInFrontOfPlayer(player, construction, true);
 
                         player.sendSystemMessage(Component.literal(
                             I18n.tr(player, "pull.success", id, placedCount)
@@ -1729,94 +1669,6 @@ public class StrutturaCommand {
         }
 
         return 1;
-    }
-
-    /**
-     * Piazza una costruzione di fronte al giocatore e aggiorna le coordinate interne.
-     * La costruzione viene posizionata nella direzione in cui sta guardando il giocatore.
-     * Le coordinate dei blocchi sono già relative (normalizzate a 0,0,0).
-     * Dopo lo spawn, le coordinate vengono aggiornate alle posizioni assolute nel mondo.
-     *
-     * @return il numero di blocchi piazzati
-     */
-    private static int spawnConstructionInFrontOfPlayer(ServerPlayer player, Construction construction) {
-        if (construction.getBlockCount() == 0) {
-            return 0;
-        }
-
-        ServerLevel level = (ServerLevel) player.level();
-        var bounds = construction.getBounds();
-        int sizeX = bounds.getSizeX();
-        int sizeY = bounds.getSizeY();
-        int sizeZ = bounds.getSizeZ();
-
-        Architect.LOGGER.info("Spawn bounds: min({},{},{}) max({},{},{}) size({},{},{})",
-            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
-            bounds.getMaxX(), bounds.getMaxY(), bounds.getMaxZ(),
-            sizeX, sizeY, sizeZ);
-
-        // Ottieni la direzione in cui il player sta guardando
-        float yaw = player.getYRot();
-        yaw = ((yaw % 360) + 360) % 360;
-
-        int offsetX, offsetZ;
-        BlockPos playerPos = player.blockPosition();
-
-        // Le coordinate dei blocchi partono da 0,0,0 (normalizzate)
-        // Quindi l'offset è semplicemente la posizione target
-        if (yaw >= 315 || yaw < 45) {
-            // Sud (+Z): costruzione centrata davanti al player
-            offsetX = playerPos.getX() - (sizeX / 2);
-            offsetZ = playerPos.getZ() + 2;
-        } else if (yaw >= 45 && yaw < 135) {
-            // Ovest (-X): costruzione centrata a sinistra del player
-            offsetX = playerPos.getX() - 2 - sizeX;
-            offsetZ = playerPos.getZ() - (sizeZ / 2);
-        } else if (yaw >= 135 && yaw < 225) {
-            // Nord (-Z): costruzione centrata dietro al player
-            offsetX = playerPos.getX() - (sizeX / 2);
-            offsetZ = playerPos.getZ() - 2 - sizeZ;
-        } else {
-            // Est (+X): costruzione centrata a destra del player
-            offsetX = playerPos.getX() + 2;
-            offsetZ = playerPos.getZ() - (sizeZ / 2);
-        }
-
-        // Offset Y: la costruzione parte dal livello del player
-        int offsetY = playerPos.getY();
-
-        // Crea una nuova mappa di blocchi con le posizioni aggiornate
-        Map<BlockPos, BlockState> newBlocks = new HashMap<>();
-        int placedCount = 0;
-
-        // Piazza i blocchi nel mondo E salva le nuove posizioni
-        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
-            BlockPos originalPos = entry.getKey();
-            BlockState state = entry.getValue();
-
-            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
-            newBlocks.put(newPos, state);
-
-            // Piazza nel mondo solo i blocchi non-aria
-            if (!state.isAir()) {
-                level.setBlock(newPos, state, placementFlags);
-                placedCount++;
-            }
-        }
-
-        // Aggiorna la costruzione con le nuove coordinate assolute
-        construction.getBlocks().clear();
-        construction.getBounds().reset();
-        for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
-            construction.addBlock(entry.getKey(), entry.getValue());
-        }
-
-        Architect.LOGGER.info("Spawned construction {} at offset ({}, {}, {}) with {} blocks",
-            construction.getId(), offsetX, offsetY, offsetZ, placedCount);
-
-        return placedCount;
     }
 
     // ===== Comando Move =====
@@ -1867,16 +1719,17 @@ public class StrutturaCommand {
         }
 
         ServerLevel level = (ServerLevel) player.level();
+        var bounds = construction.getBounds();
 
-        // 1. Rimuovi i blocchi dalla posizione attuale (hide)
-        int removedCount = 0;
-        for (BlockPos pos : construction.getBlocks().keySet()) {
-            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-            removedCount++;
-        }
+        // 1. Salva i vecchi bounds PRIMA di modificare la costruzione
+        int oldMinX = bounds.getMinX();
+        int oldMinY = bounds.getMinY();
+        int oldMinZ = bounds.getMinZ();
+        int oldMaxX = bounds.getMaxX();
+        int oldMaxY = bounds.getMaxY();
+        int oldMaxZ = bounds.getMaxZ();
 
         // 2. Calcola la nuova posizione davanti al giocatore
-        var bounds = construction.getBounds();
         int sizeX = bounds.getSizeX();
         int sizeZ = bounds.getSizeZ();
 
@@ -1910,9 +1763,15 @@ public class StrutturaCommand {
         Map<BlockPos, BlockState> newBlocks = new HashMap<>();
         int placedCount = 0;
 
+        // Ordina i blocchi per Y crescente per piazzare prima i blocchi di supporto
+        // (es. trapdoor prima dei carpet che ci stanno sopra)
+        java.util.List<Map.Entry<BlockPos, BlockState>> sortedBlocks =
+            new java.util.ArrayList<>(construction.getBlocks().entrySet());
+        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
+
         // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
         int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+        for (Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
             BlockPos originalPos = entry.getKey();
             BlockState state = entry.getValue();
 
@@ -1928,17 +1787,20 @@ public class StrutturaCommand {
             newBlocks.put(newPos, state);
         }
 
-        // 4. Aggiorna la costruzione con le nuove posizioni
+        // 4. DESTROY: Rimuovi i blocchi dalla vecchia posizione usando i bounds salvati
+        NetworkHandler.clearAreaFromWorld(level, oldMinX, oldMinY, oldMinZ, oldMaxX, oldMaxY, oldMaxZ);
+
+        // 5. Aggiorna la costruzione con le nuove posizioni
         construction.getBlocks().clear();
         construction.getBounds().reset();
         for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
             construction.addBlock(entry.getKey(), entry.getValue());
         }
 
-        // 5. Salva la costruzione aggiornata
+        // 6. Salva la costruzione aggiornata
         ConstructionRegistry.getInstance().register(construction);
 
-        // 6. Aggiorna lo stato di visibilità
+        // 7. Aggiorna lo stato di visibilità
         VISIBLE_CONSTRUCTIONS.add(id);
 
         Architect.LOGGER.info("Player {} moved construction {} from old position to ({}, {}, {})",

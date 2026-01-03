@@ -90,6 +90,22 @@ public class StrutturaScreen extends Screen {
         PanelManager pm = PanelManager.getInstance();
         boolean isEditing = pm.isEditing();
 
+        // Handle short desc modal clicks (captures all clicks when open)
+        if (isEditing && editingPanel.isShortDescModalOpen()) {
+            return editingPanel.mouseClicked(mouseX, mouseY, button);
+        }
+
+        // Handle editing panel dropdown clicks FIRST (dropdown opens upward and may overlap other panels)
+        if (isEditing && editingPanel.isDropdownOpenAt(mouseX, mouseY)) {
+            return editingPanel.handleDropdownClick(mouseX, mouseY, button);
+        }
+
+        // Handle language dropdown clicks (dropdown opens downward)
+        if (isEditing && editingPanel.isLangDropdownOpen()) {
+            // Let EditingPanel handle it - it will close dropdown on click outside
+            return editingPanel.mouseClicked(mouseX, mouseY, button);
+        }
+
         // Calculate panel positions (same as render)
         int mainPanelWidth = mainPanel.getWidth();
         int editingPanelWidth = isEditing ? editingPanel.getWidth() : 0;
@@ -98,13 +114,26 @@ public class StrutturaScreen extends Screen {
         int startX = (this.width - totalWidth) / 2;
         int panelY = (this.height - mainPanel.getHeight()) / 2;
 
-        // Check NEW button first (it's partially outside panel bounds)
-        // The button is at top-right corner, straddling the panel edge
-        int newBtnSize = 13;
-        int newBtnX = startX + mainPanelWidth - newBtnSize / 2 - 2;
-        int newBtnY = panelY - newBtnSize / 2 + 2;
-        if (mouseX >= newBtnX && mouseX < newBtnX + newBtnSize &&
-            mouseY >= newBtnY && mouseY < newBtnY + newBtnSize) {
+        // Check NEW and PULL buttons first (they're partially outside panel bounds)
+        // The buttons are at top-right corner, straddling the panel edge
+        int btnSize = 13;
+        int btnSpacing = 2;
+
+        // NEW button (rightmost)
+        int newBtnX = startX + mainPanelWidth - btnSize / 2 - 2;
+        int newBtnY = panelY - btnSize / 2 + 2;
+        if (mouseX >= newBtnX && mouseX < newBtnX + btnSize &&
+            mouseY >= newBtnY && mouseY < newBtnY + btnSize) {
+            if (mainPanel.mouseClicked(mouseX, mouseY, button)) {
+                return true;
+            }
+        }
+
+        // PULL button (left of NEW)
+        int pullBtnX = newBtnX - btnSize - btnSpacing;
+        int pullBtnY = newBtnY;
+        if (mouseX >= pullBtnX && mouseX < pullBtnX + btnSize &&
+            mouseY >= pullBtnY && mouseY < pullBtnY + btnSize) {
             if (mainPanel.mouseClicked(mouseX, mouseY, button)) {
                 return true;
             }
@@ -137,7 +166,44 @@ public class StrutturaScreen extends Screen {
         if (mainPanel.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount)) {
             return true;
         }
+
+        // Handle scroll for editing panel dropdown
+        PanelManager pm = PanelManager.getInstance();
+        if (pm.isEditing() && editingPanel.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount)) {
+            return true;
+        }
+
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
+
+        // Handle drag for editing panel scrollbar
+        PanelManager pm = PanelManager.getInstance();
+        if (pm.isEditing() && editingPanel.mouseDragged(mouseX, mouseY, button, dragX, dragY)) {
+            return true;
+        }
+
+        return super.mouseDragged(event, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
+
+        // Handle release for editing panel scrollbar
+        PanelManager pm = PanelManager.getInstance();
+        if (pm.isEditing() && editingPanel.mouseReleased(mouseX, mouseY, button)) {
+            return true;
+        }
+
+        return super.mouseReleased(event);
     }
 
     @Override
@@ -146,12 +212,18 @@ public class StrutturaScreen extends Screen {
         int scanCode = event.scancode();
         int modifiers = event.modifiers();
 
+        PanelManager pm = PanelManager.getInstance();
+
+        // Handle short desc modal keys first (modal captures all keys when open)
+        if (pm.isEditing() && editingPanel.isShortDescModalOpen()) {
+            return editingPanel.keyPressed(keyCode, scanCode, modifiers);
+        }
+
         // Let panels handle key input first
         if (mainPanel.keyPressed(keyCode, scanCode, modifiers)) {
             return true;
         }
 
-        PanelManager pm = PanelManager.getInstance();
         if (pm.isEditing() && editingPanel.keyPressed(keyCode, scanCode, modifiers)) {
             return true;
         }
@@ -170,11 +242,17 @@ public class StrutturaScreen extends Screen {
         char chr = (char) event.codepoint();
         int modifiers = event.modifiers();
 
+        PanelManager pm = PanelManager.getInstance();
+
+        // Handle short desc modal chars first (modal captures all chars when open)
+        if (pm.isEditing() && editingPanel.isShortDescModalOpen()) {
+            return editingPanel.charTyped(chr, modifiers);
+        }
+
         if (mainPanel.charTyped(chr, modifiers)) {
             return true;
         }
 
-        PanelManager pm = PanelManager.getInstance();
         if (pm.isEditing() && editingPanel.charTyped(chr, modifiers)) {
             return true;
         }

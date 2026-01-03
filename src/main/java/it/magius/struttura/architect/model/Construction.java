@@ -268,6 +268,24 @@ public class Construction {
         return count;
     }
 
+    /**
+     * Ritorna una mappa con il conteggio di tutti i tipi di blocchi.
+     * @return Map blockId -> count (non include air)
+     */
+    public Map<String, Integer> getBlockCounts() {
+        Map<String, Integer> counts = new HashMap<>();
+        for (BlockState state : blocks.values()) {
+            if (state.isAir()) continue;
+
+            String blockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                .getKey(state.getBlock())
+                .toString();
+
+            counts.merge(blockId, 1, Integer::sum);
+        }
+        return counts;
+    }
+
     // Getters
     public String getId() { return id; }
     public UUID getAuthorId() { return authorId; }
@@ -311,6 +329,49 @@ public class Construction {
      */
     public int getEntityCount() {
         return entities.size();
+    }
+
+    /**
+     * Conta i mob (entità viventi) nella costruzione.
+     * Esclude entità non-mob come armor_stand, item_frame, painting, etc.
+     */
+    public int getMobCount() {
+        int count = 0;
+        for (EntityData data : entities.values()) {
+            if (isMobEntity(data.getEntityType())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Verifica se un tipo di entità è un mob (entità vivente).
+     */
+    private static boolean isMobEntity(String entityType) {
+        // Lista di entità NON-mob comuni
+        return !entityType.equals("minecraft:armor_stand") &&
+               !entityType.equals("minecraft:item_frame") &&
+               !entityType.equals("minecraft:glow_item_frame") &&
+               !entityType.equals("minecraft:painting") &&
+               !entityType.equals("minecraft:minecart") &&
+               !entityType.equals("minecraft:chest_minecart") &&
+               !entityType.equals("minecraft:hopper_minecart") &&
+               !entityType.equals("minecraft:furnace_minecart") &&
+               !entityType.equals("minecraft:tnt_minecart") &&
+               !entityType.equals("minecraft:spawner_minecart") &&
+               !entityType.equals("minecraft:command_block_minecart") &&
+               !entityType.equals("minecraft:boat") &&
+               !entityType.equals("minecraft:chest_boat") &&
+               !entityType.equals("minecraft:leash_knot") &&
+               !entityType.equals("minecraft:end_crystal") &&
+               !entityType.equals("minecraft:falling_block") &&
+               !entityType.equals("minecraft:tnt") &&
+               !entityType.equals("minecraft:marker") &&
+               !entityType.equals("minecraft:interaction") &&
+               !entityType.equals("minecraft:display.block") &&
+               !entityType.equals("minecraft:display.item") &&
+               !entityType.equals("minecraft:display.text");
     }
 
     // Getter/Setter multilingua per titoli

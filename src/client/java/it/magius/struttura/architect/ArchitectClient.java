@@ -7,11 +7,13 @@ import it.magius.struttura.architect.client.WireframeRenderer;
 import it.magius.struttura.architect.client.gui.PanelManager;
 import it.magius.struttura.architect.client.gui.StrutturaHud;
 import it.magius.struttura.architect.client.gui.panel.MainPanel;
+import it.magius.struttura.architect.network.BlockListPacket;
 import it.magius.struttura.architect.network.BlockPositionsSyncPacket;
 import it.magius.struttura.architect.network.ConstructionListPacket;
 import it.magius.struttura.architect.network.EditingInfoPacket;
 import it.magius.struttura.architect.network.ModRequirementsPacket;
 import it.magius.struttura.architect.network.ScreenshotRequestPacket;
+import it.magius.struttura.architect.network.TranslationsPacket;
 import it.magius.struttura.architect.network.WireframeSyncPacket;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
@@ -76,8 +78,10 @@ public class ArchitectClient implements ClientModInitializer {
                             packet.solidBlockCount(),
                             packet.airBlockCount(),
                             packet.entityCount(),
+                            packet.mobCount(),
                             packet.bounds(),
-                            packet.mode()
+                            packet.mode(),
+                            packet.shortDesc()
                     );
                 } else {
                     pm.clearEditingInfo();
@@ -96,6 +100,7 @@ public class ArchitectClient implements ClientModInitializer {
                             info.id(),
                             info.title(),
                             info.blockCount(),
+                            info.entityCount(),
                             info.isBeingEdited()
                     ));
                 }
@@ -113,6 +118,31 @@ public class ArchitectClient implements ClientModInitializer {
                 );
                 Architect.LOGGER.debug("Received mod requirements for {}: {} mods",
                     packet.constructionId(), packet.requiredMods().size());
+            });
+        });
+
+        // Registra il receiver per la lista blocchi (per dropdown in editing panel)
+        ClientPlayNetworking.registerGlobalReceiver(BlockListPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                List<PanelManager.BlockInfo> blocks = new ArrayList<>();
+                for (BlockListPacket.BlockInfo info : packet.blocks()) {
+                    blocks.add(new PanelManager.BlockInfo(
+                            info.blockId(),
+                            info.displayName(),
+                            info.count()
+                    ));
+                }
+                PanelManager.getInstance().updateBlockList(blocks);
+                Architect.LOGGER.debug("Received block list: {} types", blocks.size());
+            });
+        });
+
+        // Registra il receiver per le traduzioni (titles e shortDescriptions)
+        ClientPlayNetworking.registerGlobalReceiver(TranslationsPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                PanelManager.getInstance().updateTranslations(packet.titles(), packet.shortDescriptions());
+                Architect.LOGGER.debug("Received translations: {} titles, {} short descs",
+                        packet.titles().size(), packet.shortDescriptions().size());
             });
         });
 
