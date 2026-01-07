@@ -2,6 +2,8 @@ package it.magius.struttura.architect;
 
 import it.magius.struttura.architect.command.StrutturaCommand;
 import it.magius.struttura.architect.config.ArchitectConfig;
+import it.magius.struttura.architect.entity.EntityFreezeHandler;
+import it.magius.struttura.architect.entity.EntitySpawnHandler;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
@@ -39,6 +41,12 @@ public class Architect implements ModInitializer {
 
 		// Registra i packet di rete
 		NetworkHandler.registerServer();
+
+		// Registra l'handler per il freeze delle entità
+		EntityFreezeHandler.getInstance().register();
+
+		// Registra l'handler per lo spawn automatico di entità
+		EntitySpawnHandler.getInstance().register();
 
 		// Registra il comando /struttura
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {

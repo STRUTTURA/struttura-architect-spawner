@@ -9,6 +9,7 @@ import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
+import it.magius.struttura.architect.model.Room;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
@@ -74,8 +75,8 @@ public class ConstructionStorage {
             // Salva entità
             saveEntities(construction, constructionDir);
 
-            Architect.LOGGER.info("Saved construction: {} ({} blocks, {} entities)",
-                construction.getId(), construction.getBlockCount(), construction.getEntityCount());
+            Architect.LOGGER.info("Saved construction: {} ({} blocks, {} entities, {} rooms)",
+                construction.getId(), construction.getBlockCount(), construction.getEntityCount(), construction.getRoomCount());
             return true;
 
         } catch (Exception e) {
@@ -110,8 +111,8 @@ public class ConstructionStorage {
             // Carica entità
             loadEntities(construction, constructionDir);
 
-            Architect.LOGGER.info("Loaded construction: {} ({} blocks, {} entities)",
-                construction.getId(), construction.getBlockCount(), construction.getEntityCount());
+            Architect.LOGGER.info("Loaded construction: {} ({} blocks, {} entities, {} rooms)",
+                construction.getId(), construction.getBlockCount(), construction.getEntityCount(), construction.getRoomCount());
             return construction;
 
         } catch (Exception e) {
@@ -284,9 +285,10 @@ public class ConstructionStorage {
         }
         json.add("descriptions", descriptions);
 
-        json.addProperty("blockCount", construction.getBlockCount());
-        json.addProperty("solidBlockCount", construction.getSolidBlockCount());
-        json.addProperty("entityCount", construction.getEntityCount());
+        // Conteggi totali (base + tutte le stanze)
+        json.addProperty("blockCount", construction.getTotalBlockCount());
+        json.addProperty("solidBlockCount", construction.getTotalSolidBlockCount());
+        json.addProperty("entityCount", construction.getTotalEntityCount());
 
         // Bounds info
         JsonObject bounds = new JsonObject();
@@ -317,6 +319,19 @@ public class ConstructionStorage {
             modsObject.add(mod.getModId(), modJson);
         }
         json.add("mods", modsObject);
+
+        // Stanze (room metadata) - array format
+        com.google.gson.JsonArray roomsArray = new com.google.gson.JsonArray();
+        for (Room room : construction.getRooms().values()) {
+            JsonObject roomJson = new JsonObject();
+            roomJson.addProperty("id", room.getId());
+            roomJson.addProperty("name", room.getName());
+            roomJson.addProperty("createdAt", room.getCreatedAt().toString());
+            roomJson.addProperty("blockChanges", room.getChangedBlockCount());
+            roomJson.addProperty("entityCount", room.getEntityCount());
+            roomsArray.add(roomJson);
+        }
+        json.add("rooms", roomsArray);
 
         // Versione del mod Struttura
         json.addProperty("strutturaVersion", Architect.MOD_VERSION);
@@ -415,6 +430,37 @@ public class ConstructionStorage {
             }
             construction.setRequiredMods(requiredMods);
 
+            // Carica i bounds dal metadata (necessari per denormalizzare le coordinate)
+            if (json.has("bounds") && json.get("bounds").isJsonObject()) {
+                JsonObject boundsObj = json.getAsJsonObject("bounds");
+                if (boundsObj.has("minX") && boundsObj.has("maxX")) {
+                    int minX = boundsObj.get("minX").getAsInt();
+                    int minY = boundsObj.get("minY").getAsInt();
+                    int minZ = boundsObj.get("minZ").getAsInt();
+                    int maxX = boundsObj.get("maxX").getAsInt();
+                    int maxY = boundsObj.get("maxY").getAsInt();
+                    int maxZ = boundsObj.get("maxZ").getAsInt();
+                    construction.getBounds().set(minX, minY, minZ, maxX, maxY, maxZ);
+                }
+            }
+
+            // Carica metadata delle stanze (i blocchi/entità vengono caricati dopo)
+            if (json.has("rooms") && json.get("rooms").isJsonArray()) {
+                com.google.gson.JsonArray roomsArray = json.getAsJsonArray("rooms");
+                for (JsonElement element : roomsArray) {
+                    JsonObject roomJson = element.getAsJsonObject();
+
+                    String roomId = roomJson.get("id").getAsString();
+                    String roomName = roomJson.has("name") ? roomJson.get("name").getAsString() : roomId;
+                    Instant roomCreatedAt = roomJson.has("createdAt")
+                        ? Instant.parse(roomJson.get("createdAt").getAsString())
+                        : Instant.now();
+
+                    Room room = new Room(roomId, roomName, roomCreatedAt);
+                    construction.addRoom(room);
+                }
+            }
+
             return construction;
         }
     }
@@ -423,6 +469,12 @@ public class ConstructionStorage {
 
     private void saveBlocks(Construction construction, Path directory) throws IOException {
         CompoundTag root = new CompoundTag();
+
+        // Ottieni i bounds per normalizzare le coordinate
+        var bounds = construction.getBounds();
+        int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
+        int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
+        int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
 
         // Palette: mappa blockState -> index
         Map<String, Integer> palette = new LinkedHashMap<>();
@@ -446,11 +498,11 @@ public class ConstructionStorage {
                 return palette.size();
             });
 
-            // Aggiungi il blocco
+            // Aggiungi il blocco con coordinate NORMALIZZATE (relative a 0,0,0)
             CompoundTag blockTag = new CompoundTag();
-            blockTag.putInt("x", pos.getX());
-            blockTag.putInt("y", pos.getY());
-            blockTag.putInt("z", pos.getZ());
+            blockTag.putInt("x", pos.getX() - offsetX);
+            blockTag.putInt("y", pos.getY() - offsetY);
+            blockTag.putInt("z", pos.getZ() - offsetZ);
             blockTag.putInt("p", paletteIndex); // palette index
 
             // Se il blocco ha un NBT associato (block entity), includilo
@@ -466,6 +518,51 @@ public class ConstructionStorage {
         root.put("blocks", blocksList);
         root.putInt("version", 1); // NBT format version
 
+        // Salva i delta delle stanze (sempre con coordinate normalizzate)
+        CompoundTag roomsTag = new CompoundTag();
+        for (Room room : construction.getRooms().values()) {
+            if (room.getChangedBlockCount() > 0) {
+                CompoundTag roomTag = new CompoundTag();
+                ListTag roomBlocksList = new ListTag();
+
+                for (Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
+                    BlockPos pos = entry.getKey();
+                    BlockState state = entry.getValue();
+
+                    String stateString = serializeBlockState(state);
+
+                    // Aggiungi alla palette condivisa se non esiste
+                    int paletteIndex = palette.computeIfAbsent(stateString, s -> {
+                        CompoundTag paletteEntry = new CompoundTag();
+                        paletteEntry.putString("state", s);
+                        paletteList.add(paletteEntry);
+                        return palette.size();
+                    });
+
+                    CompoundTag blockTag = new CompoundTag();
+                    // Coordinate normalizzate (relative a 0,0,0)
+                    blockTag.putInt("x", pos.getX() - offsetX);
+                    blockTag.putInt("y", pos.getY() - offsetY);
+                    blockTag.putInt("z", pos.getZ() - offsetZ);
+                    blockTag.putInt("p", paletteIndex);
+
+                    // NBT del block entity se presente
+                    CompoundTag blockEntityNbt = room.getBlockEntityNbt(pos);
+                    if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                        blockTag.put("nbt", blockEntityNbt);
+                    }
+
+                    roomBlocksList.add(blockTag);
+                }
+
+                roomTag.put("blocks", roomBlocksList);
+                roomsTag.put(room.getId(), roomTag);
+            }
+        }
+        if (!roomsTag.isEmpty()) {
+            root.put("rooms", roomsTag);
+        }
+
         Path blocksFile = directory.resolve("blocks.nbt");
         try (OutputStream os = Files.newOutputStream(blocksFile)) {
             NbtIo.writeCompressed(root, os);
@@ -479,6 +576,12 @@ public class ConstructionStorage {
             Architect.LOGGER.warn("No blocks file for construction: {}", construction.getId());
             return;
         }
+
+        // Ottieni i bounds per denormalizzare le coordinate (caricati da loadMetadata)
+        var bounds = construction.getBounds();
+        int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
+        int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
+        int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
 
         CompoundTag root;
         try (InputStream is = Files.newInputStream(blocksFile)) {
@@ -496,25 +599,61 @@ public class ConstructionStorage {
             palette.add(state);
         }
 
-        // Carica blocchi
+        // Carica blocchi (denormalizzando le coordinate)
         ListTag blocksList = root.getList("blocks").orElse(new ListTag());
 
         for (int i = 0; i < blocksList.size(); i++) {
             CompoundTag blockTag = blocksList.getCompound(i).orElseThrow();
-            int x = blockTag.getInt("x").orElse(0);
-            int y = blockTag.getInt("y").orElse(0);
-            int z = blockTag.getInt("z").orElse(0);
+            int x = blockTag.getInt("x").orElse(0) + offsetX;
+            int y = blockTag.getInt("y").orElse(0) + offsetY;
+            int z = blockTag.getInt("z").orElse(0) + offsetZ;
             int paletteIndex = blockTag.getInt("p").orElse(0);
 
             BlockPos pos = new BlockPos(x, y, z);
             BlockState state = palette.get(paletteIndex);
 
             // Se presente, leggi l'NBT del block entity
+            // Usa addBlockRaw per non alterare i bounds già caricati dal metadata
             CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
             if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                construction.addBlock(pos, state, blockEntityNbt);
+                construction.addBlockRaw(pos, state, blockEntityNbt);
             } else {
-                construction.addBlock(pos, state);
+                construction.addBlockRaw(pos, state);
+            }
+        }
+
+        // Carica i delta delle stanze (denormalizzando le coordinate)
+        CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
+        if (roomsTag != null) {
+            for (String roomId : roomsTag.keySet()) {
+                Room room = construction.getRoom(roomId);
+                if (room == null) {
+                    Architect.LOGGER.warn("Room {} not found in metadata, skipping blocks", roomId);
+                    continue;
+                }
+
+                CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
+                if (roomTag == null) continue;
+
+                ListTag roomBlocksList = roomTag.getList("blocks").orElse(new ListTag());
+
+                for (int i = 0; i < roomBlocksList.size(); i++) {
+                    CompoundTag blockTag = roomBlocksList.getCompound(i).orElseThrow();
+                    int x = blockTag.getInt("x").orElse(0) + offsetX;
+                    int y = blockTag.getInt("y").orElse(0) + offsetY;
+                    int z = blockTag.getInt("z").orElse(0) + offsetZ;
+                    int paletteIndex = blockTag.getInt("p").orElse(0);
+
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = palette.get(paletteIndex);
+
+                    CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
+                    if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                        room.setBlockChange(pos, state, blockEntityNbt);
+                    } else {
+                        room.setBlockChange(pos, state);
+                    }
+                }
             }
         }
     }
@@ -611,19 +750,31 @@ public class ConstructionStorage {
     // ===== Entities serialization (NBT) =====
 
     /**
-     * Salva le entità della costruzione in entities.nbt.
-     * Struttura:
+     * Saves construction entities to entities.nbt.
+     * Structure:
      * root {
-     *     version: 1
+     *     version: 2
      *     entities: [
      *         { type: "minecraft:armor_stand", x: 1.5, y: 0.0, z: 2.3, yaw: 90.0, pitch: 0.0, nbt: {...} },
      *         ...
      *     ]
      * }
+     * Note: UUID is NOT stored - it's only a runtime identifier.
      */
     private void saveEntities(Construction construction, Path directory) throws IOException {
-        // Se non ci sono entità, elimina il file esistente se presente
-        if (construction.getEntities().isEmpty()) {
+        // Count all entities (base + rooms)
+        boolean hasAnyEntities = !construction.getEntities().isEmpty();
+        if (!hasAnyEntities) {
+            for (Room room : construction.getRooms().values()) {
+                if (!room.getEntities().isEmpty()) {
+                    hasAnyEntities = true;
+                    break;
+                }
+            }
+        }
+
+        // If no entities, delete existing file if present
+        if (!hasAnyEntities) {
             Path entitiesFile = directory.resolve("entities.nbt");
             if (Files.exists(entitiesFile)) {
                 Files.delete(entitiesFile);
@@ -632,13 +783,12 @@ public class ConstructionStorage {
         }
 
         CompoundTag root = new CompoundTag();
-        root.putInt("version", 1);
+        root.putInt("version", 2); // Version 2: no UUID in saved data
 
+        // Base entities
         ListTag entitiesList = new ListTag();
 
-        for (Map.Entry<UUID, EntityData> entry : construction.getEntities().entrySet()) {
-            EntityData data = entry.getValue();
-
+        for (EntityData data : construction.getEntities()) {
             CompoundTag entityTag = new CompoundTag();
             entityTag.putString("type", data.getEntityType());
             entityTag.putDouble("x", data.getRelativePos().x);
@@ -646,12 +796,40 @@ public class ConstructionStorage {
             entityTag.putDouble("z", data.getRelativePos().z);
             entityTag.putFloat("yaw", data.getYaw());
             entityTag.putFloat("pitch", data.getPitch());
-            entityTag.put("nbt", data.getNbt().copy()); // Copia per sicurezza
+            entityTag.put("nbt", data.getNbt().copy());
 
             entitiesList.add(entityTag);
         }
 
         root.put("entities", entitiesList);
+
+        // Room entities
+        CompoundTag roomsTag = new CompoundTag();
+        for (Room room : construction.getRooms().values()) {
+            if (!room.getEntities().isEmpty()) {
+                CompoundTag roomTag = new CompoundTag();
+                ListTag roomEntitiesList = new ListTag();
+
+                for (EntityData data : room.getEntities()) {
+                    CompoundTag entityTag = new CompoundTag();
+                    entityTag.putString("type", data.getEntityType());
+                    entityTag.putDouble("x", data.getRelativePos().x);
+                    entityTag.putDouble("y", data.getRelativePos().y);
+                    entityTag.putDouble("z", data.getRelativePos().z);
+                    entityTag.putFloat("yaw", data.getYaw());
+                    entityTag.putFloat("pitch", data.getPitch());
+                    entityTag.put("nbt", data.getNbt().copy());
+
+                    roomEntitiesList.add(entityTag);
+                }
+
+                roomTag.put("entities", roomEntitiesList);
+                roomsTag.put(room.getId(), roomTag);
+            }
+        }
+        if (!roomsTag.isEmpty()) {
+            root.put("rooms", roomsTag);
+        }
 
         Path entitiesFile = directory.resolve("entities.nbt");
         try (OutputStream os = Files.newOutputStream(entitiesFile)) {
@@ -660,14 +838,15 @@ public class ConstructionStorage {
     }
 
     /**
-     * Carica le entità da entities.nbt.
-     * Retrocompatibile: se il file non esiste, non fa nulla.
+     * Loads entities from entities.nbt.
+     * Backwards compatible: if the file doesn't exist, does nothing.
+     * Supports both version 1 (with UUID) and version 2 (without UUID).
      */
     private void loadEntities(Construction construction, Path directory) throws IOException {
         Path entitiesFile = directory.resolve("entities.nbt");
 
         if (!Files.exists(entitiesFile)) {
-            // Retrocompatibilità: costruzioni vecchie senza entità
+            // Backwards compatibility: old constructions without entities
             return;
         }
 
@@ -676,6 +855,7 @@ public class ConstructionStorage {
             root = NbtIo.readCompressed(is, NbtAccounter.unlimitedHeap());
         }
 
+        // Base entities
         ListTag entitiesList = root.getList("entities").orElse(new ListTag());
 
         for (int i = 0; i < entitiesList.size(); i++) {
@@ -692,8 +872,44 @@ public class ConstructionStorage {
             Vec3 relativePos = new Vec3(x, y, z);
             EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
 
-            // Genera un nuovo UUID per ogni entità caricata
-            construction.addEntity(UUID.randomUUID(), data);
+            // No UUID needed - just add to list
+            construction.addEntity(data);
+        }
+
+        // Room entities
+        CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
+        if (roomsTag != null) {
+            for (String roomId : roomsTag.keySet()) {
+                Room room = construction.getRoom(roomId);
+                if (room == null) {
+                    Architect.LOGGER.warn("Room {} not found in metadata, skipping entities", roomId);
+                    continue;
+                }
+
+                CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
+                if (roomTag == null) continue;
+
+                ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
+
+                for (int i = 0; i < roomEntitiesList.size(); i++) {
+                    CompoundTag entityTag = roomEntitiesList.getCompound(i).orElseThrow();
+
+                    String type = entityTag.getString("type").orElse("");
+                    double x = entityTag.getDouble("x").orElse(0.0);
+                    double y = entityTag.getDouble("y").orElse(0.0);
+                    double z = entityTag.getDouble("z").orElse(0.0);
+                    float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+                    float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+                    CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+
+                    Vec3 relativePos = new Vec3(x, y, z);
+                    EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+
+                    // No UUID needed - just add to list
+                    room.addEntity(data);
+                }
+            }
         }
     }
+
 }

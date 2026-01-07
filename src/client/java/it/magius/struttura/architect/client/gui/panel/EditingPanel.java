@@ -19,6 +19,46 @@ import net.minecraft.client.gui.Font;
 @Environment(EnvType.CLIENT)
 public class EditingPanel {
 
+    /**
+     * Represents an item that can be removed from the dropdown (block or entity).
+     */
+    private record RemovableItem(
+        String id,          // blockId or entity UUID
+        String displayName, // Display name
+        String extra,       // "x123" for blocks, entity type for entities
+        boolean isEntity    // true if entity, false if block
+    ) {}
+
+    /**
+     * Build a combined list of removable items (blocks + entities).
+     * Blocks come first, then a separator (null), then entities.
+     */
+    private static java.util.List<RemovableItem> buildRemovableList(PanelManager pm) {
+        java.util.List<RemovableItem> items = new java.util.ArrayList<>();
+
+        // Add blocks
+        for (PanelManager.BlockInfo block : pm.getBlockList()) {
+            items.add(new RemovableItem(
+                block.blockId(),
+                block.displayName(),
+                "x" + block.count(),
+                false
+            ));
+        }
+
+        // Add entities (grouped by type with count, like blocks)
+        for (PanelManager.EntityInfo entity : pm.getEntityList()) {
+            items.add(new RemovableItem(
+                entity.entityType(),
+                entity.displayName(),
+                "x" + entity.count(),
+                true
+            ));
+        }
+
+        return items;
+    }
+
     private static final int WIDTH = 180;
     private static final int HEIGHT = 220;  // Stessa altezza del MainPanel
     private static final int PADDING = 5;
@@ -84,6 +124,27 @@ public class EditingPanel {
     private int cachedLangDropdownListY = 0;
     private int cachedLangDropdownListHeight = 0;
 
+    // Room dropdown state
+    private boolean roomDropdownOpen = false;
+    private int selectedRoomIndex = 0;  // 0 = "+++ new +++" placeholder
+    private int cachedRoomDropdownX = 0;
+    private int cachedRoomDropdownY = 0;
+    private int cachedRoomDropdownWidth = 0;
+    private int cachedRoomDropdownListY = 0;
+    private int cachedRoomDropdownListHeight = 0;
+
+    // New room modal state
+    private boolean newRoomModalOpen = false;
+    private String newRoomIdPreview = "";
+    private EditBoxHelper newRoomNameBox;
+
+    // Room editing state (when editing an existing room)
+    private EditBoxHelper roomIdBox;
+    private EditBoxHelper roomNameBox;
+    private String originalRoomId = "";
+    private String originalRoomName = "";
+    private String roomRenameError = "";  // Error message for duplicate ID
+
     // Supported languages with display names
     private static final java.util.List<LangInfo> SUPPORTED_LANGUAGES = java.util.List.of(
         new LangInfo("en", "English"),
@@ -99,6 +160,42 @@ public class EditingPanel {
     );
 
     private record LangInfo(String id, String displayName) {}
+
+    /**
+     * Generate room ID from name (same algorithm as server-side Room.generateId).
+     */
+    private static String generateRoomId(String name) {
+        if (name == null || name.isEmpty()) {
+            return "";
+        }
+        String id = name.toLowerCase()
+            .trim()
+            .replace(' ', '_')
+            .replace('-', '_');
+        // Remove invalid chars (keep only a-z, 0-9, _)
+        StringBuilder sb = new StringBuilder();
+        for (char c : id.toCharArray()) {
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+                sb.append(c);
+            }
+        }
+        id = sb.toString();
+        // Remove multiple consecutive underscores
+        while (id.contains("__")) {
+            id = id.replace("__", "_");
+        }
+        // Remove leading/trailing underscores
+        id = id.replaceAll("^_+|_+$", "");
+        // Ensure doesn't start with digit
+        if (!id.isEmpty() && Character.isDigit(id.charAt(0))) {
+            id = "room_" + id;
+        }
+        // Truncate to 50 chars
+        if (id.length() > 50) {
+            id = id.substring(0, 50);
+        }
+        return id;
+    }
 
     public int getWidth() {
         return WIDTH;
@@ -123,6 +220,20 @@ public class EditingPanel {
     }
 
     /**
+     * Check if new room modal is open.
+     */
+    public boolean isNewRoomModalOpen() {
+        return newRoomModalOpen;
+    }
+
+    /**
+     * Check if room dropdown is open.
+     */
+    public boolean isRoomDropdownOpen() {
+        return roomDropdownOpen;
+    }
+
+    /**
      * Set the short description text (called when loading from server).
      */
     public void setShortDescText(String text) {
@@ -131,6 +242,20 @@ public class EditingPanel {
         this.shortDescScrollOffset = 0;
         this.shortDescSelectionStart = -1;
         this.shortDescSelectionEnd = -1;
+    }
+
+    /**
+     * Set room rename error message (called from server response handler).
+     */
+    public void setRoomRenameError(String error) {
+        this.roomRenameError = error != null ? error : "";
+    }
+
+    /**
+     * Clear room rename error message.
+     */
+    public void clearRoomRenameError() {
+        this.roomRenameError = "";
     }
 
     /**
@@ -260,8 +385,8 @@ public class EditingPanel {
             return false;
         }
 
-        java.util.List<PanelManager.BlockInfo> blockList = PanelManager.getInstance().getBlockList();
-        if (blockList.isEmpty()) {
+        java.util.List<RemovableItem> removableList = buildRemovableList(PanelManager.getInstance());
+        if (removableList.isEmpty()) {
             return false;
         }
 
@@ -269,9 +394,9 @@ public class EditingPanel {
         int scrollbarWidth = 4;
         int scrollbarX = cachedDropdownX + cachedDropdownWidth - scrollbarWidth - 1;
         int visibleItems = cachedDropdownListHeight / DROPDOWN_HEIGHT;
-        visibleItems = Math.min(visibleItems, blockList.size());
+        visibleItems = Math.min(visibleItems, removableList.size());
 
-        if (blockList.size() > visibleItems &&
+        if (removableList.size() > visibleItems &&
             mouseX >= scrollbarX && mouseX < scrollbarX + scrollbarWidth + 1 &&
             mouseY >= cachedDropdownListY && mouseY < cachedDropdownListY + cachedDropdownListHeight) {
             // Start dragging scrollbar
@@ -285,7 +410,7 @@ public class EditingPanel {
         if (mouseX >= cachedDropdownX && mouseX < cachedDropdownX + cachedDropdownWidth &&
             mouseY >= cachedDropdownListY && mouseY < cachedDropdownListY + cachedDropdownListHeight) {
             int itemIndex = (int)((mouseY - cachedDropdownListY) / DROPDOWN_HEIGHT) + dropdownScrollOffset;
-            if (itemIndex >= 0 && itemIndex < blockList.size()) {
+            if (itemIndex >= 0 && itemIndex < removableList.size()) {
                 selectedBlockIndex = itemIndex;
                 dropdownOpen = false;
             }
@@ -368,15 +493,15 @@ public class EditingPanel {
             return false;
         }
 
-        java.util.List<PanelManager.BlockInfo> blockList = PanelManager.getInstance().getBlockList();
-        if (blockList.isEmpty()) {
+        java.util.List<RemovableItem> removableList = buildRemovableList(PanelManager.getInstance());
+        if (removableList.isEmpty()) {
             draggingScrollbar = false;
             return false;
         }
 
         int visibleItems = cachedDropdownListHeight / DROPDOWN_HEIGHT;
-        visibleItems = Math.min(visibleItems, blockList.size());
-        int maxScroll = Math.max(0, blockList.size() - visibleItems);
+        visibleItems = Math.min(visibleItems, removableList.size());
+        int maxScroll = Math.max(0, removableList.size() - visibleItems);
 
         if (maxScroll == 0) {
             draggingScrollbar = false;
@@ -386,7 +511,7 @@ public class EditingPanel {
         // Calculate scroll based on drag distance
         int dragDistance = (int) mouseY - dragStartY;
         int trackHeight = cachedDropdownListHeight - 2;
-        int thumbHeight = Math.max(10, (visibleItems * cachedDropdownListHeight) / blockList.size());
+        int thumbHeight = Math.max(10, (visibleItems * cachedDropdownListHeight) / removableList.size());
         int scrollableTrack = trackHeight - thumbHeight;
 
         if (scrollableTrack > 0) {
@@ -436,6 +561,21 @@ public class EditingPanel {
         // Name box - free text
         nameBox = EditBoxHelper.createTextBox(font, 0, 0, WIDTH - PADDING * 2, LINE_HEIGHT, "(not set)");
 
+        // New room name box - free text, max 50 chars
+        newRoomNameBox = EditBoxHelper.createTextBox(font, 0, 0, 200, LINE_HEIGHT, "(enter name)");
+        newRoomNameBox.setMaxLength(50);
+
+        // Room ID box - lowercase only ID characters (for editing existing rooms)
+        roomIdBox = new EditBoxHelper(font, 0, 0, WIDTH - PADDING * 2, LINE_HEIGHT,
+            "room_id",
+            s -> s.chars().allMatch(c -> (c >= 'a' && c <= 'z') || Character.isDigit(c) || c == '_'),
+            null);
+        roomIdBox.setMaxLength(50);
+
+        // Room name box - free text (for editing existing rooms)
+        roomNameBox = EditBoxHelper.createTextBox(font, 0, 0, WIDTH - PADDING * 2, LINE_HEIGHT, "(room name)");
+        roomNameBox.setMaxLength(50);
+
         editBoxesInitialized = true;
     }
 
@@ -468,8 +608,12 @@ public class EditingPanel {
         int currentY = y + PADDING;
         hoveredButton = -1;
 
-        // Title: EDITING with language dropdown on the right
-        graphics.drawString(font, "EDITING", x + PADDING, currentY, 0xFFFFAA00, true);
+        // Check if in room editing mode
+        boolean inRoomEditing = pm.isInRoom();
+
+        // Title: "Edit building" or "Edit room" based on mode, with language dropdown on the right
+        String panelTitle = inRoomEditing ? "Edit room" : "Edit building";
+        graphics.drawString(font, panelTitle, x + PADDING, currentY, 0xFFFFAA00, true);
 
         // Language dropdown (aligned right)
         String langDisplay = getLangDisplayName(selectedLangId) + getLangIndicator(selectedLangId);
@@ -498,72 +642,105 @@ public class EditingPanel {
 
         currentY += LINE_HEIGHT + 2;
 
-        // Construction ID (editable)
+        // ID field - shows room ID when in room editing, construction ID otherwise
         String idLabel = "ID: ";
         int idLabelWidth = font.width(idLabel);
         graphics.drawString(font, idLabel, x + PADDING, currentY, 0xFF808080, false);
 
-        // ID field using EditBoxHelper
         int fieldX = x + PADDING + idLabelWidth;
         int fieldWidth = WIDTH - PADDING * 2 - idLabelWidth;
 
-        // Update EditBox with current value if not focused (sync from server)
-        if (!rdnsBox.isFocused()) {
-            String currentId = pm.getEditingConstructionId();
-            if (!rdnsBox.getValue().equals(currentId)) {
-                rdnsBox.setValue(currentId);
+        if (inRoomEditing) {
+            // Room ID (editable)
+            if (!roomIdBox.isFocused()) {
+                String currentRoomId = pm.getCurrentRoomId();
+                if (!roomIdBox.getValue().equals(currentRoomId)) {
+                    roomIdBox.setValue(currentRoomId);
+                    originalRoomId = currentRoomId;
+                }
             }
+            roomIdBox.setPosition(fieldX, currentY - 1);
+            roomIdBox.setWidth(fieldWidth);
+            roomIdBox.render(graphics, effectiveMouseX, effectiveMouseY, tickDelta);
+        } else {
+            // Construction ID (editable)
+            if (!rdnsBox.isFocused()) {
+                String currentId = pm.getEditingConstructionId();
+                if (!rdnsBox.getValue().equals(currentId)) {
+                    rdnsBox.setValue(currentId);
+                }
+            }
+            rdnsBox.setPosition(fieldX, currentY - 1);
+            rdnsBox.setWidth(fieldWidth);
+            rdnsBox.render(graphics, effectiveMouseX, effectiveMouseY, tickDelta);
         }
-
-        rdnsBox.setPosition(fieldX, currentY - 1);
-        rdnsBox.setWidth(fieldWidth);
-        rdnsBox.render(graphics, effectiveMouseX, effectiveMouseY, tickDelta);
         currentY += LINE_HEIGHT + 2;
 
-        // Name (editable) - uses selected language
+        // Name field - shows room name when in room editing, construction title otherwise
         String nameLabel = "Name: ";
         int nameLabelWidth = font.width(nameLabel);
         graphics.drawString(font, nameLabel, x + PADDING, currentY, 0xFF808080, false);
 
-        // Name field using EditBoxHelper
         fieldX = x + PADDING + nameLabelWidth;
         fieldWidth = WIDTH - PADDING * 2 - nameLabelWidth;
 
-        // Update EditBox with current value if not focused (sync from selected language)
-        if (!nameBox.isFocused()) {
-            String currentTitle = allTitles.getOrDefault(selectedLangId, "");
-            if (!nameBox.getValue().equals(currentTitle)) {
-                nameBox.setValue(currentTitle);
-                originalName = currentTitle;
+        if (inRoomEditing) {
+            // Room name (editable) - when changed, also updates ID preview
+            if (!roomNameBox.isFocused()) {
+                String currentRoomName = pm.getCurrentRoomName();
+                if (!roomNameBox.getValue().equals(currentRoomName)) {
+                    roomNameBox.setValue(currentRoomName);
+                    originalRoomName = currentRoomName;
+                }
             }
+            roomNameBox.setPosition(fieldX, currentY - 1);
+            roomNameBox.setWidth(fieldWidth);
+            roomNameBox.render(graphics, effectiveMouseX, effectiveMouseY, tickDelta);
+        } else {
+            // Construction name (editable) - uses selected language
+            if (!nameBox.isFocused()) {
+                String currentTitle = allTitles.getOrDefault(selectedLangId, "");
+                if (!nameBox.getValue().equals(currentTitle)) {
+                    nameBox.setValue(currentTitle);
+                    originalName = currentTitle;
+                }
+            }
+            nameBox.setPosition(fieldX, currentY - 1);
+            nameBox.setWidth(fieldWidth);
+            nameBox.render(graphics, effectiveMouseX, effectiveMouseY, tickDelta);
         }
-
-        nameBox.setPosition(fieldX, currentY - 1);
-        nameBox.setWidth(fieldWidth);
-        nameBox.render(graphics, effectiveMouseX, effectiveMouseY, tickDelta);
         currentY += LINE_HEIGHT + 2;
 
-        // Short Desc button (opens modal)
-        String descLabel = "Short Desc.: ";
-        int descLabelWidth = font.width(descLabel);
-        graphics.drawString(font, descLabel, x + PADDING, currentY, 0xFF808080, false);
+        // Show room rename error message if any
+        if (inRoomEditing && !roomRenameError.isEmpty()) {
+            graphics.drawString(font, roomRenameError, x + PADDING, currentY, 0xFFFF6666, false);
+            currentY += LINE_HEIGHT + 2;
+        }
 
-        int descBtnX = x + PADDING + descLabelWidth;
-        int descBtnWidth = WIDTH - PADDING * 2 - descLabelWidth;
-        boolean descHovered = effectiveMouseX >= descBtnX && effectiveMouseX < descBtnX + descBtnWidth &&
-                             effectiveMouseY >= currentY && effectiveMouseY < currentY + LINE_HEIGHT;
+        // Short Desc button (only for construction editing, not room)
+        if (!inRoomEditing) {
+            String descLabel = "Short Desc.: ";
+            int descLabelWidth = font.width(descLabel);
+            graphics.drawString(font, descLabel, x + PADDING, currentY, 0xFF808080, false);
 
-        graphics.fill(descBtnX, currentY - 1, descBtnX + descBtnWidth, currentY + LINE_HEIGHT - 1,
-                     descHovered ? 0xFF404040 : 0xFF303030);
-        graphics.renderOutline(descBtnX, currentY - 1, descBtnWidth, LINE_HEIGHT, 0xFF606060);
+            int descBtnX = x + PADDING + descLabelWidth;
+            int descBtnWidth = WIDTH - PADDING * 2 - descLabelWidth;
+            boolean descHovered = effectiveMouseX >= descBtnX && effectiveMouseX < descBtnX + descBtnWidth &&
+                                 effectiveMouseY >= currentY && effectiveMouseY < currentY + LINE_HEIGHT;
 
-        // Replace newlines with spaces for preview display
-        String descPreview = shortDescText.isEmpty() ? "(click to edit)" : truncate(shortDescText.replace('\n', ' '), descBtnWidth - 6, font);
-        int descColor = shortDescText.isEmpty() ? 0xFF888888 : 0xFFCCCCCC;
-        graphics.drawString(font, descPreview, descBtnX + 3, currentY, descColor, false);
-        currentY += LINE_HEIGHT + PADDING;
+            graphics.fill(descBtnX, currentY - 1, descBtnX + descBtnWidth, currentY + LINE_HEIGHT - 1,
+                         descHovered ? 0xFF404040 : 0xFF303030);
+            graphics.renderOutline(descBtnX, currentY - 1, descBtnWidth, LINE_HEIGHT, 0xFF606060);
 
-        // Stats su 3 righe
+            // Replace newlines with spaces for preview display
+            String descPreview = shortDescText.isEmpty() ? "(click to edit)" : truncate(shortDescText.replace('\n', ' '), descBtnWidth - 6, font);
+            int descColor = shortDescText.isEmpty() ? 0xFF888888 : 0xFFCCCCCC;
+            graphics.drawString(font, descPreview, descBtnX + 3, currentY, descColor, false);
+            currentY += LINE_HEIGHT + PADDING;
+        }
+
+        // Stats - same format for both building and room editing
+        // Server now sends room-specific stats when in room editing mode
         // Row 1: Blocks: <num>, Air: <num>
         String statsRow1 = "Blocks: " + pm.getBlockCount() + ", Air: " + pm.getAirBlockCount();
         graphics.drawString(font, statsRow1, x + PADDING, currentY, 0xFFCCCCCC, false);
@@ -574,7 +751,7 @@ public class EditingPanel {
         graphics.drawString(font, statsRow2, x + PADDING, currentY, 0xFFCCCCCC, false);
         currentY += LINE_HEIGHT;
 
-        // Row 3: Dimensions: WxHxD
+        // Row 3: Dimensions: WxHxD (or N/A for rooms)
         String statsRow3 = "Dimensions: " + pm.getBounds();
         graphics.drawString(font, statsRow3, x + PADDING, currentY, 0xFFCCCCCC, false);
         currentY += LINE_HEIGHT + PADDING;
@@ -646,22 +823,26 @@ public class EditingPanel {
         }
         currentY += BUTTON_HEIGHT + 2;
 
-        // Block removal section: dropdown + REMOVE button
-        java.util.List<PanelManager.BlockInfo> blockList = pm.getBlockList();
+        // Block/Entity removal section: dropdown + REMOVE button
+        java.util.List<RemovableItem> removableList = buildRemovableList(pm);
         int dropdownWidth = WIDTH - PADDING * 2 - 50 - 2; // Leave space for REMOVE button
         int removeBtnWidth = 50;
 
-        // Ensure selectedBlockIndex is valid for current block list
-        if (selectedBlockIndex >= blockList.size()) {
-            selectedBlockIndex = Math.max(0, blockList.size() - 1);
+        // Ensure selectedBlockIndex is valid for current list
+        if (selectedBlockIndex >= removableList.size()) {
+            selectedBlockIndex = Math.max(0, removableList.size() - 1);
             dropdownScrollOffset = 0;
         }
 
-        // Dropdown closed: show selected block
+        // Dropdown closed: show selected item
         int dropdownY = currentY;
-        String selectedText = blockList.isEmpty()
-            ? "(no blocks)"
-            : truncate(blockList.get(selectedBlockIndex).displayName() + " x" + blockList.get(selectedBlockIndex).count(), dropdownWidth - 15, font);
+        String selectedText;
+        if (removableList.isEmpty()) {
+            selectedText = "(empty)";
+        } else {
+            RemovableItem selected = removableList.get(selectedBlockIndex);
+            selectedText = truncate(selected.displayName() + " " + selected.extra(), dropdownWidth - 15, font);
+        }
 
         boolean dropdownHovered = effectiveMouseX >= x + PADDING && effectiveMouseX < x + PADDING + dropdownWidth &&
                                   effectiveMouseY >= dropdownY && effectiveMouseY < dropdownY + DROPDOWN_HEIGHT;
@@ -677,7 +858,7 @@ public class EditingPanel {
         int removeBtnX = x + PADDING + dropdownWidth + 2;
         boolean removeHovered = effectiveMouseX >= removeBtnX && effectiveMouseX < removeBtnX + removeBtnWidth &&
                                effectiveMouseY >= dropdownY && effectiveMouseY < dropdownY + DROPDOWN_HEIGHT;
-        boolean removeDisabled = blockList.isEmpty();
+        boolean removeDisabled = removableList.isEmpty();
 
         int removeBgColor;
         int removeTextColor;
@@ -699,8 +880,8 @@ public class EditingPanel {
         cachedDropdownWidth = dropdownWidth;
 
         // Calculate list position (opens UPWARD) and limit to screen bounds
-        if (dropdownOpen && !blockList.isEmpty()) {
-            int visibleItems = Math.min(blockList.size(), DROPDOWN_MAX_ITEMS);
+        if (dropdownOpen && !removableList.isEmpty()) {
+            int visibleItems = Math.min(removableList.size(), DROPDOWN_MAX_ITEMS);
             int listHeight = visibleItems * DROPDOWN_HEIGHT;
             // List goes upward from dropdown, with scroll if needed
             cachedDropdownListY = dropdownY - listHeight;
@@ -714,6 +895,84 @@ public class EditingPanel {
         }
 
         currentY += DROPDOWN_HEIGHT + PADDING;
+
+        // Room dropdown with EDIT/REMOVE buttons (only when NOT in room editing)
+        if (!inRoomEditing) {
+            java.util.List<PanelManager.RoomInfo> roomListData = pm.getRoomList();
+
+            // Room dropdown (opens upward)
+            int roomDropdownWidth = WIDTH - PADDING * 2 - 50 - 25 - 4; // Leave space for EDIT and DEL buttons
+            int editBtnWidth = 25;
+            int delBtnWidth = 50;
+
+            int roomDropdownY = currentY;
+
+            // Determine selected item text
+            String selectedRoomText;
+            if (selectedRoomIndex == 0) {
+                selectedRoomText = "+++ new +++";
+            } else {
+                int roomIdx = selectedRoomIndex - 1;
+                if (roomIdx < roomListData.size()) {
+                    PanelManager.RoomInfo ri = roomListData.get(roomIdx);
+                    selectedRoomText = truncate(ri.name() + " (" + ri.blockCount() + "b)", roomDropdownWidth - 15, font);
+                } else {
+                    selectedRoomText = "+++ new +++";
+                    selectedRoomIndex = 0;
+                }
+            }
+
+            boolean roomDropdownHovered = effectiveMouseX >= x + PADDING && effectiveMouseX < x + PADDING + roomDropdownWidth &&
+                                          effectiveMouseY >= roomDropdownY && effectiveMouseY < roomDropdownY + DROPDOWN_HEIGHT;
+
+            graphics.fill(x + PADDING, roomDropdownY, x + PADDING + roomDropdownWidth, roomDropdownY + DROPDOWN_HEIGHT,
+                         roomDropdownHovered ? 0xFF404040 : 0xFF303030);
+            graphics.renderOutline(x + PADDING, roomDropdownY, roomDropdownWidth, DROPDOWN_HEIGHT, 0xFF606060);
+            int roomTextColor = selectedRoomIndex == 0 ? 0xFF88FF88 : 0xFFCCCCCC;
+            graphics.drawString(font, selectedRoomText, x + PADDING + 3, roomDropdownY + 3, roomTextColor, false);
+            graphics.drawString(font, roomDropdownOpen ? "\u25BC" : "\u25B2", x + PADDING + roomDropdownWidth - 10, roomDropdownY + 3, 0xFF888888, false);
+
+            // Cache room dropdown position
+            cachedRoomDropdownX = x + PADDING;
+            cachedRoomDropdownY = roomDropdownY;
+            cachedRoomDropdownWidth = roomDropdownWidth;
+            int roomListCount = 1 + roomListData.size(); // +1 for "+++ new +++"
+            int visibleRoomItems = Math.min(roomListCount, DROPDOWN_MAX_ITEMS);
+            int roomListHeight = visibleRoomItems * DROPDOWN_HEIGHT;
+            cachedRoomDropdownListY = roomDropdownY - roomListHeight;
+            cachedRoomDropdownListHeight = roomListHeight;
+
+            // EDIT button
+            int editBtnX = x + PADDING + roomDropdownWidth + 2;
+            boolean editHovered = effectiveMouseX >= editBtnX && effectiveMouseX < editBtnX + editBtnWidth &&
+                                  effectiveMouseY >= roomDropdownY && effectiveMouseY < roomDropdownY + DROPDOWN_HEIGHT;
+            int editBgColor = editHovered ? 0xFF404060 : 0xFF303050;
+            graphics.fill(editBtnX, roomDropdownY, editBtnX + editBtnWidth, roomDropdownY + DROPDOWN_HEIGHT, editBgColor);
+            graphics.renderOutline(editBtnX, roomDropdownY, editBtnWidth, DROPDOWN_HEIGHT, 0xFF6060A0);
+            int editTextWidth = font.width("EDIT");
+            graphics.drawString(font, "EDIT", editBtnX + (editBtnWidth - editTextWidth) / 2, roomDropdownY + 3, 0xFFAAAAFF, false);
+
+            // DEL button (disabled for "+++ new +++")
+            int delBtnX = editBtnX + editBtnWidth + 2;
+            boolean delDisabled = selectedRoomIndex == 0;
+            boolean delHovered = !delDisabled && effectiveMouseX >= delBtnX && effectiveMouseX < delBtnX + delBtnWidth &&
+                                 effectiveMouseY >= roomDropdownY && effectiveMouseY < roomDropdownY + DROPDOWN_HEIGHT;
+            int delBgColor;
+            int delTextColor;
+            if (delDisabled) {
+                delBgColor = 0xFF202020;
+                delTextColor = 0xFF606060;
+            } else {
+                delBgColor = delHovered ? 0xFF604040 : 0xFF503030;
+                delTextColor = 0xFFFFAAAA;
+            }
+            graphics.fill(delBtnX, roomDropdownY, delBtnX + delBtnWidth, roomDropdownY + DROPDOWN_HEIGHT, delBgColor);
+            graphics.renderOutline(delBtnX, roomDropdownY, delBtnWidth, DROPDOWN_HEIGHT, delDisabled ? 0xFF404040 : 0xFFA06060);
+            int delTextWidth = font.width("DEL");
+            graphics.drawString(font, "DEL", delBtnX + (delBtnWidth - delTextWidth) / 2, roomDropdownY + 3, delTextColor, false);
+
+            currentY += DROPDOWN_HEIGHT + 2;
+        }
 
         // DONE buttons row: DONE, DONE noMOB (split in due pulsanti)
         String[] doneBtns = {"DONE", "DONE noMOB"};
@@ -733,9 +992,14 @@ public class EditingPanel {
             graphics.drawString(font, doneBtns[i], btnX + (doneBtnWidth - textWidth) / 2, btnY + 4, 0xFFFFAAAA, false);
         }
 
-        // Render dropdown list ON TOP of other elements (opens upward)
-        if (dropdownOpen && !blockList.isEmpty()) {
-            renderDropdownList(graphics, mouseX, mouseY, font, blockList);
+        // Render block/entity dropdown list ON TOP of other elements (opens upward)
+        if (dropdownOpen && !removableList.isEmpty()) {
+            renderDropdownList(graphics, mouseX, mouseY, font, removableList);
+        }
+
+        // Render room dropdown list ON TOP of other elements (opens upward)
+        if (roomDropdownOpen && !inRoomEditing) {
+            renderRoomDropdownList(graphics, mouseX, mouseY, font, pm.getRoomList());
         }
 
         // Render language dropdown list ON TOP of other elements (opens downward)
@@ -746,6 +1010,11 @@ public class EditingPanel {
         // Render short desc modal if open
         if (shortDescModalOpen) {
             renderShortDescModal(graphics, mouseX, mouseY, font);
+        }
+
+        // Render new room modal if open
+        if (newRoomModalOpen) {
+            renderNewRoomModal(graphics, mouseX, mouseY, font);
         }
     }
 
@@ -786,12 +1055,12 @@ public class EditingPanel {
      * The list opens UPWARD from the dropdown button.
      */
     private void renderDropdownList(GuiGraphics graphics, int mouseX, int mouseY, Font font,
-                                    java.util.List<PanelManager.BlockInfo> blockList) {
+                                    java.util.List<RemovableItem> itemList) {
         int visibleItems = cachedDropdownListHeight / DROPDOWN_HEIGHT;
         if (visibleItems <= 0) return;
 
         // Ensure we don't show more items than available
-        visibleItems = Math.min(visibleItems, blockList.size());
+        visibleItems = Math.min(visibleItems, itemList.size());
 
         // Background for dropdown list
         graphics.fill(cachedDropdownX, cachedDropdownListY,
@@ -801,9 +1070,9 @@ public class EditingPanel {
                               cachedDropdownWidth, cachedDropdownListHeight, 0xFF606060);
 
         // Render items (from bottom to top visually, but index order)
-        for (int i = 0; i < visibleItems && (i + dropdownScrollOffset) < blockList.size(); i++) {
+        for (int i = 0; i < visibleItems && (i + dropdownScrollOffset) < itemList.size(); i++) {
             int idx = i + dropdownScrollOffset;
-            PanelManager.BlockInfo block = blockList.get(idx);
+            RemovableItem item = itemList.get(idx);
             // Items are rendered from top of list area downward
             int itemY = cachedDropdownListY + i * DROPDOWN_HEIGHT;
 
@@ -819,12 +1088,14 @@ public class EditingPanel {
                              cachedDropdownX + cachedDropdownWidth - 1, itemY + DROPDOWN_HEIGHT, 0xFF353535);
             }
 
-            String itemText = truncate(block.displayName() + " x" + block.count(), cachedDropdownWidth - 15, font);
-            graphics.drawString(font, itemText, cachedDropdownX + 3, itemY + 3, 0xFFCCCCCC, false);
+            // Display format: "Name extra" - entities shown with yellow text
+            String itemText = truncate(item.displayName() + " " + item.extra(), cachedDropdownWidth - 15, font);
+            int textColor = item.isEntity() ? 0xFFFFFF88 : 0xFFCCCCCC;  // Yellow for entities
+            graphics.drawString(font, itemText, cachedDropdownX + 3, itemY + 3, textColor, false);
         }
 
         // Draw scrollbar if there are more items than visible
-        if (blockList.size() > visibleItems) {
+        if (itemList.size() > visibleItems) {
             int scrollbarWidth = 4;
             int scrollbarX = cachedDropdownX + cachedDropdownWidth - scrollbarWidth - 1;
 
@@ -833,12 +1104,131 @@ public class EditingPanel {
                          scrollbarX + scrollbarWidth, cachedDropdownListY + cachedDropdownListHeight - 1, 0xFF303030);
 
             // Scrollbar thumb
-            int maxScroll = blockList.size() - visibleItems;
-            int thumbHeight = Math.max(10, (visibleItems * cachedDropdownListHeight) / blockList.size());
+            int maxScroll = itemList.size() - visibleItems;
+            int thumbHeight = Math.max(10, (visibleItems * cachedDropdownListHeight) / itemList.size());
             int thumbY = cachedDropdownListY + 1 +
                         (int)((cachedDropdownListHeight - 2 - thumbHeight) * ((float)dropdownScrollOffset / maxScroll));
             graphics.fill(scrollbarX, thumbY, scrollbarX + scrollbarWidth, thumbY + thumbHeight, 0xFF606060);
         }
+    }
+
+    /**
+     * Render the room dropdown list on top of other elements (opens upward).
+     */
+    private void renderRoomDropdownList(GuiGraphics graphics, int mouseX, int mouseY, Font font,
+                                        java.util.List<PanelManager.RoomInfo> roomList) {
+        int totalItems = 1 + roomList.size(); // +1 for "+++ new +++"
+        int visibleItems = cachedRoomDropdownListHeight / DROPDOWN_HEIGHT;
+        if (visibleItems <= 0) return;
+        visibleItems = Math.min(visibleItems, totalItems);
+
+        // Background
+        graphics.fill(cachedRoomDropdownX, cachedRoomDropdownListY,
+                     cachedRoomDropdownX + cachedRoomDropdownWidth,
+                     cachedRoomDropdownListY + cachedRoomDropdownListHeight, 0xF0202020);
+        graphics.renderOutline(cachedRoomDropdownX, cachedRoomDropdownListY,
+                              cachedRoomDropdownWidth, cachedRoomDropdownListHeight, 0xFF606060);
+
+        // Render items
+        for (int i = 0; i < visibleItems; i++) {
+            int idx = i;
+            int itemY = cachedRoomDropdownListY + i * DROPDOWN_HEIGHT;
+
+            boolean itemHovered = mouseX >= cachedRoomDropdownX && mouseX < cachedRoomDropdownX + cachedRoomDropdownWidth &&
+                                  mouseY >= itemY && mouseY < itemY + DROPDOWN_HEIGHT;
+            boolean itemSelected = idx == selectedRoomIndex;
+
+            if (itemSelected) {
+                graphics.fill(cachedRoomDropdownX + 1, itemY,
+                             cachedRoomDropdownX + cachedRoomDropdownWidth - 1, itemY + DROPDOWN_HEIGHT, 0xFF404060);
+            } else if (itemHovered) {
+                graphics.fill(cachedRoomDropdownX + 1, itemY,
+                             cachedRoomDropdownX + cachedRoomDropdownWidth - 1, itemY + DROPDOWN_HEIGHT, 0xFF353535);
+            }
+
+            String itemText;
+            int itemColor;
+            if (idx == 0) {
+                itemText = "+++ new +++";
+                itemColor = 0xFF88FF88;
+            } else {
+                int roomIdx = idx - 1;
+                if (roomIdx < roomList.size()) {
+                    PanelManager.RoomInfo ri = roomList.get(roomIdx);
+                    itemText = truncate(ri.name() + " (" + ri.blockCount() + "b)", cachedRoomDropdownWidth - 10, font);
+                    itemColor = 0xFFCCCCCC;
+                } else {
+                    itemText = "???";
+                    itemColor = 0xFF888888;
+                }
+            }
+            graphics.drawString(font, itemText, cachedRoomDropdownX + 3, itemY + 3, itemColor, false);
+        }
+    }
+
+    /**
+     * Render the new room modal dialog.
+     */
+    private void renderNewRoomModal(GuiGraphics graphics, int mouseX, int mouseY, Font font) {
+        Minecraft mc = Minecraft.getInstance();
+        int screenW = mc.getWindow().getGuiScaledWidth();
+        int screenH = mc.getWindow().getGuiScaledHeight();
+
+        int modalW = 250;
+        int modalH = 100;
+        int modalX = (screenW - modalW) / 2;
+        int modalY = (screenH - modalH) / 2;
+
+        // Background
+        graphics.fill(modalX, modalY, modalX + modalW, modalY + modalH, 0xF0101010);
+        graphics.renderOutline(modalX, modalY, modalW, modalH, 0xFF606060);
+
+        // Title
+        graphics.drawString(font, "Create new room", modalX + 5, modalY + 5, 0xFFFFAA00, false);
+
+        // Name label and input field using EditBoxHelper
+        graphics.drawString(font, "Name:", modalX + 5, modalY + 22, 0xFF808080, false);
+        int inputX = modalX + 40;
+        int inputW = modalW - 45;
+
+        // Position and render the name box
+        newRoomNameBox.setPosition(inputX, modalY + 19);
+        newRoomNameBox.setWidth(inputW);
+        newRoomNameBox.render(graphics, mouseX, mouseY, 0);
+
+        // Update ID preview when value changes
+        String currentName = newRoomNameBox.getValue();
+        newRoomIdPreview = generateRoomId(currentName);
+
+        // ID preview
+        graphics.drawString(font, "ID:", modalX + 5, modalY + 38, 0xFF808080, false);
+        graphics.drawString(font, newRoomIdPreview.isEmpty() ? "(auto-generated)" : newRoomIdPreview, inputX + 2, modalY + 38, 0xFF88FF88, false);
+
+        // Buttons
+        int btnW = 60;
+        int btnH = 18;
+        int btnY = modalY + modalH - btnH - 8;
+
+        // CREATE button
+        int createBtnX = modalX + modalW / 2 - btnW - 10;
+        boolean createHovered = mouseX >= createBtnX && mouseX < createBtnX + btnW &&
+                               mouseY >= btnY && mouseY < btnY + btnH;
+        boolean createDisabled = currentName.isEmpty();
+        int createBgColor = createDisabled ? 0xFF202020 : (createHovered ? 0xFF406040 : 0xFF305030);
+        int createTextColor = createDisabled ? 0xFF606060 : 0xFF88FF88;
+        graphics.fill(createBtnX, btnY, createBtnX + btnW, btnY + btnH, createBgColor);
+        graphics.renderOutline(createBtnX, btnY, btnW, btnH, createDisabled ? 0xFF404040 : 0xFF60A060);
+        int createTextW = font.width("CREATE");
+        graphics.drawString(font, "CREATE", createBtnX + (btnW - createTextW) / 2, btnY + 5, createTextColor, false);
+
+        // CANCEL button
+        int cancelBtnX = modalX + modalW / 2 + 10;
+        boolean cancelHovered = mouseX >= cancelBtnX && mouseX < cancelBtnX + btnW &&
+                               mouseY >= btnY && mouseY < btnY + btnH;
+        graphics.fill(cancelBtnX, btnY, cancelBtnX + btnW, btnY + btnH, cancelHovered ? 0xFF604040 : 0xFF503030);
+        graphics.renderOutline(cancelBtnX, btnY, btnW, btnH, 0xFFA06060);
+        int cancelTextW = font.width("CANCEL");
+        graphics.drawString(font, "CANCEL", cancelBtnX + (btnW - cancelTextW) / 2, btnY + 5, 0xFFFF8888, false);
     }
 
     private void renderShortDescModal(GuiGraphics graphics, int mouseX, int mouseY, Font font) {
@@ -1187,6 +1577,11 @@ public class EditingPanel {
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button != 0) return false;
 
+        // Handle new room modal clicks first
+        if (newRoomModalOpen) {
+            return handleNewRoomModalClick(mouseX, mouseY);
+        }
+
         // Handle short desc modal clicks first
         if (shortDescModalOpen) {
             return handleShortDescModalClick(mouseX, mouseY);
@@ -1219,6 +1614,29 @@ public class EditingPanel {
             return true;
         }
 
+        // Handle room dropdown clicks using cached positions (must be before other elements)
+        if (roomDropdownOpen) {
+            PanelManager pm = PanelManager.getInstance();
+            java.util.List<PanelManager.RoomInfo> roomListData = pm.getRoomList();
+            int totalItems = 1 + roomListData.size();
+            int visibleItems = Math.min(totalItems, DROPDOWN_MAX_ITEMS);
+            int listHeight = visibleItems * DROPDOWN_HEIGHT;
+
+            if (mouseX >= cachedRoomDropdownX && mouseX < cachedRoomDropdownX + cachedRoomDropdownWidth &&
+                mouseY >= cachedRoomDropdownListY && mouseY < cachedRoomDropdownListY + listHeight) {
+                // Click on room dropdown list item
+                int itemIndex = (int)((mouseY - cachedRoomDropdownListY) / DROPDOWN_HEIGHT);
+                if (itemIndex >= 0 && itemIndex < totalItems) {
+                    selectedRoomIndex = itemIndex;
+                    roomDropdownOpen = false;
+                }
+                return true;
+            }
+            // Click outside dropdown - close it
+            roomDropdownOpen = false;
+            return true;
+        }
+
         // Check language dropdown button click
         String langDisplay = getLangDisplayName(selectedLangId) + getLangIndicator(selectedLangId);
         int langWidth = font.width(langDisplay) + 12;
@@ -1247,24 +1665,49 @@ public class EditingPanel {
         }
 
         PanelManager pm = PanelManager.getInstance();
+        boolean inRoomEditing = pm.isInRoom();
 
         int currentY = y + PADDING + LINE_HEIGHT + 2;
 
         // ID field click
-        if (rdnsBox.mouseClicked(mouseX, mouseY, button)) {
-            // Save original value for cancel
-            originalRdns = pm.getEditingConstructionId();
-            nameBox.setFocused(false);
-            return true;
+        if (inRoomEditing) {
+            // Room ID field (editable)
+            if (roomIdBox.mouseClicked(mouseX, mouseY, button)) {
+                // Save original value for cancel
+                originalRoomId = pm.getCurrentRoomId();
+                roomNameBox.setFocused(false);
+                roomRenameError = "";  // Clear error on new edit
+                return true;
+            }
+        } else {
+            // Construction ID field (editable)
+            if (rdnsBox.mouseClicked(mouseX, mouseY, button)) {
+                // Save original value for cancel
+                originalRdns = pm.getEditingConstructionId();
+                nameBox.setFocused(false);
+                return true;
+            }
         }
         currentY += LINE_HEIGHT + 2;
 
         // Name field click
-        if (nameBox.mouseClicked(mouseX, mouseY, button)) {
-            // Save original value for cancel
-            originalName = pm.getEditingTitle();
-            rdnsBox.setFocused(false);
-            return true;
+        if (inRoomEditing) {
+            // Room name field (editable)
+            if (roomNameBox.mouseClicked(mouseX, mouseY, button)) {
+                // Save original value for cancel
+                originalRoomName = pm.getCurrentRoomName();
+                roomIdBox.setFocused(false);
+                roomRenameError = "";  // Clear error on new edit
+                return true;
+            }
+        } else {
+            // Construction name field (editable)
+            if (nameBox.mouseClicked(mouseX, mouseY, button)) {
+                // Save original value for cancel
+                originalName = pm.getEditingTitle();
+                rdnsBox.setFocused(false);
+                return true;
+            }
         }
 
         // Cancel field editing if clicking elsewhere in panel
@@ -1276,24 +1719,39 @@ public class EditingPanel {
             nameBox.setValue(originalName);
             nameBox.setFocused(false);
         }
+        if (roomIdBox != null && roomIdBox.isFocused()) {
+            roomIdBox.setValue(originalRoomId);
+            roomIdBox.setFocused(false);
+        }
+        if (roomNameBox != null && roomNameBox.isFocused()) {
+            roomNameBox.setValue(originalRoomName);
+            roomNameBox.setFocused(false);
+        }
 
         currentY += LINE_HEIGHT + 2;
 
-        // Desc button click
-        String descLabel = "Short Desc.: ";
-        int descLabelWidth = font.width(descLabel);
-        int descBtnX = x + PADDING + descLabelWidth;
-        int descBtnWidth = WIDTH - PADDING * 2 - descLabelWidth;
-        if (mouseX >= descBtnX && mouseX < descBtnX + descBtnWidth &&
-            mouseY >= currentY && mouseY < currentY + LINE_HEIGHT) {
-            shortDescModalOpen = true;
-            shortDescCursorPos = shortDescText.length();
-            shortDescScrollOffset = 0; // Reset scroll when opening modal
-            return true;
+        // Skip room rename error row if present
+        if (inRoomEditing && !roomRenameError.isEmpty()) {
+            currentY += LINE_HEIGHT + 2;
         }
-        currentY += LINE_HEIGHT + PADDING;
 
-        // Skip stats section (3 data rows)
+        // Desc button click - only for building editing, not room
+        if (!inRoomEditing) {
+            String descLabel = "Short Desc.: ";
+            int descLabelWidth = font.width(descLabel);
+            int descBtnX = x + PADDING + descLabelWidth;
+            int descBtnWidth = WIDTH - PADDING * 2 - descLabelWidth;
+            if (mouseX >= descBtnX && mouseX < descBtnX + descBtnWidth &&
+                mouseY >= currentY && mouseY < currentY + LINE_HEIGHT) {
+                shortDescModalOpen = true;
+                shortDescCursorPos = shortDescText.length();
+                shortDescScrollOffset = 0; // Reset scroll when opening modal
+                return true;
+            }
+            currentY += LINE_HEIGHT + PADDING;
+        }
+
+        // Skip stats section (3 rows for both room and building editing)
         currentY += LINE_HEIGHT * 3 + PADDING;
 
         // Mode button
@@ -1357,23 +1815,23 @@ public class EditingPanel {
         }
         currentY += BUTTON_HEIGHT + 2;
 
-        // Block removal section: dropdown + REMOVE button
-        java.util.List<PanelManager.BlockInfo> blockList = PanelManager.getInstance().getBlockList();
+        // Block/Entity removal section: dropdown + REMOVE button
+        java.util.List<RemovableItem> removableList = buildRemovableList(PanelManager.getInstance());
         int dropdownWidth = WIDTH - PADDING * 2 - 50 - 2;
         int removeBtnWidth = 50;
         int dropdownY = currentY;
 
         // Handle dropdown open list clicks first (list opens UPWARD)
-        if (dropdownOpen && !blockList.isEmpty()) {
+        if (dropdownOpen && !removableList.isEmpty()) {
             // Use cached positions from last render
             int visibleItems = cachedDropdownListHeight / DROPDOWN_HEIGHT;
-            visibleItems = Math.min(visibleItems, blockList.size());
+            visibleItems = Math.min(visibleItems, removableList.size());
 
             if (mouseX >= cachedDropdownX && mouseX < cachedDropdownX + cachedDropdownWidth &&
                 mouseY >= cachedDropdownListY && mouseY < cachedDropdownListY + cachedDropdownListHeight) {
                 // Click on dropdown list item
                 int itemIndex = (int)((mouseY - cachedDropdownListY) / DROPDOWN_HEIGHT) + dropdownScrollOffset;
-                if (itemIndex >= 0 && itemIndex < blockList.size()) {
+                if (itemIndex >= 0 && itemIndex < removableList.size()) {
                     selectedBlockIndex = itemIndex;
                     dropdownOpen = false;
                 }
@@ -1384,12 +1842,12 @@ public class EditingPanel {
         // Dropdown toggle click
         if (mouseX >= x + PADDING && mouseX < x + PADDING + dropdownWidth &&
             mouseY >= dropdownY && mouseY < dropdownY + DROPDOWN_HEIGHT) {
-            if (!blockList.isEmpty()) {
+            if (!removableList.isEmpty()) {
                 dropdownOpen = !dropdownOpen;
                 if (dropdownOpen) {
                     // Position scroll to show selected item
-                    int visibleItems = Math.min(blockList.size(), DROPDOWN_MAX_ITEMS);
-                    int maxScroll = Math.max(0, blockList.size() - visibleItems);
+                    int visibleItems = Math.min(removableList.size(), DROPDOWN_MAX_ITEMS);
+                    int maxScroll = Math.max(0, removableList.size() - visibleItems);
                     // Center the selected item if possible
                     dropdownScrollOffset = Math.max(0, Math.min(maxScroll, selectedBlockIndex - visibleItems / 2));
                 }
@@ -1401,13 +1859,15 @@ public class EditingPanel {
         int removeBtnX = x + PADDING + dropdownWidth + 2;
         if (mouseX >= removeBtnX && mouseX < removeBtnX + removeBtnWidth &&
             mouseY >= dropdownY && mouseY < dropdownY + DROPDOWN_HEIGHT) {
-            if (!blockList.isEmpty() && selectedBlockIndex < blockList.size()) {
-                String blockId = blockList.get(selectedBlockIndex).blockId();
-                ClientPlayNetworking.send(new GuiActionPacket("remove_block", blockId, ""));
+            if (!removableList.isEmpty() && selectedBlockIndex < removableList.size()) {
+                RemovableItem item = removableList.get(selectedBlockIndex);
+                // Send appropriate action based on item type
+                String action = item.isEntity() ? "remove_entity" : "remove_block";
+                ClientPlayNetworking.send(new GuiActionPacket(action, item.id(), ""));
                 dropdownOpen = false;
                 // Reset selection to first item if current was removed
-                if (selectedBlockIndex >= blockList.size() - 1) {
-                    selectedBlockIndex = Math.max(0, blockList.size() - 2);
+                if (selectedBlockIndex >= removableList.size() - 1) {
+                    selectedBlockIndex = Math.max(0, removableList.size() - 2);
                 }
             }
             return true;
@@ -1421,20 +1881,151 @@ public class EditingPanel {
 
         currentY += DROPDOWN_HEIGHT + PADDING;
 
+        // Room dropdown with EDIT/DEL buttons (only when NOT in room editing)
+        if (!inRoomEditing) {
+            java.util.List<PanelManager.RoomInfo> roomListData = pm.getRoomList();
+            int roomDropdownWidth = WIDTH - PADDING * 2 - 50 - 25 - 4;
+            int editBtnWidth = 25;
+            int delBtnWidth = 50;
+            int roomDropdownY = currentY;
+
+            // Room dropdown toggle click
+            if (mouseX >= x + PADDING && mouseX < x + PADDING + roomDropdownWidth &&
+                mouseY >= roomDropdownY && mouseY < roomDropdownY + DROPDOWN_HEIGHT) {
+                roomDropdownOpen = !roomDropdownOpen;
+                return true;
+            }
+
+            // EDIT button click
+            int editBtnX = x + PADDING + roomDropdownWidth + 2;
+            if (mouseX >= editBtnX && mouseX < editBtnX + editBtnWidth &&
+                mouseY >= roomDropdownY && mouseY < roomDropdownY + DROPDOWN_HEIGHT) {
+                if (selectedRoomIndex == 0) {
+                    // Open new room modal
+                    newRoomModalOpen = true;
+                    newRoomNameBox.setValue("");
+                    newRoomNameBox.setFocused(true);
+                    newRoomIdPreview = "";
+                } else {
+                    // Edit existing room
+                    int roomIdx = selectedRoomIndex - 1;
+                    if (roomIdx < roomListData.size()) {
+                        String roomId = roomListData.get(roomIdx).id();
+                        ClientPlayNetworking.send(new GuiActionPacket("room_edit", roomId, ""));
+                    }
+                }
+                return true;
+            }
+
+            // DEL button click
+            int delBtnX = editBtnX + editBtnWidth + 2;
+            if (selectedRoomIndex > 0 && mouseX >= delBtnX && mouseX < delBtnX + delBtnWidth &&
+                mouseY >= roomDropdownY && mouseY < roomDropdownY + DROPDOWN_HEIGHT) {
+                int roomIdx = selectedRoomIndex - 1;
+                if (roomIdx < roomListData.size()) {
+                    String roomId = roomListData.get(roomIdx).id();
+                    ClientPlayNetworking.send(new GuiActionPacket("room_delete", roomId, ""));
+                    // Reset selection
+                    selectedRoomIndex = 0;
+                }
+                return true;
+            }
+
+            currentY += DROPDOWN_HEIGHT + 2;
+        }
+
         // DONE buttons row: DONE, DONE noMOB
+        // Behavior differs based on editing mode:
+        // - In room editing: DONE exits room and returns to building editing
+        // - In building editing: DONE exits editing completely
         int doneBtnWidth = (WIDTH - PADDING * 2 - 2) / 2;
         if (mouseX >= x + PADDING && mouseX < x + PADDING + doneBtnWidth &&
             mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
-            ClientPlayNetworking.send(new GuiActionPacket("done", "", ""));
+            if (inRoomEditing) {
+                // Exit room and return to building editing
+                ClientPlayNetworking.send(new GuiActionPacket("room_exit", "", ""));
+            } else {
+                // Exit building editing completely
+                ClientPlayNetworking.send(new GuiActionPacket("done", "", ""));
+            }
             return true;
         }
         if (mouseX >= x + PADDING + doneBtnWidth + 2 && mouseX < x + WIDTH - PADDING &&
             mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
-            ClientPlayNetworking.send(new GuiActionPacket("done_nomob", "", ""));
+            if (inRoomEditing) {
+                // In room editing: clear entities from room then exit room
+                ClientPlayNetworking.send(new GuiActionPacket("room_exit_nomob", "", ""));
+            } else {
+                // Exit building editing completely without saving entities
+                ClientPlayNetworking.send(new GuiActionPacket("done_nomob", "", ""));
+            }
             return true;
         }
 
         return true; // Consume click within panel
+    }
+
+    /**
+     * Handle clicks on the new room modal.
+     */
+    private boolean handleNewRoomModalClick(double mouseX, double mouseY) {
+        Minecraft mc = Minecraft.getInstance();
+        int screenW = mc.getWindow().getGuiScaledWidth();
+        int screenH = mc.getWindow().getGuiScaledHeight();
+
+        int modalW = 250;
+        int modalH = 100;
+        int modalX = (screenW - modalW) / 2;
+        int modalY = (screenH - modalH) / 2;
+
+        // Check if click is outside modal
+        if (mouseX < modalX || mouseX > modalX + modalW ||
+            mouseY < modalY || mouseY > modalY + modalH) {
+            // Close modal
+            newRoomModalOpen = false;
+            newRoomNameBox.setValue("");
+            newRoomNameBox.setFocused(false);
+            newRoomIdPreview = "";
+            return true;
+        }
+
+        // Handle EditBox click
+        if (newRoomNameBox.mouseClicked(mouseX, mouseY, 0)) {
+            return true;
+        }
+
+        int btnW = 60;
+        int btnH = 18;
+        int btnY = modalY + modalH - btnH - 8;
+
+        // CREATE button
+        int createBtnX = modalX + modalW / 2 - btnW - 10;
+        if (mouseX >= createBtnX && mouseX < createBtnX + btnW &&
+            mouseY >= btnY && mouseY < btnY + btnH) {
+            String roomName = newRoomNameBox.getValue();
+            if (!roomName.isEmpty() && !newRoomIdPreview.isEmpty()) {
+                // Send create room command
+                ClientPlayNetworking.send(new GuiActionPacket("room_create", newRoomIdPreview, roomName));
+                newRoomModalOpen = false;
+                newRoomNameBox.setValue("");
+                newRoomNameBox.setFocused(false);
+                newRoomIdPreview = "";
+            }
+            return true;
+        }
+
+        // CANCEL button
+        int cancelBtnX = modalX + modalW / 2 + 10;
+        if (mouseX >= cancelBtnX && mouseX < cancelBtnX + btnW &&
+            mouseY >= btnY && mouseY < btnY + btnH) {
+            newRoomModalOpen = false;
+            newRoomNameBox.setValue("");
+            newRoomNameBox.setFocused(false);
+            newRoomIdPreview = "";
+            return true;
+        }
+
+        return true; // Consume click within modal
     }
 
     private boolean handleShortDescModalClick(double mouseX, double mouseY) {
@@ -1668,6 +2259,33 @@ public class EditingPanel {
     }
 
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // Handle new room modal
+        if (newRoomModalOpen) {
+            // Escape - close modal
+            if (keyCode == 256) {
+                newRoomModalOpen = false;
+                newRoomNameBox.setValue("");
+                newRoomNameBox.setFocused(false);
+                newRoomIdPreview = "";
+                return true;
+            }
+            // Enter - create room
+            String roomName = newRoomNameBox.getValue();
+            if (keyCode == 257 && !roomName.isEmpty() && !newRoomIdPreview.isEmpty()) {
+                ClientPlayNetworking.send(new GuiActionPacket("room_create", newRoomIdPreview, roomName));
+                newRoomModalOpen = false;
+                newRoomNameBox.setValue("");
+                newRoomNameBox.setFocused(false);
+                newRoomIdPreview = "";
+                return true;
+            }
+            // Delegate to EditBox
+            if (newRoomNameBox.keyPressed(keyCode, scanCode, modifiers)) {
+                return true;
+            }
+            return true;
+        }
+
         // Handle short desc modal
         if (shortDescModalOpen) {
             boolean isCtrl = (modifiers & 2) != 0;  // GLFW_MOD_CONTROL = 2
@@ -1857,10 +2475,71 @@ public class EditingPanel {
             return nameBox.keyPressed(keyCode, scanCode, modifiers);
         }
 
+        // Handle Room ID box (editing existing room)
+        if (roomIdBox != null && roomIdBox.isFocused()) {
+            // Escape - cancel editing and restore
+            if (keyCode == 256) {
+                roomIdBox.setValue(originalRoomId);
+                roomIdBox.setFocused(false);
+                roomRenameError = "";
+                return true;
+            }
+            // Enter - confirm editing (rename room by ID)
+            if (keyCode == 257) {
+                String newId = roomIdBox.getValue();
+                if (!newId.isEmpty() && !newId.equals(originalRoomId)) {
+                    // Send room rename: action = room_rename, targetId = oldId, extraData = newId|newName
+                    String newName = roomNameBox != null ? roomNameBox.getValue() : originalRoomName;
+                    ClientPlayNetworking.send(new GuiActionPacket("room_rename", originalRoomId, newId + "|" + newName));
+                }
+                roomIdBox.setFocused(false);
+                return true;
+            }
+            return roomIdBox.keyPressed(keyCode, scanCode, modifiers);
+        }
+
+        // Handle Room Name box (editing existing room)
+        if (roomNameBox != null && roomNameBox.isFocused()) {
+            // Escape - cancel editing and restore
+            if (keyCode == 256) {
+                roomNameBox.setValue(originalRoomName);
+                roomNameBox.setFocused(false);
+                roomRenameError = "";
+                return true;
+            }
+            // Enter - confirm editing (rename room by name, also updates ID)
+            if (keyCode == 257) {
+                String newName = roomNameBox.getValue();
+                if (!newName.isEmpty()) {
+                    // Generate new ID from name
+                    String newId = generateRoomId(newName);
+                    // Send room rename: action = room_rename, targetId = oldId, extraData = newId|newName
+                    ClientPlayNetworking.send(new GuiActionPacket("room_rename", originalRoomId, newId + "|" + newName));
+                }
+                roomNameBox.setFocused(false);
+                return true;
+            }
+            // When typing in name box, update the ID box to show the generated ID preview
+            boolean result = roomNameBox.keyPressed(keyCode, scanCode, modifiers);
+            if (result && roomIdBox != null) {
+                String newId = generateRoomId(roomNameBox.getValue());
+                roomIdBox.setValue(newId);
+            }
+            return result;
+        }
+
         return false;
     }
 
     public boolean charTyped(char chr, int modifiers) {
+        // Handle new room modal
+        if (newRoomModalOpen) {
+            if (newRoomNameBox.charTyped(chr, modifiers)) {
+                return true;
+            }
+            return true;
+        }
+
         // Handle short desc modal
         if (shortDescModalOpen) {
             if (chr >= 32) {
@@ -1886,6 +2565,21 @@ public class EditingPanel {
         // Handle Name box
         if (nameBox != null && nameBox.isFocused()) {
             return nameBox.charTyped(chr, modifiers);
+        }
+
+        // Handle Room ID box - force lowercase
+        if (roomIdBox != null && roomIdBox.isFocused()) {
+            return roomIdBox.charTyped(Character.toLowerCase(chr), modifiers);
+        }
+
+        // Handle Room Name box - also update ID box when typing
+        if (roomNameBox != null && roomNameBox.isFocused()) {
+            boolean result = roomNameBox.charTyped(chr, modifiers);
+            if (result && roomIdBox != null) {
+                String newId = generateRoomId(roomNameBox.getValue());
+                roomIdBox.setValue(newId);
+            }
+            return result;
         }
 
         return false;
@@ -1939,8 +2633,8 @@ public class EditingPanel {
             return false;
         }
 
-        java.util.List<PanelManager.BlockInfo> blockList = PanelManager.getInstance().getBlockList();
-        if (blockList.isEmpty()) {
+        java.util.List<RemovableItem> removableList = buildRemovableList(PanelManager.getInstance());
+        if (removableList.isEmpty()) {
             return false;
         }
 
@@ -1949,8 +2643,8 @@ public class EditingPanel {
             mouseY >= cachedDropdownListY && mouseY < cachedDropdownListY + cachedDropdownListHeight) {
 
             int visibleItems = cachedDropdownListHeight / DROPDOWN_HEIGHT;
-            visibleItems = Math.min(visibleItems, blockList.size());
-            int maxScroll = Math.max(0, blockList.size() - visibleItems);
+            visibleItems = Math.min(visibleItems, removableList.size());
+            int maxScroll = Math.max(0, removableList.size() - visibleItems);
 
             // Scroll: negative = scroll down (show items with higher index), positive = scroll up
             if (verticalAmount > 0) {

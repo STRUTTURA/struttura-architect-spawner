@@ -27,8 +27,14 @@ public class WireframeRenderer {
     // Colore fucsia per il wireframe costruzione (packed ARGB)
     private static final int CONSTRUCTION_COLOR = 0xFFFF00FF; // Alpha, Red, Green, Blue
 
+    // Colore arancione per il wireframe costruzione quando in editing stanza (packed ARGB)
+    private static final int ROOM_CONSTRUCTION_COLOR = 0xFFFF8800; // Arancione
+
     // Colore rosso per il wireframe dei singoli blocchi (packed ARGB)
     private static final int BLOCK_COLOR = 0xFFFF0000; // Rosso
+
+    // Colore giallo acceso per i blocchi della stanza (packed ARGB)
+    private static final int ROOM_BLOCK_COLOR = 0xFFFFFF00; // Giallo brillante
 
     // Colore ciano per il wireframe selezione (packed ARGB)
     private static final int SELECTION_COLOR = 0xFF00FFFF;
@@ -46,6 +52,12 @@ public class WireframeRenderer {
     // Posizioni dei blocchi di anteprima (blocchi che verranno aggiunti - ciano)
     private static List<BlockPos> previewPositions = new ArrayList<>();
 
+    // Posizioni dei blocchi modificati nella stanza corrente (verde)
+    private static List<BlockPos> roomBlockPositions = new ArrayList<>();
+
+    // Flag che indica se siamo in editing di una stanza
+    private static boolean inRoomEditing = false;
+
     /**
      * Inizializza il renderer registrando l'evento di rendering.
      */
@@ -57,7 +69,8 @@ public class WireframeRenderer {
         // Non renderizzare se non ci sono dati
         boolean hasBlocks = !blockPositions.isEmpty();
         boolean hasPreview = !previewPositions.isEmpty();
-        if (!constructionData.active && !selectionData.active && !hasBlocks && !hasPreview) {
+        boolean hasRoomBlocks = !roomBlockPositions.isEmpty();
+        if (!constructionData.active && !selectionData.active && !hasBlocks && !hasPreview && !hasRoomBlocks) {
             return;
         }
 
@@ -77,7 +90,8 @@ public class WireframeRenderer {
         poseStack.pushPose();
 
         // Renderizza wireframe per i blocchi overlay (colore ROSSO, leggermente più grande del blocco)
-        if (constructionData.active && hasBlocks) {
+        // NON renderizzare quando siamo in editing stanza - mostra solo i blocchi della room (gialli)
+        if (constructionData.active && hasBlocks && !inRoomEditing) {
             for (BlockPos pos : blockPositions) {
                 double distSq = playerPos.distSqr(pos);
                 if (distSq >= fadeEndSq) continue;  // Skip blocchi troppo lontani
@@ -92,6 +106,25 @@ public class WireframeRenderer {
                     pos.getX() + 1 + BLOCK_OUTSET, pos.getY() + 1 + BLOCK_OUTSET, pos.getZ() + 1 + BLOCK_OUTSET
                 );
                 renderShapeWithAlpha(poseStack, lineBuffer, box, cameraPos, BLOCK_COLOR, alpha);
+            }
+        }
+
+        // Renderizza wireframe per i blocchi modificati nella stanza (colore GIALLO)
+        if (inRoomEditing && hasRoomBlocks) {
+            for (BlockPos pos : roomBlockPositions) {
+                double distSq = playerPos.distSqr(pos);
+                if (distSq >= fadeEndSq) continue;
+
+                float alpha = 1.0f;
+                if (distSq > fadeStartSq) {
+                    alpha = 1.0f - (float)((distSq - fadeStartSq) / (double)(fadeEndSq - fadeStartSq));
+                }
+
+                AABB box = new AABB(
+                    pos.getX() - BLOCK_OUTSET, pos.getY() - BLOCK_OUTSET, pos.getZ() - BLOCK_OUTSET,
+                    pos.getX() + 1 + BLOCK_OUTSET, pos.getY() + 1 + BLOCK_OUTSET, pos.getZ() + 1 + BLOCK_OUTSET
+                );
+                renderShapeWithAlpha(poseStack, lineBuffer, box, cameraPos, ROOM_BLOCK_COLOR, alpha);
             }
         }
 
@@ -115,6 +148,7 @@ public class WireframeRenderer {
         }
 
         // Renderizza wireframe costruzione (se attivo, leggermente più grande per essere sempre visibile)
+        // Usa colore arancione se siamo in editing stanza
         if (constructionData.active) {
             BlockPos min = constructionData.min;
             BlockPos max = constructionData.max;
@@ -122,7 +156,8 @@ public class WireframeRenderer {
                 min.getX() - BLOCK_OUTSET, min.getY() - BLOCK_OUTSET, min.getZ() - BLOCK_OUTSET,
                 max.getX() + 1 + BLOCK_OUTSET, max.getY() + 1 + BLOCK_OUTSET, max.getZ() + 1 + BLOCK_OUTSET
             );
-            renderShape(poseStack, lineBuffer, box, cameraPos, CONSTRUCTION_COLOR);
+            int wireframeColor = inRoomEditing ? ROOM_CONSTRUCTION_COLOR : CONSTRUCTION_COLOR;
+            renderShape(poseStack, lineBuffer, box, cameraPos, wireframeColor);
         }
 
         // Renderizza wireframe selezione (se ha entrambe le posizioni, leggermente più grande per essere sempre visibile)
@@ -223,6 +258,29 @@ public class WireframeRenderer {
     }
 
     /**
+     * Imposta le posizioni dei blocchi modificati nella stanza.
+     * @param positions blocchi nel delta della stanza
+     */
+    public static void setRoomBlockPositions(List<BlockPos> positions) {
+        roomBlockPositions = new ArrayList<>(positions);
+    }
+
+    /**
+     * Imposta se siamo in editing di una stanza.
+     * @param inRoom true se in editing stanza
+     */
+    public static void setInRoomEditing(boolean inRoom) {
+        inRoomEditing = inRoom;
+    }
+
+    /**
+     * Verifica se siamo in editing di una stanza.
+     */
+    public static boolean isInRoomEditing() {
+        return inRoomEditing;
+    }
+
+    /**
      * Resetta tutti i dati.
      */
     public static void reset() {
@@ -230,6 +288,8 @@ public class WireframeRenderer {
         selectionData = WireframeData.SelectionWireframe.empty();
         blockPositions = new ArrayList<>();
         previewPositions = new ArrayList<>();
+        roomBlockPositions = new ArrayList<>();
+        inRoomEditing = false;
     }
 
     /**

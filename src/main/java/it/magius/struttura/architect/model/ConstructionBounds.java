@@ -14,6 +14,19 @@ public class ConstructionBounds {
         reset();
     }
 
+    /**
+     * Crea bounds con valori iniziali.
+     */
+    public ConstructionBounds(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        this.minX = minX;
+        this.minY = minY;
+        this.minZ = minZ;
+        this.maxX = maxX;
+        this.maxY = maxY;
+        this.maxZ = maxZ;
+        this.initialized = true;
+    }
+
     public void reset() {
         this.minX = Integer.MAX_VALUE;
         this.minY = Integer.MAX_VALUE;
@@ -22,6 +35,19 @@ public class ConstructionBounds {
         this.maxY = Integer.MIN_VALUE;
         this.maxZ = Integer.MIN_VALUE;
         this.initialized = false;
+    }
+
+    /**
+     * Setta i bounds direttamente.
+     */
+    public void set(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        this.minX = minX;
+        this.minY = minY;
+        this.minZ = minZ;
+        this.maxX = maxX;
+        this.maxY = maxY;
+        this.maxZ = maxZ;
+        this.initialized = true;
     }
 
     public void expandToInclude(BlockPos pos) {

@@ -96,14 +96,39 @@ public class ConstructionHammerItem extends Item {
             BlockState clickedState, EditingSession session) {
 
         var currentConstruction = session.getConstruction();
-        boolean isInCurrentConstruction = currentConstruction.containsBlock(clickedPos);
+        boolean isInRoom = session.isInRoom();
 
-        if (isInCurrentConstruction) {
-            // Blocco IN costruzione corrente: RIMUOVI
-            currentConstruction.removeBlock(clickedPos);
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
-                    I18n.tr(player, "block.removed", formatPos(clickedPos))));
+        // Determina se il blocco è nel target corrente (room o construction)
+        boolean isInTarget;
+        if (isInRoom) {
+            var room = session.getCurrentRoomObject();
+            isInTarget = room != null && room.hasBlockChange(clickedPos);
+        } else {
+            isInTarget = currentConstruction.containsBlock(clickedPos);
+        }
+
+        if (isInTarget) {
+            // Blocco IN target corrente: RIMUOVI
+            if (isInRoom) {
+                var room = session.getCurrentRoomObject();
+                if (room != null) {
+                    room.removeBlockChange(clickedPos);
+                }
+            } else {
+                currentConstruction.removeBlock(clickedPos);
+            }
+
+            // Messaggio con nome edificio/room e totale
+            int totalBlocks = isInRoom && session.getCurrentRoomObject() != null
+                ? session.getCurrentRoomObject().getChangedBlockCount()
+                : currentConstruction.getBlockCount();
+            String targetName = formatTargetName(session);
+            player.sendSystemMessage(Component.literal(targetName + ": §c" +
+                    I18n.tr(player, "block.removed") + " §7(" + totalBlocks + ")"));
+
             NetworkHandler.sendWireframeSync(player);
+            NetworkHandler.sendEditingInfo(player);
+            NetworkHandler.sendBlockPositions(player);
         } else {
             // Controlla se il blocco appartiene a un'altra costruzione
             var registry = ConstructionRegistry.getInstance();
@@ -124,17 +149,54 @@ public class ConstructionHammerItem extends Item {
                 // Blocco appartiene a un'altra costruzione: esci dalla corrente e entra nell'altra
                 exitAndEnterConstruction(player, session, otherConstructionId);
             } else {
-                // Blocco NON in nessuna costruzione: AGGIUNGI alla corrente
+                // Blocco NON in nessuna costruzione: AGGIUNGI al target corrente
                 if (!clickedState.isAir()) {
-                    currentConstruction.addBlock(clickedPos, clickedState);
-                    player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                            I18n.tr(player, "block.added", formatPos(clickedPos))));
+                    if (isInRoom) {
+                        var room = session.getCurrentRoomObject();
+                        if (room != null) {
+                            room.setBlockChange(clickedPos, clickedState);
+                            // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
+                            currentConstruction.getBounds().expandToInclude(clickedPos);
+                        }
+                    } else {
+                        currentConstruction.addBlock(clickedPos, clickedState);
+                    }
+
+                    // Messaggio con nome edificio/room e totale
+                    int totalBlocks = isInRoom && session.getCurrentRoomObject() != null
+                        ? session.getCurrentRoomObject().getChangedBlockCount()
+                        : currentConstruction.getBlockCount();
+                    String targetName = formatTargetName(session);
+                    player.sendSystemMessage(Component.literal(targetName + ": §a" +
+                            I18n.tr(player, "block.added") + " §7(" + totalBlocks + ")"));
+
                     NetworkHandler.sendWireframeSync(player);
+                    NetworkHandler.sendEditingInfo(player);
+                    NetworkHandler.sendBlockPositions(player);
                 }
             }
         }
 
         return InteractionResult.SUCCESS;
+    }
+
+    /**
+     * Formatta il nome del target corrente (edificio o edificio/stanza) con colori.
+     */
+    private String formatTargetName(EditingSession session) {
+        String constructionId = session.getConstruction().getId();
+        // Estrai solo l'ultima parte dell'ID (dopo l'ultimo punto)
+        String shortName = constructionId.contains(".")
+            ? constructionId.substring(constructionId.lastIndexOf('.') + 1)
+            : constructionId;
+
+        if (session.isInRoom()) {
+            var room = session.getCurrentRoomObject();
+            String roomName = room != null ? room.getName() : session.getCurrentRoom();
+            return "§d" + shortName + "§7/§e" + roomName;
+        } else {
+            return "§d" + shortName;
+        }
     }
 
     private void exitAndEnterConstruction(ServerPlayer player, EditingSession currentSession, String newConstructionId) {
@@ -183,9 +245,5 @@ public class ConstructionHammerItem extends Item {
         tooltip.accept(Component.literal("§7Durante editing:"));
         tooltip.accept(Component.literal("§e[Click destro]§f su blocco in costruzione: rimuovi"));
         tooltip.accept(Component.literal("§e[Click destro]§f su altro blocco: aggiungi"));
-    }
-
-    private String formatPos(BlockPos pos) {
-        return pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
     }
 }

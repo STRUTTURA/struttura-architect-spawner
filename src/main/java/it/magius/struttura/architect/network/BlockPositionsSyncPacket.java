@@ -15,11 +15,13 @@ import java.util.List;
  * Usato per renderizzare overlay sui blocchi.
  * - solidBlocks/airBlocks: blocchi già nella costruzione (wireframe rosso)
  * - previewBlocks: blocchi che verranno aggiunti con select add (wireframe ciano)
+ * - roomBlocks: blocchi della room corrente (wireframe giallo)
  */
 public record BlockPositionsSyncPacket(
     List<BlockPos> solidBlocks,
     List<BlockPos> airBlocks,
-    List<BlockPos> previewBlocks
+    List<BlockPos> previewBlocks,
+    List<BlockPos> roomBlocks
 ) implements CustomPacketPayload {
 
     public static final CustomPacketPayload.Type<BlockPositionsSyncPacket> TYPE =
@@ -47,7 +49,13 @@ public record BlockPositionsSyncPacket(
             previewBlocks.add(buf.readBlockPos());
         }
 
-        return new BlockPositionsSyncPacket(solidBlocks, airBlocks, previewBlocks);
+        int roomCount = buf.readVarInt();
+        List<BlockPos> roomBlocks = new ArrayList<>(roomCount);
+        for (int i = 0; i < roomCount; i++) {
+            roomBlocks.add(buf.readBlockPos());
+        }
+
+        return new BlockPositionsSyncPacket(solidBlocks, airBlocks, previewBlocks, roomBlocks);
     }
 
     private static void write(FriendlyByteBuf buf, BlockPositionsSyncPacket packet) {
@@ -65,6 +73,11 @@ public record BlockPositionsSyncPacket(
         for (BlockPos pos : packet.previewBlocks) {
             buf.writeBlockPos(pos);
         }
+
+        buf.writeVarInt(packet.roomBlocks.size());
+        for (BlockPos pos : packet.roomBlocks) {
+            buf.writeBlockPos(pos);
+        }
     }
 
     @Override
@@ -76,7 +89,7 @@ public record BlockPositionsSyncPacket(
      * Crea un packet vuoto (nessun blocco).
      */
     public static BlockPositionsSyncPacket empty() {
-        return new BlockPositionsSyncPacket(List.of(), List.of(), List.of());
+        return new BlockPositionsSyncPacket(List.of(), List.of(), List.of(), List.of());
     }
 
     /**
@@ -91,6 +104,13 @@ public record BlockPositionsSyncPacket(
      */
     public boolean hasPreviewBlocks() {
         return !previewBlocks.isEmpty();
+    }
+
+    /**
+     * Verifica se ci sono blocchi della room.
+     */
+    public boolean hasRoomBlocks() {
+        return !roomBlocks.isEmpty();
     }
 
     /**

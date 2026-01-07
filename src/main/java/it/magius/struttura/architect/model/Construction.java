@@ -8,7 +8,9 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -49,14 +51,17 @@ public class Construction {
     // Solo per blocchi che hanno dati NBT (contenuto inventario, etc.)
     private final Map<BlockPos, CompoundTag> blockEntityNbt = new HashMap<>();
 
-    // Entità nella costruzione: UUID originale -> dati entità
-    private final Map<UUID, EntityData> entities = new HashMap<>();
+    // Entities in this construction (type and position data only, no UUID in saved data)
+    private final List<EntityData> entities = new ArrayList<>();
 
     // Bounds calcolati dai blocchi
     private final ConstructionBounds bounds = new ConstructionBounds();
 
     // Mod richiesti dalla costruzione (namespace -> info mod)
     private Map<String, ModInfo> requiredMods = new HashMap<>();
+
+    // Stanze (varianti) della costruzione: id stanza -> Room
+    private final Map<String, Room> rooms = new HashMap<>();
 
     public Construction(String id, UUID authorId, String authorName) {
         this.id = id;
@@ -125,6 +130,25 @@ public class Construction {
             blockEntityNbt.put(pos.immutable(), nbt);
         }
         bounds.expandToInclude(pos);
+    }
+
+    /**
+     * Aggiunge un blocco senza espandere i bounds.
+     * Usato quando si caricano blocchi da file/server dove i bounds sono già noti.
+     */
+    public void addBlockRaw(BlockPos pos, BlockState state) {
+        blocks.put(pos.immutable(), state);
+    }
+
+    /**
+     * Aggiunge un blocco con NBT senza espandere i bounds.
+     * Usato quando si caricano blocchi da file/server dove i bounds sono già noti.
+     */
+    public void addBlockRaw(BlockPos pos, BlockState state, CompoundTag nbt) {
+        blocks.put(pos.immutable(), state);
+        if (nbt != null && !nbt.isEmpty()) {
+            blockEntityNbt.put(pos.immutable(), nbt);
+        }
     }
 
     /**
@@ -270,13 +294,12 @@ public class Construction {
 
     /**
      * Ritorna una mappa con il conteggio di tutti i tipi di blocchi.
-     * @return Map blockId -> count (non include air)
+     * Include anche i blocchi d'aria per permettere la rimozione dalla GUI.
+     * @return Map blockId -> count (include air)
      */
     public Map<String, Integer> getBlockCounts() {
         Map<String, Integer> counts = new HashMap<>();
         for (BlockState state : blocks.values()) {
-            if (state.isAir()) continue;
-
             String blockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
                 .getKey(state.getBlock())
                 .toString();
@@ -297,47 +320,69 @@ public class Construction {
     // ===== Entity management =====
 
     /**
-     * Aggiunge un'entità alla costruzione.
+     * Adds an entity to this construction.
+     * @param data The entity data (type, position, nbt)
+     * @return The index of the added entity in the list
      */
-    public void addEntity(UUID id, EntityData data) {
-        entities.put(id, data);
+    public int addEntity(EntityData data) {
+        entities.add(data);
+        return entities.size() - 1;
     }
 
     /**
-     * Rimuove un'entità dalla costruzione.
+     * Removes an entity by its index in the list.
+     * @param index The index of the entity to remove
+     * @return true if removed successfully, false if index is invalid
      */
-    public boolean removeEntity(UUID id) {
-        return entities.remove(id) != null;
+    public boolean removeEntity(int index) {
+        if (index >= 0 && index < entities.size()) {
+            entities.remove(index);
+            return true;
+        }
+        return false;
     }
 
     /**
-     * Rimuove tutte le entità dalla costruzione.
+     * Gets an entity by index.
+     * @param index The index in the list
+     * @return The entity data, or null if index is invalid
+     */
+    public EntityData getEntity(int index) {
+        if (index >= 0 && index < entities.size()) {
+            return entities.get(index);
+        }
+        return null;
+    }
+
+    /**
+     * Clears all entities from this construction.
      */
     public void clearEntities() {
         entities.clear();
     }
 
     /**
-     * Ottiene tutte le entità della costruzione.
+     * Gets all entities in this construction.
+     * @return The list of entities
      */
-    public Map<UUID, EntityData> getEntities() {
+    public List<EntityData> getEntities() {
         return entities;
     }
 
     /**
-     * Conta le entità nella costruzione.
+     * Counts entities in this construction.
      */
     public int getEntityCount() {
         return entities.size();
     }
 
     /**
-     * Conta i mob (entità viventi) nella costruzione.
-     * Esclude entità non-mob come armor_stand, item_frame, painting, etc.
+     * Counts mobs (living entities) in this construction.
+     * Excludes non-mob entities like armor_stand, item_frame, painting, etc.
      */
     public int getMobCount() {
         int count = 0;
-        for (EntityData data : entities.values()) {
+        for (EntityData data : entities) {
             if (isMobEntity(data.getEntityType())) {
                 count++;
             }
@@ -345,10 +390,80 @@ public class Construction {
         return count;
     }
 
+    // ===== Total stats (base + all rooms) =====
+
+    /**
+     * Conta i blocchi totali della costruzione (base + tutte le room).
+     */
+    public int getTotalBlockCount() {
+        int total = blocks.size();
+        for (Room room : rooms.values()) {
+            total += room.getChangedBlockCount();
+        }
+        return total;
+    }
+
+    /**
+     * Conta i blocchi solidi totali (base + tutte le room).
+     */
+    public int getTotalSolidBlockCount() {
+        int total = getSolidBlockCount();
+        for (Room room : rooms.values()) {
+            for (var state : room.getBlockChanges().values()) {
+                if (!state.isAir()) {
+                    total++;
+                }
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Conta i blocchi aria totali (base + tutte le room).
+     */
+    public int getTotalAirBlockCount() {
+        int total = getBlockCount() - getSolidBlockCount();
+        for (Room room : rooms.values()) {
+            for (var state : room.getBlockChanges().values()) {
+                if (state.isAir()) {
+                    total++;
+                }
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Conta le entità totali (base + tutte le room).
+     */
+    public int getTotalEntityCount() {
+        int total = entities.size();
+        for (Room room : rooms.values()) {
+            total += room.getEntityCount();
+        }
+        return total;
+    }
+
+    /**
+     * Counts total mobs (base + all rooms).
+     */
+    public int getTotalMobCount() {
+        int total = getMobCount();
+        for (Room room : rooms.values()) {
+            for (EntityData data : room.getEntities()) {
+                if (data != null && isMobEntity(data.getEntityType())) {
+                    total++;
+                }
+            }
+        }
+        return total;
+    }
+
     /**
      * Verifica se un tipo di entità è un mob (entità vivente).
+     * Metodo pubblico per essere utilizzabile anche da altre classi (es: NetworkHandler).
      */
-    private static boolean isMobEntity(String entityType) {
+    public static boolean isMobEntity(String entityType) {
         // Lista di entità NON-mob comuni
         return !entityType.equals("minecraft:armor_stand") &&
                !entityType.equals("minecraft:item_frame") &&
@@ -454,14 +569,14 @@ public class Construction {
     }
 
     /**
-     * Crea una copia della costruzione con un nuovo ID.
-     * Tutti i dati (blocchi, entità, titoli, descrizioni, etc.) vengono copiati.
+     * Creates a copy of this construction with a new ID.
+     * All data (blocks, entities, titles, descriptions, etc.) is copied.
      */
     public Construction copyWithNewId(String newId) {
         Construction copy = new Construction(newId, this.authorId, this.authorName, this.createdAt,
             this.titles, this.shortDescriptions, this.descriptions);
 
-        // Copia tutti i blocchi con i loro NBT
+        // Copy all blocks with their NBT
         for (Map.Entry<BlockPos, BlockState> entry : this.blocks.entrySet()) {
             BlockPos pos = entry.getKey();
             CompoundTag nbt = this.blockEntityNbt.get(pos);
@@ -472,12 +587,12 @@ public class Construction {
             }
         }
 
-        // Copia tutte le entità
-        for (Map.Entry<UUID, EntityData> entry : this.entities.entrySet()) {
-            copy.addEntity(entry.getKey(), entry.getValue());
+        // Copy all entities
+        for (EntityData data : this.entities) {
+            copy.addEntity(data);
         }
 
-        // Copia i mod richiesti
+        // Copy required mods
         copy.setRequiredMods(this.requiredMods);
 
         return copy;
@@ -511,8 +626,8 @@ public class Construction {
             }
         }
 
-        // Conta le entità per ogni mod non-vanilla
-        for (EntityData entityData : entities.values()) {
+        // Count entities for each non-vanilla mod
+        for (EntityData entityData : entities) {
             String namespace = entityData.getModNamespace();
 
             // Ignora le entità vanilla
@@ -538,5 +653,61 @@ public class Construction {
      */
     public boolean hasModdedBlocks() {
         return !requiredMods.isEmpty();
+    }
+
+    // ===== Room management =====
+
+    /**
+     * Aggiunge una stanza alla costruzione.
+     */
+    public void addRoom(Room room) {
+        rooms.put(room.getId(), room);
+    }
+
+    /**
+     * Ottiene una stanza per ID.
+     */
+    public Room getRoom(String id) {
+        return rooms.get(id);
+    }
+
+    /**
+     * Rimuove una stanza dalla costruzione.
+     */
+    public boolean removeRoom(String id) {
+        return rooms.remove(id) != null;
+    }
+
+    /**
+     * Ottiene tutte le stanze.
+     */
+    public Map<String, Room> getRooms() {
+        return rooms;
+    }
+
+    /**
+     * Verifica se esiste una stanza con l'ID specificato.
+     */
+    public boolean hasRoom(String id) {
+        return rooms.containsKey(id);
+    }
+
+    /**
+     * Conta le stanze.
+     */
+    public int getRoomCount() {
+        return rooms.size();
+    }
+
+    /**
+     * Trova una stanza per nome (case insensitive).
+     */
+    public Room getRoomByName(String name) {
+        for (Room room : rooms.values()) {
+            if (room.getName().equalsIgnoreCase(name)) {
+                return room;
+            }
+        }
+        return null;
     }
 }

@@ -53,8 +53,9 @@ public class ArchitectClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(BlockPositionsSyncPacket.TYPE, (packet, context) -> {
             context.client().execute(() -> {
                 WireframeRenderer.setBlockPositions(packet.solidBlocks(), packet.airBlocks(), packet.previewBlocks());
-                Architect.LOGGER.debug("Received block positions: {} solid, {} air, {} preview",
-                    packet.solidBlocks().size(), packet.airBlocks().size(), packet.previewBlocks().size());
+                WireframeRenderer.setRoomBlockPositions(packet.roomBlocks());
+                Architect.LOGGER.debug("Received block positions: {} solid, {} air, {} preview, {} room",
+                    packet.solidBlocks().size(), packet.airBlocks().size(), packet.previewBlocks().size(), packet.roomBlocks().size());
             });
         });
 
@@ -71,6 +72,11 @@ public class ArchitectClient implements ClientModInitializer {
             context.client().execute(() -> {
                 PanelManager pm = PanelManager.getInstance();
                 if (packet.isEditing()) {
+                    // Convert roomList from packet to PanelManager format
+                    java.util.List<PanelManager.RoomInfo> roomList = new java.util.ArrayList<>();
+                    for (EditingInfoPacket.RoomInfo ri : packet.roomList()) {
+                        roomList.add(new PanelManager.RoomInfo(ri.id(), ri.name(), ri.blockCount(), ri.entityCount()));
+                    }
                     pm.updateEditingInfo(
                             packet.constructionId(),
                             packet.title(),
@@ -81,13 +87,22 @@ public class ArchitectClient implements ClientModInitializer {
                             packet.mobCount(),
                             packet.bounds(),
                             packet.mode(),
-                            packet.shortDesc()
+                            packet.shortDesc(),
+                            packet.inRoom(),
+                            packet.currentRoomId(),
+                            packet.currentRoomName(),
+                            packet.roomCount(),
+                            packet.roomBlockChanges(),
+                            roomList
                     );
+                    // Aggiorna WireframeRenderer con lo stato della stanza
+                    WireframeRenderer.setInRoomEditing(packet.inRoom());
                 } else {
                     pm.clearEditingInfo();
+                    WireframeRenderer.setInRoomEditing(false);
                 }
-                Architect.LOGGER.debug("Received editing info: editing={}, id={}",
-                        packet.isEditing(), packet.constructionId());
+                Architect.LOGGER.debug("Received editing info: editing={}, id={}, inRoom={}, roomId={}",
+                        packet.isEditing(), packet.constructionId(), packet.inRoom(), packet.currentRoomId());
             });
         });
 
@@ -121,9 +136,10 @@ public class ArchitectClient implements ClientModInitializer {
             });
         });
 
-        // Registra il receiver per la lista blocchi (per dropdown in editing panel)
+        // Registra il receiver per la lista blocchi e entità (per dropdown in editing panel)
         ClientPlayNetworking.registerGlobalReceiver(BlockListPacket.TYPE, (packet, context) -> {
             context.client().execute(() -> {
+                // Update block list
                 List<PanelManager.BlockInfo> blocks = new ArrayList<>();
                 for (BlockListPacket.BlockInfo info : packet.blocks()) {
                     blocks.add(new PanelManager.BlockInfo(
@@ -133,7 +149,19 @@ public class ArchitectClient implements ClientModInitializer {
                     ));
                 }
                 PanelManager.getInstance().updateBlockList(blocks);
-                Architect.LOGGER.debug("Received block list: {} types", blocks.size());
+
+                // Update entity list (grouped by type with count)
+                List<PanelManager.EntityInfo> entities = new ArrayList<>();
+                for (BlockListPacket.EntityInfo info : packet.entities()) {
+                    entities.add(new PanelManager.EntityInfo(
+                            info.entityType(),
+                            info.displayName(),
+                            info.count()
+                    ));
+                }
+                PanelManager.getInstance().updateEntityList(entities);
+
+                Architect.LOGGER.debug("Received block list: {} types, {} entities", blocks.size(), entities.size());
             });
         });
 

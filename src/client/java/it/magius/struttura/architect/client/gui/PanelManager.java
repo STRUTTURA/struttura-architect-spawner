@@ -38,8 +38,19 @@ public class PanelManager {
     private String mode = "ADD";
     private String shortDesc = "";
 
+    // Room editing info
+    private boolean inRoom = false;
+    private String currentRoomId = "";
+    private String currentRoomName = "";
+    private int roomCount = 0;
+    private int roomBlockChanges = 0;
+    private List<RoomInfo> roomList = new ArrayList<>();
+
     // Block list for editing (synced from server)
     private List<BlockInfo> blockList = new ArrayList<>();
+
+    // Entity list for editing (synced from server)
+    private List<EntityInfo> entityList = new ArrayList<>();
 
     // Translations (all languages)
     private java.util.Map<String, String> allTitles = new java.util.HashMap<>();
@@ -49,6 +60,16 @@ public class PanelManager {
      * Info about a block type in the construction.
      */
     public record BlockInfo(String blockId, String displayName, int count) {}
+
+    /**
+     * Info about an entity type in the construction (grouped by type with count).
+     */
+    public record EntityInfo(String entityType, String displayName, int count) {}
+
+    /**
+     * Info about a room in the construction.
+     */
+    public record RoomInfo(String id, String name, int blockCount, int entityCount) {}
 
     private PanelManager() {
     }
@@ -103,7 +124,9 @@ public class PanelManager {
      */
     public void updateEditingInfo(String constructionId, String title, int blockCount,
                                    int solidBlockCount, int airBlockCount, int entityCount,
-                                   int mobCount, String bounds, String mode, String shortDesc) {
+                                   int mobCount, String bounds, String mode, String shortDesc,
+                                   boolean inRoom, String currentRoomId, String currentRoomName,
+                                   int roomCount, int roomBlockChanges, List<RoomInfo> roomList) {
         this.editingConstructionId = constructionId;
         this.editingTitle = title;
         this.blockCount = blockCount;
@@ -114,6 +137,12 @@ public class PanelManager {
         this.bounds = bounds;
         this.mode = mode;
         this.shortDesc = shortDesc;
+        this.inRoom = inRoom;
+        this.currentRoomId = currentRoomId;
+        this.currentRoomName = currentRoomName;
+        this.roomCount = roomCount;
+        this.roomBlockChanges = roomBlockChanges;
+        this.roomList = roomList != null ? new ArrayList<>(roomList) : new ArrayList<>();
         this.isEditing = true;
         // Update EditingPanel with shortDesc
         if (editingPanel != null) {
@@ -135,8 +164,15 @@ public class PanelManager {
         this.bounds = "";
         this.mode = "ADD";
         this.shortDesc = "";
+        this.inRoom = false;
+        this.currentRoomId = "";
+        this.currentRoomName = "";
+        this.roomCount = 0;
+        this.roomBlockChanges = 0;
+        this.roomList.clear();
         this.isEditing = false;
         this.blockList.clear();
+        this.entityList.clear();
         this.allTitles.clear();
         this.allShortDescriptions.clear();
         // Clear EditingPanel
@@ -187,6 +223,34 @@ public class PanelManager {
         return shortDesc;
     }
 
+    // Room getters
+    public boolean isInRoom() {
+        return inRoom;
+    }
+
+    public String getCurrentRoomId() {
+        return currentRoomId;
+    }
+
+    public String getCurrentRoomName() {
+        return currentRoomName;
+    }
+
+    public int getRoomCount() {
+        return roomCount;
+    }
+
+    public int getRoomBlockChanges() {
+        return roomBlockChanges;
+    }
+
+    /**
+     * Get the list of rooms in the current construction.
+     */
+    public List<RoomInfo> getRoomList() {
+        return roomList;
+    }
+
     /**
      * Get the list of block types in the current construction.
      */
@@ -209,6 +273,30 @@ public class PanelManager {
      */
     public void clearBlockList() {
         this.blockList.clear();
+    }
+
+    /**
+     * Get the list of entities in the current construction/room.
+     */
+    public List<EntityInfo> getEntityList() {
+        return entityList;
+    }
+
+    /**
+     * Update the entity list from server packet.
+     * Entities are sorted alphabetically by display name.
+     */
+    public void updateEntityList(List<EntityInfo> entities) {
+        this.entityList = new ArrayList<>(entities);
+        // Sort alphabetically by display name
+        this.entityList.sort((a, b) -> a.displayName().compareToIgnoreCase(b.displayName()));
+    }
+
+    /**
+     * Clear the entity list.
+     */
+    public void clearEntityList() {
+        this.entityList.clear();
     }
 
     /**

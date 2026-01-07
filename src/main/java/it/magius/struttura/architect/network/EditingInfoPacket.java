@@ -6,6 +6,9 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Packet S2C for syncing editing state to client.
  * Sent when player enters editing mode or when editing data changes.
@@ -21,8 +24,20 @@ public record EditingInfoPacket(
     int mobCount,       // Numero di mob (entità viventi)
     String bounds,      // "10x20x15" format
     String mode,        // "ADD" or "REMOVE"
-    String shortDesc    // Short description in player's language
+    String shortDesc,   // Short description in player's language
+    // Room fields
+    boolean inRoom,         // True se stiamo editando una stanza
+    String currentRoomId,   // ID della stanza corrente (vuoto se non in stanza)
+    String currentRoomName, // Nome della stanza corrente
+    int roomCount,          // Numero totale di stanze nella costruzione
+    int roomBlockChanges,   // Numero di blocchi modificati nella stanza corrente
+    List<RoomInfo> roomList // Lista di tutte le stanze
 ) implements CustomPacketPayload {
+
+    /**
+     * Info about a room in the construction.
+     */
+    public record RoomInfo(String id, String name, int blockCount, int entityCount) {}
 
     public static final CustomPacketPayload.Type<EditingInfoPacket> TYPE =
         new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(Architect.MOD_ID, "editing_info"));
@@ -34,7 +49,8 @@ public record EditingInfoPacket(
      * Create an empty packet (for when not editing).
      */
     public static EditingInfoPacket empty() {
-        return new EditingInfoPacket(false, "", "", 0, 0, 0, 0, 0, "", "ADD", "");
+        return new EditingInfoPacket(false, "", "", 0, 0, 0, 0, 0, "", "ADD", "",
+            false, "", "", 0, 0, List.of());
     }
 
     private static EditingInfoPacket read(FriendlyByteBuf buf) {
@@ -49,7 +65,24 @@ public record EditingInfoPacket(
         String bounds = buf.readUtf(64);
         String mode = buf.readUtf(16);
         String shortDesc = buf.readUtf(1024);
-        return new EditingInfoPacket(isEditing, constructionId, title, blockCount, solidBlockCount, airBlockCount, entityCount, mobCount, bounds, mode, shortDesc);
+        // Room fields
+        boolean inRoom = buf.readBoolean();
+        String currentRoomId = buf.readUtf(128);
+        String currentRoomName = buf.readUtf(256);
+        int roomCount = buf.readVarInt();
+        int roomBlockChanges = buf.readVarInt();
+        // Room list
+        int roomListSize = buf.readVarInt();
+        List<RoomInfo> roomList = new ArrayList<>(roomListSize);
+        for (int i = 0; i < roomListSize; i++) {
+            String roomId = buf.readUtf(128);
+            String roomName = buf.readUtf(256);
+            int roomBlocks = buf.readVarInt();
+            int roomEntities = buf.readVarInt();
+            roomList.add(new RoomInfo(roomId, roomName, roomBlocks, roomEntities));
+        }
+        return new EditingInfoPacket(isEditing, constructionId, title, blockCount, solidBlockCount, airBlockCount, entityCount, mobCount, bounds, mode, shortDesc,
+            inRoom, currentRoomId, currentRoomName, roomCount, roomBlockChanges, roomList);
     }
 
     private static void write(FriendlyByteBuf buf, EditingInfoPacket packet) {
@@ -64,6 +97,20 @@ public record EditingInfoPacket(
         buf.writeUtf(packet.bounds, 64);
         buf.writeUtf(packet.mode, 16);
         buf.writeUtf(packet.shortDesc, 1024);
+        // Room fields
+        buf.writeBoolean(packet.inRoom);
+        buf.writeUtf(packet.currentRoomId, 128);
+        buf.writeUtf(packet.currentRoomName, 256);
+        buf.writeVarInt(packet.roomCount);
+        buf.writeVarInt(packet.roomBlockChanges);
+        // Room list
+        buf.writeVarInt(packet.roomList.size());
+        for (RoomInfo room : packet.roomList) {
+            buf.writeUtf(room.id, 128);
+            buf.writeUtf(room.name, 256);
+            buf.writeVarInt(room.blockCount);
+            buf.writeVarInt(room.entityCount);
+        }
     }
 
     @Override

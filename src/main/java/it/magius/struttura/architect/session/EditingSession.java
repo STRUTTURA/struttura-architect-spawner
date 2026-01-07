@@ -4,6 +4,7 @@ import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EditMode;
 import it.magius.struttura.architect.model.EntityData;
+import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -16,6 +17,9 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 
+import it.magius.struttura.architect.entity.EntitySpawnHandler;
+
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +45,14 @@ public class EditingSession {
 
     // Stanza corrente (null = costruzione base)
     private String currentRoom = null;
+
+    // Maps active entity UUID (in world) -> index in the room/construction entity list
+    // Used to track spawned entities and find the correct data when removing
+    private final Map<UUID, Integer> activeEntityToIndex = new HashMap<>();
+
+    // Hidden base entities during room editing (temporarily removed when entering a room)
+    // Stores the EntityData so we can respawn them when exiting the room
+    private final List<EntityData> hiddenBaseEntities = new ArrayList<>();
 
     public EditingSession(ServerPlayer player, Construction construction) {
         this.player = player;
@@ -79,15 +91,24 @@ public class EditingSession {
 
     /**
      * Termina la sessione per un giocatore.
-     * Cattura automaticamente le entità e gli NBT dei block entities prima di terminare.
+     * Cattura gli NBT dei block entities prima di terminare.
+     * Se si era in una room, ripristina i blocchi base prima di uscire.
+     * NOTA: Le entità NON vengono catturate automaticamente.
+     * Devono essere aggiunte manualmente con il martello (click destro su entità).
+     * NOTA: Le entità rimangono freezate nei bounds anche dopo l'uscita dall'editing.
      */
     public static EditingSession endSession(ServerPlayer player) {
         EditingSession session = ACTIVE_SESSIONS.remove(player.getUUID());
         if (session != null) {
+            // Se si era in una room, ripristina i blocchi base
+            if (session.currentRoom != null) {
+                session.exitRoom();
+            }
             // Cattura NBT dei block entities (casse, furnace, etc.)
             session.captureBlockEntityNbt();
-            // Cattura entità automaticamente prima di terminare
-            session.captureEntities();
+            // NOTA: Non catturiamo più le entità automaticamente
+            // Le entità devono essere aggiunte manualmente con il martello
+            // NOTA: Non sblocchiamo le entità - rimangono freezate nei bounds
         }
         return session;
     }
@@ -101,81 +122,123 @@ public class EditingSession {
 
     /**
      * Gestisce il piazzamento di un blocco.
+     * Se in una stanza, salva nella room (NON differenziale); altrimenti nella costruzione base.
      */
     public void onBlockPlaced(BlockPos pos, BlockState state) {
         if (mode == EditMode.ADD) {
-            construction.addBlock(pos, state);
+            if (isInRoom()) {
+                // Stiamo editando una stanza: salva nella room
+                // NON differenziale: salva tutti i blocchi, anche se uguali a quelli base
+                Room room = construction.getRoom(currentRoom);
+                if (room != null) {
+                    room.setBlockChange(pos, state);
+                    // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
+                    construction.getBounds().expandToInclude(pos);
+                }
+            } else {
+                // Editing costruzione base
+                construction.addBlock(pos, state);
+            }
             // Aggiorna il wireframe (i bounds potrebbero essere cambiati)
             NetworkHandler.sendWireframeSync(player);
             // Aggiorna info editing per la GUI
             NetworkHandler.sendEditingInfo(player);
+            // Aggiorna le posizioni dei blocchi
+            NetworkHandler.sendBlockPositions(player);
         }
         // In mode REMOVE il piazzamento non fa nulla di speciale
     }
 
     /**
      * Gestisce la rottura di un blocco.
+     * Se in una stanza, salva aria nella room (NON differenziale); altrimenti la costruzione base.
      */
     public void onBlockBroken(BlockPos pos, BlockState previousState) {
         if (mode == EditMode.ADD) {
-            // In ADD, rompere un blocco aggiunge aria alla costruzione
-            construction.addBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            if (isInRoom()) {
+                // Stiamo editando una stanza: aria nella room
+                // NON differenziale: salva aria anche se la base era già aria
+                Room room = construction.getRoom(currentRoom);
+                if (room != null) {
+                    BlockState airState = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+                    room.setBlockChange(pos, airState);
+                    // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
+                    construction.getBounds().expandToInclude(pos);
+                }
+            } else {
+                // Editing costruzione base: rompere un blocco aggiunge aria
+                construction.addBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            }
             // Aggiorna il wireframe (i bounds potrebbero essere cambiati)
             NetworkHandler.sendWireframeSync(player);
             // Aggiorna info editing per la GUI
             NetworkHandler.sendEditingInfo(player);
+            // Aggiorna le posizioni dei blocchi
+            NetworkHandler.sendBlockPositions(player);
         } else {
-            // In REMOVE, rompere un blocco lo rimuove dalla costruzione
-            construction.removeBlock(pos);
+            if (isInRoom()) {
+                // In REMOVE in una stanza: rimuovi dalla room
+                // NOTA: non ricalcoliamo i bounds perché la room potrebbe avere altri blocchi
+                // e i bounds della costruzione devono comunque includere tutti i blocchi base + room
+                Room room = construction.getRoom(currentRoom);
+                if (room != null) {
+                    room.removeBlockChange(pos);
+                }
+            } else {
+                // In REMOVE nella base: rimuovi dalla costruzione
+                construction.removeBlock(pos);
+            }
             // Aggiorna il wireframe (i bounds sono stati ricalcolati)
             NetworkHandler.sendWireframeSync(player);
             // Aggiorna info editing per la GUI
             NetworkHandler.sendEditingInfo(player);
+            // Aggiorna le posizioni dei blocchi
+            NetworkHandler.sendBlockPositions(player);
         }
     }
 
     /**
-     * Cattura tutte le entità nell'area dei bounds della costruzione.
-     * Esclude Player e Projectile (come definito in EntityData.shouldSaveEntity).
-     * Chiamato automaticamente durante il save/exit.
+     * Captures all entities in the construction bounds area.
+     * Excludes Player and Projectile (as defined in EntityData.shouldSaveEntity).
+     * Called automatically during save/exit.
      */
     public void captureEntities() {
         var bounds = construction.getBounds();
 
-        // Se non ci sono bounds validi, non possiamo catturare entità
+        // Cannot capture entities without valid bounds
         if (!bounds.isValid()) {
             Architect.LOGGER.debug("Cannot capture entities: bounds not valid for {}", construction.getId());
             return;
         }
 
-        // Ottieni il ServerLevel dal player (MC 1.21: player.level() invece di player.serverLevel())
+        // Get ServerLevel from player (MC 1.21: player.level() instead of player.serverLevel())
         ServerLevel world = (ServerLevel) player.level();
 
-        // Crea AABB dai bounds (aggiungi 1 per includere il blocco completo)
+        // Create AABB from bounds (add 1 to include the full block)
         AABB area = new AABB(
             bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
             bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
         );
 
-        // Cattura tutte le entità nell'area che passano il filtro
-        List<Entity> entities = world.getEntities(
+        // Capture all entities in the area that pass the filter
+        List<Entity> worldEntities = world.getEntities(
             (Entity) null,
             area,
             EntityData::shouldSaveEntity
         );
 
-        // Pulisci le entità precedenti
+        // Clear previous entities
         construction.clearEntities();
 
-        // Aggiungi ogni entità catturata
-        // Passa il registryAccess per serializzare correttamente gli ItemStack (armor stand equipment, etc.)
-        for (Entity entity : entities) {
+        // Add each captured entity
+        // Pass registryAccess to properly serialize ItemStacks (armor stand equipment, etc.)
+        for (Entity entity : worldEntities) {
             EntityData data = EntityData.fromEntity(entity, bounds, world.registryAccess());
-            construction.addEntity(entity.getUUID(), data);
+            construction.addEntity(data);
         }
 
         Architect.LOGGER.info("Captured {} entities for construction {}",
-            entities.size(), construction.getId());
+            worldEntities.size(), construction.getId());
     }
 
     /**
@@ -214,6 +277,715 @@ public class EditingSession {
             capturedCount, construction.getId());
     }
 
+    // ===== Room management =====
+
+    /**
+     * Entra in una stanza esistente per editarla.
+     * Applica i blocchi della room nel mondo e gestisce le entità:
+     * - Nasconde i mob della costruzione base (senza trigger)
+     * - Nasconde le entità statiche base che si sovrappongono con quelle della room
+     * - Spawna tutte le entità della room (inclusi mob)
+     * @param roomId l'ID della stanza
+     * @return true se l'entrata ha avuto successo
+     */
+    public boolean enterRoom(String roomId) {
+        Room room = construction.getRoom(roomId);
+        if (room == null) {
+            Architect.LOGGER.warn("Cannot enter room '{}': room does not exist in construction {}",
+                roomId, construction.getId());
+            return false;
+        }
+
+        ServerLevel world = (ServerLevel) player.level();
+
+        // Se eravamo già in una room, cattura dati e ripristina prima
+        if (currentRoom != null) {
+            Room previousRoom = construction.getRoom(currentRoom);
+            if (previousRoom != null) {
+                // Cattura gli NBT prima di ripristinare
+                captureRoomBlockEntityNbt(world, previousRoom);
+                // NOTA: Non catturiamo più le entità automaticamente
+                // Le entità devono essere aggiunte manualmente con il martello
+                // Rimuovi le entità della room precedente
+                removeSpawnedRoomEntities(world);
+                restoreBaseBlocks(world, previousRoom);
+                // Ripristina le entità base nascoste
+                respawnHiddenBaseEntities(world);
+            }
+        }
+
+        // Nascondi le entità della costruzione base
+        hideBaseEntities(world);
+
+        // Applica i blocchi della nuova room
+        applyRoomBlocks(world, room);
+
+        // Spawna le entità della nuova room
+        spawnRoomEntities(world, room);
+
+        this.currentRoom = roomId;
+        Architect.LOGGER.info("Player {} entered room '{}' ({}) in construction {}",
+            player.getName().getString(), room.getName(), roomId, construction.getId());
+
+        // Aggiorna UI
+        NetworkHandler.sendWireframeSync(player);
+        NetworkHandler.sendEditingInfo(player);
+        NetworkHandler.sendBlockPositions(player);
+
+        return true;
+    }
+
+    /**
+     * Esce dalla stanza corrente e torna all'editing base.
+     * Cattura gli NBT dei block entity, poi rimuove entità room e ripristina blocchi e entità base.
+     * NOTA: Le entità NON vengono catturate automaticamente.
+     * Devono essere aggiunte manualmente con il martello (click destro su entità).
+     */
+    public void exitRoom() {
+        if (currentRoom == null) {
+            return;
+        }
+
+        ServerLevel world = (ServerLevel) player.level();
+        Room room = construction.getRoom(currentRoom);
+
+        if (room != null) {
+            // Cattura gli NBT dei block entity della room
+            captureRoomBlockEntityNbt(world, room);
+
+            // NOTA: Non catturiamo più le entità automaticamente
+            // Le entità devono essere aggiunte manualmente con il martello
+
+            // Rimuovi le entità spawnate dalla room
+            removeSpawnedRoomEntities(world);
+
+            // Ripristina i blocchi base dove la room aveva modifiche
+            restoreBaseBlocks(world, room);
+
+            // Ripristina le entità base che erano state nascoste
+            respawnHiddenBaseEntities(world);
+        }
+
+        String previousRoom = currentRoom;
+        this.currentRoom = null;
+
+        Architect.LOGGER.info("Player {} exited room '{}' in construction {}",
+            player.getName().getString(), previousRoom, construction.getId());
+
+        // Aggiorna UI
+        NetworkHandler.sendWireframeSync(player);
+        NetworkHandler.sendEditingInfo(player);
+        NetworkHandler.sendBlockPositions(player);
+    }
+
+    /**
+     * Cattura gli NBT dei block entity di una room.
+     * Salva il contenuto di casse, furnace, hoppers, etc. nel delta della room.
+     */
+    private void captureRoomBlockEntityNbt(ServerLevel world, Room room) {
+        int capturedCount = 0;
+
+        for (BlockPos pos : room.getBlockChanges().keySet()) {
+            BlockState state = room.getBlockChange(pos);
+            // Cattura solo se il blocco delta non è aria
+            if (state != null && !state.isAir()) {
+                BlockEntity blockEntity = world.getBlockEntity(pos);
+                if (blockEntity != null) {
+                    CompoundTag nbt = blockEntity.saveWithoutMetadata(world.registryAccess());
+
+                    // Rimuovi tag che non dovrebbero essere copiati
+                    nbt.remove("x");
+                    nbt.remove("y");
+                    nbt.remove("z");
+                    nbt.remove("id");
+
+                    // Salva solo se l'NBT contiene dati utili
+                    if (!nbt.isEmpty()) {
+                        room.setBlockEntityNbt(pos, nbt);
+                        capturedCount++;
+                    }
+                }
+            }
+        }
+
+        Architect.LOGGER.debug("Captured {} block entity NBTs for room '{}'", capturedCount, room.getId());
+    }
+
+    /**
+     * Captures ALL entities in the construction bounds area and saves them to the room.
+     * This includes all entities present (not just those spawned from the room).
+     * Not differential: saves everything.
+     */
+    private void captureRoomEntitiesFullBounds(ServerLevel world, Room room) {
+        var bounds = construction.getBounds();
+
+        // Cannot capture entities without valid bounds
+        if (!bounds.isValid()) {
+            Architect.LOGGER.debug("Cannot capture room entities: bounds not valid for {}", construction.getId());
+            return;
+        }
+
+        // Create AABB from bounds (add 1 to include the full block)
+        AABB area = new AABB(
+            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
+            bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
+        );
+
+        // Capture all entities in the area that pass the filter
+        List<Entity> worldEntities = world.getEntities(
+            (Entity) null,
+            area,
+            EntityData::shouldSaveEntity
+        );
+
+        // Clear previous room entities
+        room.clearEntities();
+
+        // Add each captured entity
+        for (Entity entity : worldEntities) {
+            EntityData data = EntityData.fromEntity(entity, bounds, world.registryAccess());
+            room.addEntity(data);
+        }
+
+        Architect.LOGGER.info("Captured {} entities for room '{}' (full bounds capture)",
+            worldEntities.size(), room.getId());
+    }
+
+    /**
+     * Hides base construction entities when entering a room.
+     * All mobs are hidden. Static entities are hidden only if they overlap
+     * with block positions in the room.
+     */
+    private void hideBaseEntities(ServerLevel world) {
+        var bounds = construction.getBounds();
+
+        if (!bounds.isValid()) {
+            return;
+        }
+
+        // Create AABB from construction bounds
+        AABB area = new AABB(
+            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
+            bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
+        );
+
+        // Get all entities in the construction area
+        List<Entity> worldEntities = world.getEntities(
+            (Entity) null,
+            area,
+            EntityData::shouldSaveEntity
+        );
+
+        hiddenBaseEntities.clear();
+        int hiddenCount = 0;
+
+        for (Entity entity : worldEntities) {
+            // Save entity data before hiding
+            EntityData data = EntityData.fromEntity(entity, bounds, world.registryAccess());
+            hiddenBaseEntities.add(data);
+
+            // Remove entity without triggers (discard)
+            entity.discard();
+            hiddenCount++;
+        }
+
+        Architect.LOGGER.debug("Hidden {} base entities for room editing", hiddenCount);
+    }
+
+    /**
+     * Respawns base construction entities that were hidden when exiting the room.
+     */
+    private void respawnHiddenBaseEntities(ServerLevel world) {
+        if (hiddenBaseEntities.isEmpty()) {
+            return;
+        }
+
+        var bounds = construction.getBounds();
+        if (!bounds.isValid()) {
+            hiddenBaseEntities.clear();
+            return;
+        }
+
+        int originX = bounds.getMinX();
+        int originY = bounds.getMinY();
+        int originZ = bounds.getMinZ();
+
+        int respawnedCount = 0;
+
+        for (EntityData data : hiddenBaseEntities) {
+            try {
+                // Calculate world position
+                double worldX = originX + data.getRelativePos().x;
+                double worldY = originY + data.getRelativePos().y;
+                double worldZ = originZ + data.getRelativePos().z;
+
+                // Copy NBT and remove/update position tags
+                CompoundTag nbt = data.getNbt().copy();
+                nbt.remove("Pos");
+                nbt.remove("Motion");
+                nbt.remove("UUID");
+
+                // Ensure NBT contains the "id" tag
+                if (!nbt.contains("id")) {
+                    nbt.putString("id", data.getEntityType());
+                }
+
+                // Update block_pos for hanging entities
+                if (nbt.contains("block_pos")) {
+                    net.minecraft.nbt.Tag rawTag = nbt.get("block_pos");
+                    if (rawTag instanceof net.minecraft.nbt.IntArrayTag intArrayTag) {
+                        int[] coords = intArrayTag.getAsIntArray();
+                        if (coords.length >= 3) {
+                            int newX = originX + coords[0];
+                            int newY = originY + coords[1];
+                            int newZ = originZ + coords[2];
+                            nbt.putIntArray("block_pos", new int[] { newX, newY, newZ });
+                        }
+                    }
+                }
+
+                // Create entity from NBT
+                Entity entity = net.minecraft.world.entity.EntityType.loadEntityRecursive(
+                    nbt, world, net.minecraft.world.entity.EntitySpawnReason.LOAD, e -> e);
+
+                if (entity != null) {
+                    entity.setPos(worldX, worldY, worldZ);
+                    entity.setYRot(data.getYaw());
+                    entity.setXRot(data.getPitch());
+                    UUID newUuid = UUID.randomUUID();
+                    entity.setUUID(newUuid);
+
+                    // Register entity to ignore BEFORE adding to world
+                    // to prevent EntitySpawnHandler from auto-adding it
+                    EntitySpawnHandler.getInstance().ignoreEntity(newUuid);
+
+                    world.addFreshEntity(entity);
+                    respawnedCount++;
+                }
+            } catch (Exception e) {
+                Architect.LOGGER.error("Failed to respawn base entity of type {}: {}",
+                    data.getEntityType(), e.getMessage());
+            }
+        }
+
+        hiddenBaseEntities.clear();
+        Architect.LOGGER.debug("Respawned {} hidden base entities", respawnedCount);
+    }
+
+    /**
+     * Spawns room entities into the world.
+     * Uses the same spawn logic as base construction.
+     */
+    private void spawnRoomEntities(ServerLevel world, Room room) {
+        List<EntityData> roomEntities = room.getEntities();
+        if (roomEntities.isEmpty()) {
+            return;
+        }
+
+        // Calculate origin from construction bounds
+        var bounds = construction.getBounds();
+        if (!bounds.isValid()) {
+            return;
+        }
+
+        int originX = bounds.getMinX();
+        int originY = bounds.getMinY();
+        int originZ = bounds.getMinZ();
+
+        int spawnedCount = 0;
+
+        for (int index = 0; index < roomEntities.size(); index++) {
+            EntityData data = roomEntities.get(index);
+
+            try {
+                // Calculate world position
+                double worldX = originX + data.getRelativePos().x;
+                double worldY = originY + data.getRelativePos().y;
+                double worldZ = originZ + data.getRelativePos().z;
+
+                // Copy NBT and remove/update position tags
+                CompoundTag nbt = data.getNbt().copy();
+                nbt.remove("Pos");
+                nbt.remove("Motion");
+                nbt.remove("UUID");
+
+                // Ensure NBT contains the "id" tag
+                if (!nbt.contains("id")) {
+                    nbt.putString("id", data.getEntityType());
+                }
+
+                // Update block_pos for hanging entities
+                if (nbt.contains("block_pos")) {
+                    net.minecraft.nbt.Tag rawTag = nbt.get("block_pos");
+                    if (rawTag instanceof net.minecraft.nbt.IntArrayTag intArrayTag) {
+                        int[] coords = intArrayTag.getAsIntArray();
+                        if (coords.length >= 3) {
+                            int newX = originX + coords[0];
+                            int newY = originY + coords[1];
+                            int newZ = originZ + coords[2];
+                            nbt.putIntArray("block_pos", new int[] { newX, newY, newZ });
+                        }
+                    }
+                }
+
+                // Create entity from NBT
+                Entity entity = net.minecraft.world.entity.EntityType.loadEntityRecursive(
+                    nbt, world, net.minecraft.world.entity.EntitySpawnReason.LOAD, e -> e);
+
+                if (entity != null) {
+                    entity.setPos(worldX, worldY, worldZ);
+                    entity.setYRot(data.getYaw());
+                    entity.setXRot(data.getPitch());
+                    UUID newUuid = UUID.randomUUID();
+                    entity.setUUID(newUuid);
+
+                    // Register entity to ignore BEFORE adding to world
+                    // to prevent EntitySpawnHandler from auto-adding it
+                    EntitySpawnHandler.getInstance().ignoreEntity(newUuid);
+
+                    world.addFreshEntity(entity);
+                    // Map new UUID to list index for later removal
+                    activeEntityToIndex.put(newUuid, index);
+                    spawnedCount++;
+                }
+            } catch (Exception e) {
+                Architect.LOGGER.error("Failed to spawn room entity of type {}: {}",
+                    data.getEntityType(), e.getMessage());
+            }
+        }
+
+        Architect.LOGGER.debug("Spawned {} entities for room '{}'", spawnedCount, room.getId());
+    }
+
+    /**
+     * Removes entities spawned for the current room.
+     */
+    private void removeSpawnedRoomEntities(ServerLevel world) {
+        Architect.LOGGER.info("removeSpawnedRoomEntities: {} entities to remove", activeEntityToIndex.size());
+        int removedCount = 0;
+
+        for (UUID activeUuid : activeEntityToIndex.keySet()) {
+            Entity entity = world.getEntity(activeUuid);
+            Architect.LOGGER.info("  Entity UUID {}: found={}", activeUuid, entity != null);
+            if (entity != null) {
+                // Unfreeze entity before removing
+                it.magius.struttura.architect.entity.EntityFreezeHandler.getInstance().unfreezeEntity(activeUuid);
+                // Remove from ignored entities list
+                EntitySpawnHandler.getInstance().unignoreEntity(activeUuid);
+                // Remove the entity
+                entity.discard();
+                removedCount++;
+            }
+        }
+
+        activeEntityToIndex.clear();
+        Architect.LOGGER.info("Removed {} room entities", removedCount);
+    }
+
+    /**
+     * Applica i blocchi delta di una room nel mondo.
+     * I blocchi delta sovrascrivono temporaneamente i blocchi base.
+     * Usa le stesse logiche di piazzamento della costruzione base:
+     * - Ordine per Y crescente (blocchi di supporto prima)
+     * - UPDATE_SKIP_ON_PLACE per evitare trigger
+     * - Svuota container prima di rimuoverli
+     * - Applica NBT dei block entity
+     */
+    private void applyRoomBlocks(ServerLevel world, Room room) {
+        // Prima svuota i container dei blocchi base che verranno sostituiti
+        for (BlockPos pos : room.getBlockChanges().keySet()) {
+            net.minecraft.world.level.block.entity.BlockEntity blockEntity = world.getBlockEntity(pos);
+            if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
+                clearable.clearContent();
+            }
+        }
+
+        // Ordina i blocchi per Y crescente per piazzare prima i blocchi di supporto
+        java.util.List<Map.Entry<BlockPos, BlockState>> sortedBlocks =
+            new java.util.ArrayList<>(room.getBlockChanges().entrySet());
+        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
+
+        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare orientamento e evitare trigger
+        int placementFlags = net.minecraft.world.level.block.Block.UPDATE_CLIENTS |
+                             net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE;
+
+        int appliedCount = 0;
+        int blockEntityCount = 0;
+
+        for (Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
+            BlockPos pos = entry.getKey();
+            BlockState state = entry.getValue();
+
+            // Piazza il blocco delta nel mondo
+            world.setBlock(pos, state, placementFlags);
+            appliedCount++;
+
+            // Applica NBT del block entity se presente
+            CompoundTag blockNbt = room.getBlockEntityNbt(pos);
+            if (blockNbt != null && !state.isAir()) {
+                net.minecraft.world.level.block.entity.BlockEntity blockEntity = world.getBlockEntity(pos);
+                if (blockEntity != null) {
+                    CompoundTag nbtCopy = blockNbt.copy();
+                    nbtCopy.putInt("x", pos.getX());
+                    nbtCopy.putInt("y", pos.getY());
+                    nbtCopy.putInt("z", pos.getZ());
+                    net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
+                        net.minecraft.util.ProblemReporter.DISCARDING,
+                        world.registryAccess(),
+                        nbtCopy
+                    );
+                    blockEntity.loadCustomOnly(input);
+                    blockEntity.setChanged();
+                    blockEntityCount++;
+                }
+            }
+        }
+
+        Architect.LOGGER.debug("Applied {} room blocks ({} block entities) for room '{}' in construction {}",
+            appliedCount, blockEntityCount, room.getId(), construction.getId());
+    }
+
+    /**
+     * Ripristina i blocchi base della costruzione dove la room aveva modifiche.
+     * Se un blocco della room non esiste nella costruzione base, viene messa aria.
+     * Usa le stesse logiche di rimozione/piazzamento della costruzione base:
+     * - Svuota container prima di rimuoverli
+     * - Ordine per Y crescente
+     * - UPDATE_SKIP_ON_PLACE per evitare trigger
+     * - Applica NBT dei block entity base
+     */
+    private void restoreBaseBlocks(ServerLevel world, Room room) {
+        // Prima svuota i container dei blocchi della room che verranno sostituiti
+        for (BlockPos pos : room.getBlockChanges().keySet()) {
+            net.minecraft.world.level.block.entity.BlockEntity blockEntity = world.getBlockEntity(pos);
+            if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
+                clearable.clearContent();
+            }
+        }
+
+        // Prepara la lista di blocchi da ripristinare
+        java.util.List<Map.Entry<BlockPos, BlockState>> blocksToRestore = new java.util.ArrayList<>();
+        for (BlockPos pos : room.getBlockChanges().keySet()) {
+            BlockState baseState = construction.getBlocks().get(pos);
+            if (baseState != null) {
+                blocksToRestore.add(Map.entry(pos, baseState));
+            } else {
+                // Se non c'era un blocco base, metti aria
+                blocksToRestore.add(Map.entry(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
+            }
+        }
+
+        // Ordina per Y crescente per piazzare prima i blocchi di supporto
+        blocksToRestore.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
+
+        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare orientamento e evitare trigger
+        int placementFlags = net.minecraft.world.level.block.Block.UPDATE_CLIENTS |
+                             net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE;
+
+        int restoredCount = 0;
+        int blockEntityCount = 0;
+
+        for (Map.Entry<BlockPos, BlockState> entry : blocksToRestore) {
+            BlockPos pos = entry.getKey();
+            BlockState state = entry.getValue();
+
+            world.setBlock(pos, state, placementFlags);
+            restoredCount++;
+
+            // Applica NBT del block entity base se presente
+            if (!state.isAir()) {
+                CompoundTag blockNbt = construction.getBlockEntityNbt(pos);
+                if (blockNbt != null) {
+                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = world.getBlockEntity(pos);
+                    if (blockEntity != null) {
+                        CompoundTag nbtCopy = blockNbt.copy();
+                        nbtCopy.putInt("x", pos.getX());
+                        nbtCopy.putInt("y", pos.getY());
+                        nbtCopy.putInt("z", pos.getZ());
+                        net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
+                            net.minecraft.util.ProblemReporter.DISCARDING,
+                            world.registryAccess(),
+                            nbtCopy
+                        );
+                        blockEntity.loadCustomOnly(input);
+                        blockEntity.setChanged();
+                        blockEntityCount++;
+                    }
+                }
+            }
+        }
+
+        Architect.LOGGER.debug("Restored {} base blocks ({} block entities) after exiting room '{}' in construction {}",
+            restoredCount, blockEntityCount, room.getId(), construction.getId());
+    }
+
+    /**
+     * Crea una nuova stanza e ci entra.
+     * @param name il nome della stanza
+     * @return la stanza creata, o null se non e' stato possibile crearla
+     */
+    public Room createRoom(String name) {
+        // Verifica limiti
+        if (construction.getRoomCount() >= 50) {
+            Architect.LOGGER.warn("Cannot create room: max rooms (50) reached for construction {}",
+                construction.getId());
+            return null;
+        }
+
+        // Crea la stanza
+        Room room = new Room(name);
+
+        // Verifica ID univoco
+        if (construction.hasRoom(room.getId())) {
+            // Aggiungi suffisso numerico
+            int suffix = 2;
+            String baseId = room.getId();
+            while (construction.hasRoom(baseId + "_" + suffix)) {
+                suffix++;
+            }
+            room = new Room(baseId + "_" + suffix, name, room.getCreatedAt());
+        }
+
+        construction.addRoom(room);
+
+        Architect.LOGGER.info("Player {} created room '{}' ({}) in construction {}",
+            player.getName().getString(), name, room.getId(), construction.getId());
+
+        // Entra nella stanza appena creata
+        enterRoom(room.getId());
+
+        return room;
+    }
+
+    /**
+     * Elimina una stanza.
+     * Se si sta editando quella stanza, esce prima.
+     * @param roomId l'ID della stanza da eliminare
+     * @return true se la stanza e' stata eliminata
+     */
+    public boolean deleteRoom(String roomId) {
+        // Se stiamo editando questa stanza, esci prima
+        if (roomId.equals(currentRoom)) {
+            exitRoom();
+        }
+
+        boolean removed = construction.removeRoom(roomId);
+
+        if (removed) {
+            Architect.LOGGER.info("Player {} deleted room '{}' from construction {}",
+                player.getName().getString(), roomId, construction.getId());
+
+            // Aggiorna UI
+            NetworkHandler.sendEditingInfo(player);
+        }
+
+        return removed;
+    }
+
+    /**
+     * Rinomina una stanza. Questo cambia sia il nome che l'ID (derivato dal nome).
+     * @param roomId ID attuale della stanza
+     * @param newName nuovo nome
+     * @return il nuovo ID della stanza, o null se fallisce
+     */
+    public String renameRoom(String roomId, String newName) {
+        // Genera il nuovo ID dal nome e delega al metodo completo
+        String newId = Room.generateId(newName);
+        return renameRoomWithId(roomId, newId, newName);
+    }
+
+    /**
+     * Rinomina una stanza specificando sia il nuovo ID che il nuovo nome.
+     * Usato dalla GUI quando si vuole impostare un ID personalizzato.
+     *
+     * @param roomId ID attuale della stanza
+     * @param newId nuovo ID (può essere diverso dal nome)
+     * @param newName nuovo nome
+     * @return il nuovo ID della stanza, o null se fallisce (ID già esistente)
+     */
+    public String renameRoomWithId(String roomId, String newId, String newName) {
+        Room oldRoom = construction.getRoom(roomId);
+        if (oldRoom == null) {
+            return null;
+        }
+
+        // Se l'ID non cambia, aggiorna solo il nome
+        if (newId.equals(roomId)) {
+            oldRoom.setName(newName);
+            Architect.LOGGER.info("Player {} renamed room '{}' (same ID) in construction {}",
+                player.getName().getString(), roomId, construction.getId());
+            NetworkHandler.sendEditingInfo(player);
+            return newId;
+        }
+
+        // Verifica che il nuovo ID non esista già
+        if (construction.hasRoom(newId)) {
+            Architect.LOGGER.warn("Cannot rename room '{}' to '{}': ID already exists",
+                roomId, newId);
+            return null;
+        }
+
+        // Crea una nuova stanza con ID e nome specificati, copiando i dati
+        Room newRoom = new Room(newId, newName, oldRoom.getCreatedAt());
+        // Copia tutti i blocchi
+        for (var entry : oldRoom.getBlockChanges().entrySet()) {
+            newRoom.setBlockChange(entry.getKey(), entry.getValue());
+        }
+        // Copia tutti i block entity NBT
+        for (var entry : oldRoom.getBlockEntityNbtMap().entrySet()) {
+            newRoom.setBlockEntityNbt(entry.getKey(), entry.getValue().copy());
+        }
+        // Copy all entities
+        for (EntityData data : oldRoom.getEntities()) {
+            newRoom.addEntity(data);
+        }
+
+        // Rimuovi la vecchia room e aggiungi la nuova
+        construction.removeRoom(roomId);
+        construction.addRoom(newRoom);
+
+        // Se l'utente era in questa room, aggiorna il riferimento
+        if (roomId.equals(currentRoom)) {
+            currentRoom = newId;
+        }
+
+        Architect.LOGGER.info("Player {} renamed room '{}' to '{}' (new ID: '{}') in construction {}",
+            player.getName().getString(), roomId, newName, newId, construction.getId());
+
+        // Aggiorna UI
+        NetworkHandler.sendEditingInfo(player);
+
+        return newId;
+    }
+
+    /**
+     * Ottiene la stanza corrente in editing, o null se non in una stanza.
+     */
+    public Room getCurrentRoomObject() {
+        if (currentRoom == null) {
+            return null;
+        }
+        return construction.getRoom(currentRoom);
+    }
+
+    /**
+     * Ottiene il conteggio blocchi effettivo per la visualizzazione.
+     * Se in una stanza, somma i blocchi base + le modifiche delta.
+     */
+    public int getEffectiveBlockCount() {
+        if (!isInRoom()) {
+            return construction.getBlockCount();
+        }
+
+        Room room = getCurrentRoomObject();
+        if (room == null) {
+            return construction.getBlockCount();
+        }
+
+        // Base blocks + delta changes (approssimativo)
+        return construction.getBlockCount() + room.getChangedBlockCount();
+    }
+
     // Getters e Setters
     public ServerPlayer getPlayer() { return player; }
     public Construction getConstruction() { return construction; }
@@ -226,4 +998,63 @@ public class EditingSession {
     public void setCurrentRoom(String currentRoom) { this.currentRoom = currentRoom; }
 
     public boolean isInRoom() { return currentRoom != null; }
+
+    /**
+     * Tracks an entity added to the current room/construction.
+     * @param activeUuid The UUID of the entity currently in the world
+     * @param listIndex The index of this entity in the room/construction entity list
+     */
+    public void trackEntity(UUID activeUuid, int listIndex) {
+        Architect.LOGGER.debug("trackEntity: activeUuid={}, listIndex={}, isInRoom={}, currentRoom={}",
+            activeUuid, listIndex, isInRoom(), currentRoom);
+        activeEntityToIndex.put(activeUuid, listIndex);
+    }
+
+    /**
+     * Removes an entity from tracking.
+     * @param activeUuid The UUID of the entity in the world
+     * @return The list index of the entity, or -1 if not tracked
+     */
+    public int untrackEntity(UUID activeUuid) {
+        Integer index = activeEntityToIndex.remove(activeUuid);
+        return index != null ? index : -1;
+    }
+
+    /**
+     * Checks if an entity is tracked.
+     * @param activeUuid The UUID of the entity in the world
+     * @return true if the entity is tracked
+     */
+    public boolean isEntityTracked(UUID activeUuid) {
+        return activeEntityToIndex.containsKey(activeUuid);
+    }
+
+    /**
+     * Gets the list index for a tracked entity.
+     * @param activeUuid The UUID of the entity in the world
+     * @return The list index, or -1 if not tracked
+     */
+    public int getEntityIndex(UUID activeUuid) {
+        Integer index = activeEntityToIndex.get(activeUuid);
+        return index != null ? index : -1;
+    }
+
+    /**
+     * Updates tracking indices after an entity is removed from the list.
+     * When an entity at index N is removed, all entities with index > N need to be decremented.
+     * @param removedIndex The index of the removed entity
+     */
+    public void updateTrackingAfterRemoval(int removedIndex) {
+        Map<UUID, Integer> updated = new HashMap<>();
+        for (Map.Entry<UUID, Integer> entry : activeEntityToIndex.entrySet()) {
+            int idx = entry.getValue();
+            if (idx > removedIndex) {
+                updated.put(entry.getKey(), idx - 1);
+            } else {
+                updated.put(entry.getKey(), idx);
+            }
+        }
+        activeEntityToIndex.clear();
+        activeEntityToIndex.putAll(updated);
+    }
 }

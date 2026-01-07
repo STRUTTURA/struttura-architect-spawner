@@ -9,6 +9,7 @@ import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EditMode;
+import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.registry.ModItems;
@@ -208,6 +209,39 @@ public class StrutturaCommand {
                         .executes(StrutturaCommand::executeMove)
                     )
                 )
+                .then(Commands.literal("room")
+                    .then(Commands.literal("edit")
+                        .then(Commands.argument("room_id", StringArgumentType.string())
+                            .suggests(ROOM_ID_SUGGESTIONS)
+                            .executes(StrutturaCommand::executeRoomEdit)
+                        )
+                    )
+                    .then(Commands.literal("done")
+                        .executes(StrutturaCommand::executeRoomDone)
+                    )
+                    .then(Commands.literal("create")
+                        .then(Commands.argument("name", StringArgumentType.greedyString())
+                            .executes(StrutturaCommand::executeRoomCreate)
+                        )
+                    )
+                    .then(Commands.literal("delete")
+                        .then(Commands.argument("room_id", StringArgumentType.string())
+                            .suggests(ROOM_ID_SUGGESTIONS)
+                            .executes(StrutturaCommand::executeRoomDelete)
+                        )
+                    )
+                    .then(Commands.literal("list")
+                        .executes(StrutturaCommand::executeRoomList)
+                    )
+                    .then(Commands.literal("rename")
+                        .then(Commands.argument("room_id", StringArgumentType.string())
+                            .suggests(ROOM_ID_SUGGESTIONS)
+                            .then(Commands.argument("new_name", StringArgumentType.greedyString())
+                                .executes(StrutturaCommand::executeRoomRename)
+                            )
+                        )
+                    )
+                )
         );
     }
 
@@ -217,6 +251,19 @@ public class StrutturaCommand {
             java.util.List.of("en", "it", "de", "fr", "es", "pt", "ru", "zh", "ja", "ko"),
             builder
         );
+
+    // Suggerimenti per gli ID delle stanze nella costruzione corrente
+    private static final SuggestionProvider<CommandSourceStack> ROOM_ID_SUGGESTIONS =
+        (context, builder) -> {
+            java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+            if (context.getSource().getEntity() instanceof ServerPlayer player) {
+                EditingSession session = EditingSession.getSession(player);
+                if (session != null) {
+                    ids.addAll(session.getConstruction().getRooms().keySet());
+                }
+            }
+            return SharedSuggestionProvider.suggest(ids, builder);
+        };
 
     // Suggerimenti per gli ID dei blocchi (solo quelli presenti nella costruzione corrente)
     private static final SuggestionProvider<CommandSourceStack> BLOCK_ID_SUGGESTIONS =
@@ -1804,5 +1851,267 @@ public class StrutturaCommand {
         ), true);
 
         return 1;
+    }
+
+    // ===== Comandi Room =====
+
+    /**
+     * Esegue /struttura room edit <room_id>
+     * Entra in modalità editing di una stanza esistente.
+     */
+    private static int executeRoomEdit(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Verifica che sia in editing
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_editing")));
+            return 0;
+        }
+
+        String roomId = StringArgumentType.getString(ctx, "room_id");
+
+        // Verifica che la stanza esista
+        if (!session.getConstruction().hasRoom(roomId)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_found", roomId)));
+            return 0;
+        }
+
+        // Entra in editing della stanza
+        if (session.enterRoom(roomId)) {
+            Room room = session.getConstruction().getRoom(roomId);
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "room.editing", room.getName(), roomId)
+            ), false);
+            return 1;
+        } else {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.edit_failed", roomId)));
+            return 0;
+        }
+    }
+
+    /**
+     * Esegue /struttura room done
+     * Termina l'editing della stanza corrente e torna all'editing base.
+     */
+    private static int executeRoomDone(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Verifica che sia in editing
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_editing")));
+            return 0;
+        }
+
+        // Verifica che sia in una stanza
+        if (!session.isInRoom()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_in_room")));
+            return 0;
+        }
+
+        String roomId = session.getCurrentRoom();
+        session.exitRoom();
+
+        source.sendSuccess(() -> Component.literal(
+            I18n.tr(player, "room.done", roomId)
+        ), false);
+
+        return 1;
+    }
+
+    /**
+     * Esegue /struttura room create <name>
+     * Crea una nuova stanza e ci entra.
+     */
+    private static int executeRoomCreate(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Verifica che sia in editing
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_editing")));
+            return 0;
+        }
+
+        // Verifica limite stanze
+        if (session.getConstruction().getRoomCount() >= 50) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.max_reached")));
+            return 0;
+        }
+
+        String name = StringArgumentType.getString(ctx, "name");
+
+        // Verifica lunghezza nome
+        if (name.length() > 100) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.name_too_long")));
+            return 0;
+        }
+
+        // Crea la stanza
+        Room room = session.createRoom(name);
+        if (room != null) {
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "room.created", room.getName(), room.getId())
+            ), true);
+            return 1;
+        } else {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.create_failed")));
+            return 0;
+        }
+    }
+
+    /**
+     * Esegue /struttura room delete <room_id>
+     * Elimina una stanza esistente.
+     */
+    private static int executeRoomDelete(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Verifica che sia in editing
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_editing")));
+            return 0;
+        }
+
+        String roomId = StringArgumentType.getString(ctx, "room_id");
+
+        // Verifica che la stanza esista
+        if (!session.getConstruction().hasRoom(roomId)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_found", roomId)));
+            return 0;
+        }
+
+        // Elimina la stanza
+        if (session.deleteRoom(roomId)) {
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "room.deleted", roomId)
+            ), true);
+            return 1;
+        } else {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.delete_failed", roomId)));
+            return 0;
+        }
+    }
+
+    /**
+     * Esegue /struttura room list
+     * Elenca tutte le stanze della costruzione corrente.
+     */
+    private static int executeRoomList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Verifica che sia in editing
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_editing")));
+            return 0;
+        }
+
+        Construction construction = session.getConstruction();
+        Map<String, Room> rooms = construction.getRooms();
+
+        if (rooms.isEmpty()) {
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "room.list_empty")
+            ), false);
+            return 1;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(I18n.tr(player, "room.list_header", rooms.size()));
+
+        for (Room room : rooms.values()) {
+            sb.append("\n  - ");
+            sb.append(room.getName());
+            sb.append(" (");
+            sb.append(room.getId());
+            sb.append(") - ");
+            sb.append(I18n.tr(player, "room.block_changes", room.getChangedBlockCount()));
+
+            // Indica se e' la stanza corrente
+            if (room.getId().equals(session.getCurrentRoom())) {
+                sb.append(" [*]");
+            }
+        }
+
+        final String message = sb.toString();
+        source.sendSuccess(() -> Component.literal(message), false);
+
+        return 1;
+    }
+
+    /**
+     * Esegue /struttura room rename <room_id> <new_name>
+     * Rinomina una stanza esistente.
+     */
+    private static int executeRoomRename(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Verifica che sia in editing
+        EditingSession session = EditingSession.getSession(player);
+        if (session == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_editing")));
+            return 0;
+        }
+
+        String roomId = StringArgumentType.getString(ctx, "room_id");
+        String newName = StringArgumentType.getString(ctx, "new_name");
+
+        // Verifica che la stanza esista
+        if (!session.getConstruction().hasRoom(roomId)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.not_found", roomId)));
+            return 0;
+        }
+
+        // Verifica lunghezza nome
+        if (newName.length() > 100) {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.name_too_long")));
+            return 0;
+        }
+
+        // Rinomina la stanza (restituisce il nuovo ID o null se fallisce)
+        String newId = session.renameRoom(roomId, newName);
+        if (newId != null) {
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "room.renamed", roomId, newName) +
+                (newId.equals(roomId) ? "" : "\nNew ID: " + newId)
+            ), true);
+            return 1;
+        } else {
+            source.sendFailure(Component.literal(I18n.tr(player, "room.rename_failed", roomId)));
+            return 0;
+        }
     }
 }

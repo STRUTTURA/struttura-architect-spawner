@@ -9,6 +9,7 @@ import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
+import it.magius.struttura.architect.model.Room;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
@@ -159,20 +160,23 @@ public class ApiClient {
         }
         json.add("descriptions", descriptions);
 
-        json.addProperty("blockCount", construction.getBlockCount());
-        json.addProperty("solidBlockCount", construction.getSolidBlockCount());
-        json.addProperty("entityCount", construction.getEntityCount());
+        // Conteggi totali (base + tutte le stanze)
+        json.addProperty("blockCount", construction.getTotalBlockCount());
+        json.addProperty("solidBlockCount", construction.getTotalSolidBlockCount());
+        json.addProperty("entityCount", construction.getTotalEntityCount());
 
-        // Bounds
+        // Bounds (normalizzati: min=0, max=size-1)
         JsonObject bounds = new JsonObject();
         var b = construction.getBounds();
         if (b.isValid()) {
-            bounds.addProperty("minX", b.getMinX());
-            bounds.addProperty("minY", b.getMinY());
-            bounds.addProperty("minZ", b.getMinZ());
-            bounds.addProperty("maxX", b.getMaxX());
-            bounds.addProperty("maxY", b.getMaxY());
-            bounds.addProperty("maxZ", b.getMaxZ());
+            // I bounds nel metadata devono essere relativi (0,0,0 based)
+            // perché i blocchi sono salvati con coordinate normalizzate
+            bounds.addProperty("minX", 0);
+            bounds.addProperty("minY", 0);
+            bounds.addProperty("minZ", 0);
+            bounds.addProperty("maxX", b.getSizeX() - 1);
+            bounds.addProperty("maxY", b.getSizeY() - 1);
+            bounds.addProperty("maxZ", b.getSizeZ() - 1);
         }
         json.add("bounds", bounds);
 
@@ -193,6 +197,19 @@ public class ApiClient {
             modsObject.add(mod.getModId(), modJson);
         }
         json.add("mods", modsObject);
+
+        // Stanze (room metadata) - array format
+        com.google.gson.JsonArray roomsArray = new com.google.gson.JsonArray();
+        for (Room room : construction.getRooms().values()) {
+            JsonObject roomJson = new JsonObject();
+            roomJson.addProperty("id", room.getId());
+            roomJson.addProperty("name", room.getName());
+            roomJson.addProperty("createdAt", room.getCreatedAt().toString());
+            roomJson.addProperty("blockChanges", room.getChangedBlockCount());
+            roomJson.addProperty("entityCount", room.getEntityCount());
+            roomsArray.add(roomJson);
+        }
+        json.add("rooms", roomsArray);
 
         // Versione del mod Struttura
         json.addProperty("strutturaVersion", Architect.MOD_VERSION);
@@ -275,6 +292,51 @@ public class ApiClient {
         root.put("blocks", blocksList);
         root.putInt("version", 1);
 
+        // Salva i delta delle stanze
+        CompoundTag roomsTag = new CompoundTag();
+        for (Room room : construction.getRooms().values()) {
+            if (room.getChangedBlockCount() > 0) {
+                CompoundTag roomTag = new CompoundTag();
+                ListTag roomBlocksList = new ListTag();
+
+                for (Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
+                    BlockPos pos = entry.getKey();
+                    BlockState state = entry.getValue();
+
+                    String stateString = serializeBlockState(state);
+
+                    // Aggiungi alla palette condivisa se non esiste
+                    int paletteIndex = palette.computeIfAbsent(stateString, s -> {
+                        CompoundTag paletteEntry = new CompoundTag();
+                        paletteEntry.putString("state", s);
+                        paletteList.add(paletteEntry);
+                        return palette.size();
+                    });
+
+                    CompoundTag blockTag = new CompoundTag();
+                    // Coordinate relative (normalizzate)
+                    blockTag.putInt("x", pos.getX() - offsetX);
+                    blockTag.putInt("y", pos.getY() - offsetY);
+                    blockTag.putInt("z", pos.getZ() - offsetZ);
+                    blockTag.putInt("p", paletteIndex);
+
+                    // NBT del block entity se presente
+                    CompoundTag blockEntityNbt = room.getBlockEntityNbt(pos);
+                    if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                        blockTag.put("nbt", blockEntityNbt);
+                    }
+
+                    roomBlocksList.add(blockTag);
+                }
+
+                roomTag.put("blocks", roomBlocksList);
+                roomsTag.put(room.getId(), roomTag);
+            }
+        }
+        if (!roomsTag.isEmpty()) {
+            root.put("rooms", roomsTag);
+        }
+
         // Comprimi in memoria
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         NbtIo.writeCompressed(root, baos);
@@ -297,9 +359,7 @@ public class ApiClient {
 
         ListTag entitiesList = new ListTag();
 
-        for (Map.Entry<UUID, EntityData> entry : construction.getEntities().entrySet()) {
-            EntityData data = entry.getValue();
-
+        for (EntityData data : construction.getEntities()) {
             CompoundTag entityTag = new CompoundTag();
             entityTag.putString("type", data.getEntityType());
             entityTag.putDouble("x", data.getRelativePos().x);
@@ -343,6 +403,62 @@ public class ApiClient {
         }
 
         root.put("entities", entitiesList);
+
+        // Entità delle stanze
+        CompoundTag roomsTag = new CompoundTag();
+        for (Room room : construction.getRooms().values()) {
+            if (!room.getEntities().isEmpty()) {
+                CompoundTag roomTag = new CompoundTag();
+                ListTag roomEntitiesList = new ListTag();
+
+                for (EntityData data : room.getEntities()) {
+                    CompoundTag entityTag = new CompoundTag();
+                    entityTag.putString("type", data.getEntityType());
+                    entityTag.putDouble("x", data.getRelativePos().x);
+                    entityTag.putDouble("y", data.getRelativePos().y);
+                    entityTag.putDouble("z", data.getRelativePos().z);
+                    entityTag.putFloat("yaw", data.getYaw());
+                    entityTag.putFloat("pitch", data.getPitch());
+
+                    // Copia l'NBT e normalizza coordinate per entità hanging
+                    CompoundTag nbt = data.getNbt().copy();
+
+                    // MC 1.21+ usa "block_pos" (CompoundTag con X, Y, Z)
+                    if (nbt.contains("block_pos")) {
+                        nbt.getCompound("block_pos").ifPresent(blockPos -> {
+                            int x = blockPos.getIntOr("X", 0);
+                            int y = blockPos.getIntOr("Y", 0);
+                            int z = blockPos.getIntOr("Z", 0);
+
+                            // Normalizza sottraendo i bounds minimi
+                            blockPos.putInt("X", x - minX);
+                            blockPos.putInt("Y", y - minY);
+                            blockPos.putInt("Z", z - minZ);
+                        });
+                    }
+                    // Fallback per vecchi formati (TileX/Y/Z)
+                    else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+                        int tileX = nbt.getIntOr("TileX", 0);
+                        int tileY = nbt.getIntOr("TileY", 0);
+                        int tileZ = nbt.getIntOr("TileZ", 0);
+
+                        // Normalizza sottraendo i bounds minimi
+                        nbt.putInt("TileX", tileX - minX);
+                        nbt.putInt("TileY", tileY - minY);
+                        nbt.putInt("TileZ", tileZ - minZ);
+                    }
+                    entityTag.put("nbt", nbt);
+
+                    roomEntitiesList.add(entityTag);
+                }
+
+                roomTag.put("entities", roomEntitiesList);
+                roomsTag.put(room.getId(), roomTag);
+            }
+        }
+        if (!roomsTag.isEmpty()) {
+            root.put("rooms", roomsTag);
+        }
 
         // Comprimi in memoria
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -768,6 +884,37 @@ public class ApiClient {
             }
             construction.setRequiredMods(requiredMods);
 
+            // Parse i bounds dal metadata (necessari per denormalizzare le coordinate)
+            if (metadata.has("bounds") && metadata.get("bounds").isJsonObject()) {
+                JsonObject boundsObj = metadata.getAsJsonObject("bounds");
+                if (boundsObj.has("minX") && boundsObj.has("maxX")) {
+                    int minX = boundsObj.get("minX").getAsInt();
+                    int minY = boundsObj.get("minY").getAsInt();
+                    int minZ = boundsObj.get("minZ").getAsInt();
+                    int maxX = boundsObj.get("maxX").getAsInt();
+                    int maxY = boundsObj.get("maxY").getAsInt();
+                    int maxZ = boundsObj.get("maxZ").getAsInt();
+                    construction.getBounds().set(minX, minY, minZ, maxX, maxY, maxZ);
+                }
+            }
+
+            // Parse rooms dai metadati (crea le Room vuote, i blocchi/entità verranno caricati dopo)
+            if (metadata.has("rooms") && metadata.get("rooms").isJsonArray()) {
+                com.google.gson.JsonArray roomsArray = metadata.getAsJsonArray("rooms");
+                for (JsonElement element : roomsArray) {
+                    JsonObject roomJson = element.getAsJsonObject();
+
+                    String roomId = roomJson.get("id").getAsString();
+                    String roomName = roomJson.has("name") ? roomJson.get("name").getAsString() : roomId;
+                    java.time.Instant roomCreatedAt = roomJson.has("createdAt")
+                        ? java.time.Instant.parse(roomJson.get("createdAt").getAsString())
+                        : java.time.Instant.now();
+
+                    Room room = new Room(roomId, roomName, roomCreatedAt);
+                    construction.addRoom(room);
+                }
+            }
+
             // Deserializza i blocchi da NBT compresso (dati binari diretti, non base64)
             if (blocksData != null && blocksData.length > 0) {
                 deserializeBlocksFromNbt(construction, blocksData);
@@ -777,9 +924,6 @@ public class ApiClient {
             if (entitiesData != null && entitiesData.length > 0) {
                 deserializeEntitiesFromNbt(construction, entitiesData);
             }
-
-            Architect.LOGGER.info("Parsed construction {} with {} blocks, {} entities",
-                constructionId, construction.getBlockCount(), construction.getEntityCount());
 
             return construction;
 
@@ -791,11 +935,18 @@ public class ApiClient {
 
     /**
      * Deserializza i blocchi da NBT compresso e li aggiunge alla costruzione.
-     * I blocchi hanno coordinate relative (normalizzate a 0,0,0).
+     * I blocchi nel file hanno coordinate relative (normalizzate a 0,0,0).
+     * Vengono denormalizzati usando i bounds della costruzione.
      */
     private static void deserializeBlocksFromNbt(Construction construction, byte[] nbtBytes) throws IOException {
         ByteArrayInputStream bais = new ByteArrayInputStream(nbtBytes);
         CompoundTag root = NbtIo.readCompressed(bais, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+
+        // Ottieni i bounds per denormalizzare le coordinate (caricati dal metadata)
+        var bounds = construction.getBounds();
+        int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
+        int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
+        int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
 
         // Leggi la palette - MC 1.21 API con Optional
         ListTag paletteList = root.getList("palette").orElse(new ListTag());
@@ -808,24 +959,59 @@ public class ApiClient {
             palette.add(state);
         }
 
-        // Leggi i blocchi (coordinate relative)
+        // Leggi i blocchi (denormalizzando le coordinate)
         ListTag blocksList = root.getList("blocks").orElse(new ListTag());
         for (int i = 0; i < blocksList.size(); i++) {
             CompoundTag blockTag = blocksList.getCompound(i).orElseThrow();
-            int x = blockTag.getInt("x").orElse(0);
-            int y = blockTag.getInt("y").orElse(0);
-            int z = blockTag.getInt("z").orElse(0);
+            int x = blockTag.getInt("x").orElse(0) + offsetX;
+            int y = blockTag.getInt("y").orElse(0) + offsetY;
+            int z = blockTag.getInt("z").orElse(0) + offsetZ;
             int paletteIndex = blockTag.getInt("p").orElse(0);
 
             BlockPos pos = new BlockPos(x, y, z);
             BlockState state = palette.get(paletteIndex);
 
             // Se presente, leggi l'NBT del block entity
+            // Usa addBlockRaw per non alterare i bounds già caricati dal metadata
             CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
             if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                construction.addBlock(pos, state, blockEntityNbt);
+                construction.addBlockRaw(pos, state, blockEntityNbt);
             } else {
-                construction.addBlock(pos, state);
+                construction.addBlockRaw(pos, state);
+            }
+        }
+
+        // Carica i delta delle stanze (denormalizzando le coordinate)
+        CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
+        if (roomsTag != null) {
+            for (String roomId : roomsTag.keySet()) {
+                Room room = construction.getRoom(roomId);
+                if (room == null) {
+                    continue;
+                }
+
+                CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
+                if (roomTag == null) continue;
+
+                ListTag roomBlocksList = roomTag.getList("blocks").orElse(new ListTag());
+
+                for (int i = 0; i < roomBlocksList.size(); i++) {
+                    CompoundTag blockTag = roomBlocksList.getCompound(i).orElseThrow();
+                    int x = blockTag.getInt("x").orElse(0) + offsetX;
+                    int y = blockTag.getInt("y").orElse(0) + offsetY;
+                    int z = blockTag.getInt("z").orElse(0) + offsetZ;
+                    int paletteIndex = blockTag.getInt("p").orElse(0);
+
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = palette.get(paletteIndex);
+
+                    CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
+                    if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                        room.setBlockChange(pos, state, blockEntityNbt);
+                    } else {
+                        room.setBlockChange(pos, state);
+                    }
+                }
             }
         }
     }
@@ -853,8 +1039,43 @@ public class ApiClient {
             Vec3 relativePos = new Vec3(x, y, z);
             EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
 
-            // Genera un nuovo UUID per ogni entità
-            construction.addEntity(UUID.randomUUID(), data);
+            // No UUID needed - just add to list
+            construction.addEntity(data);
+        }
+
+        // Carica le entità delle stanze
+        CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
+        if (roomsTag != null) {
+            for (String roomId : roomsTag.keySet()) {
+                Room room = construction.getRoom(roomId);
+                if (room == null) {
+                    Architect.LOGGER.warn("Room {} not found in metadata, skipping entities", roomId);
+                    continue;
+                }
+
+                CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
+                if (roomTag == null) continue;
+
+                ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
+
+                for (int i = 0; i < roomEntitiesList.size(); i++) {
+                    CompoundTag entityTag = roomEntitiesList.getCompound(i).orElseThrow();
+
+                    String type = entityTag.getString("type").orElse("");
+                    double x = entityTag.getDouble("x").orElse(0.0);
+                    double y = entityTag.getDouble("y").orElse(0.0);
+                    double z = entityTag.getDouble("z").orElse(0.0);
+                    float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+                    float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+                    CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+
+                    Vec3 relativePos = new Vec3(x, y, z);
+                    EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+
+                    // No UUID needed - just add to list
+                    room.addEntity(data);
+                }
+            }
         }
     }
 

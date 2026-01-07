@@ -10,11 +10,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Packet S2C for syncing the block list to client during editing.
- * Contains a list of block types with their display names and counts.
+ * Packet S2C for syncing the block and entity list to client during editing.
+ * Contains a list of block types with their display names and counts,
+ * plus a list of entities with their types and UUIDs.
  */
 public record BlockListPacket(
-    List<BlockInfo> blocks
+    List<BlockInfo> blocks,
+    List<EntityInfo> entities
 ) implements CustomPacketPayload {
 
     public static final CustomPacketPayload.Type<BlockListPacket> TYPE =
@@ -46,25 +48,56 @@ public record BlockListPacket(
     }
 
     /**
-     * Create an empty packet (no blocks).
+     * Info about an entity type (grouped by type with count).
+     */
+    public record EntityInfo(
+        String entityType,
+        String displayName,
+        int count
+    ) {
+        private static EntityInfo read(FriendlyByteBuf buf) {
+            String entityType = buf.readUtf(256);
+            String displayName = buf.readUtf(128);
+            int count = buf.readVarInt();
+            return new EntityInfo(entityType, displayName, count);
+        }
+
+        private static void write(FriendlyByteBuf buf, EntityInfo info) {
+            buf.writeUtf(info.entityType, 256);
+            buf.writeUtf(info.displayName, 128);
+            buf.writeVarInt(info.count);
+        }
+    }
+
+    /**
+     * Create an empty packet (no blocks, no entities).
      */
     public static BlockListPacket empty() {
-        return new BlockListPacket(List.of());
+        return new BlockListPacket(List.of(), List.of());
     }
 
     private static BlockListPacket read(FriendlyByteBuf buf) {
-        int count = buf.readVarInt();
-        List<BlockInfo> blocks = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
+        int blockCount = buf.readVarInt();
+        List<BlockInfo> blocks = new ArrayList<>(blockCount);
+        for (int i = 0; i < blockCount; i++) {
             blocks.add(BlockInfo.read(buf));
         }
-        return new BlockListPacket(blocks);
+        int entityCount = buf.readVarInt();
+        List<EntityInfo> entities = new ArrayList<>(entityCount);
+        for (int i = 0; i < entityCount; i++) {
+            entities.add(EntityInfo.read(buf));
+        }
+        return new BlockListPacket(blocks, entities);
     }
 
     private static void write(FriendlyByteBuf buf, BlockListPacket packet) {
         buf.writeVarInt(packet.blocks.size());
         for (BlockInfo info : packet.blocks) {
             BlockInfo.write(buf, info);
+        }
+        buf.writeVarInt(packet.entities.size());
+        for (EntityInfo info : packet.entities) {
+            EntityInfo.write(buf, info);
         }
     }
 

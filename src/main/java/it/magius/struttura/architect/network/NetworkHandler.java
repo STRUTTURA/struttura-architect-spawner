@@ -8,6 +8,7 @@ import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EditMode;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
+import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.registry.ModItems;
 import it.magius.struttura.architect.selection.SelectionManager;
@@ -147,7 +148,8 @@ public class NetworkHandler {
 
     /**
      * Invia le posizioni dei blocchi della costruzione in editing.
-     * Include anche i blocchi di anteprima (quelli nella selezione che verranno aggiunti).
+     * Include anche i blocchi di anteprima (quelli nella selezione che verranno aggiunti)
+     * e i blocchi della room corrente (se in editing room).
      */
     public static void sendBlockPositions(ServerPlayer player) {
         EditingSession session = EditingSession.getSession(player);
@@ -171,22 +173,39 @@ public class NetworkHandler {
             }
         }
 
-        // Calcola i blocchi di anteprima (nella selezione ma non nella costruzione)
-        List<BlockPos> previewBlocks = calculatePreviewBlocks(player, construction);
+        // Calcola i blocchi di anteprima (nella selezione ma non nel target - costruzione o room)
+        // La stessa funzione gestisce sia building che room editing in modo centralizzato
+        List<BlockPos> previewBlocks = calculatePreviewBlocks(player, session);
 
-        BlockPositionsSyncPacket packet = new BlockPositionsSyncPacket(solidBlocks, airBlocks, previewBlocks);
+        // Calcola i blocchi della room corrente (se in editing room)
+        List<BlockPos> roomBlocks = new ArrayList<>();
+        if (session.isInRoom()) {
+            Room room = session.getCurrentRoomObject();
+            if (room != null) {
+                roomBlocks.addAll(room.getBlockChanges().keySet());
+            }
+        }
+
+        BlockPositionsSyncPacket packet = new BlockPositionsSyncPacket(solidBlocks, airBlocks, previewBlocks, roomBlocks);
         ServerPlayNetworking.send(player, packet);
 
-        Architect.LOGGER.debug("Sent block positions to {}: {} solid, {} air, {} preview",
-            player.getName().getString(), solidBlocks.size(), airBlocks.size(), previewBlocks.size());
+        Architect.LOGGER.debug("Sent block positions to {}: {} solid, {} air, {} preview, {} room",
+            player.getName().getString(), solidBlocks.size(), airBlocks.size(), previewBlocks.size(), roomBlocks.size());
     }
 
     /**
      * Calcola i blocchi che verranno modificati con select apply.
-     * In mode ADD: blocchi nell'area che NON sono già nella costruzione e NON sono aria (verranno aggiunti).
-     * In mode REMOVE: blocchi nell'area che SONO nella costruzione (verranno rimossi).
+     * Gestisce sia building editing che room editing in modo centralizzato.
+     *
+     * In mode ADD: blocchi nell'area che NON sono già nel target (verranno aggiunti).
+     *              Include tutti i blocchi (anche aria) perché l'esclusione dell'aria avviene
+     *              solo al momento dell'APPLY (con o senza includeAir flag).
+     * In mode REMOVE: blocchi nell'area che SONO nel target (verranno rimossi).
+     *
+     * @param player il giocatore
+     * @param session la sessione di editing (contiene construction e eventuale room)
      */
-    private static List<BlockPos> calculatePreviewBlocks(ServerPlayer player, Construction construction) {
+    private static List<BlockPos> calculatePreviewBlocks(ServerPlayer player, EditingSession session) {
         SelectionManager.Selection selection = SelectionManager.getInstance().getSelection(player);
 
         // Se non c'è selezione completa, nessun blocco di anteprima
@@ -194,16 +213,13 @@ public class NetworkHandler {
             return List.of();
         }
 
-        // Ottieni la modalità dalla sessione
-        EditingSession session = EditingSession.getSession(player);
-        if (session == null) {
-            return List.of();
-        }
         EditMode mode = session.getMode();
+        boolean inRoom = session.isInRoom();
+        Room room = inRoom ? session.getCurrentRoomObject() : null;
+        Construction construction = session.getConstruction();
 
         BlockPos min = selection.getMin();
         BlockPos max = selection.getMax();
-        ServerLevel level = (ServerLevel) player.level();
 
         List<BlockPos> previewBlocks = new ArrayList<>();
 
@@ -214,22 +230,34 @@ public class NetworkHandler {
                     BlockPos pos = new BlockPos(x, y, z);
 
                     if (mode == EditMode.ADD) {
-                        // Mode ADD: mostra blocchi che verranno aggiunti
-                        // Salta se già nella costruzione
-                        if (construction.containsBlock(pos)) {
-                            continue;
-                        }
-                        // Salta i blocchi aria
-                        BlockState state = level.getBlockState(pos);
-                        if (state.isAir()) {
-                            continue;
+                        // Mode ADD: mostra TUTTI i blocchi che verranno aggiunti
+                        // Salta solo se già nel target (room o construction)
+                        // L'aria viene mostrata perché l'utente può scegliere APPLY ALL per includerla
+                        if (inRoom && room != null) {
+                            // In room editing: controlla se è già nella room
+                            if (room.hasBlockChange(pos)) {
+                                continue;
+                            }
+                        } else {
+                            // In building editing: controlla se è già nella construction
+                            if (construction.containsBlock(pos)) {
+                                continue;
+                            }
                         }
                         previewBlocks.add(pos);
                     } else {
                         // Mode REMOVE: mostra blocchi che verranno rimossi
-                        // Mostra solo se è nella costruzione
-                        if (construction.containsBlock(pos)) {
-                            previewBlocks.add(pos);
+                        // Mostra solo se è nel target (room o construction)
+                        if (inRoom && room != null) {
+                            // In room editing: controlla se è nella room
+                            if (room.hasBlockChange(pos)) {
+                                previewBlocks.add(pos);
+                            }
+                        } else {
+                            // In building editing: controlla se è nella construction
+                            if (construction.containsBlock(pos)) {
+                                previewBlocks.add(pos);
+                            }
                         }
                     }
                 }
@@ -338,7 +366,8 @@ public class NetworkHandler {
     }
 
     private static void handlePos1(ServerPlayer player) {
-        BlockPos targetPos = player.blockPosition().below();
+        // Usa le coordinate precise del giocatore, funziona anche in spectator mode
+        BlockPos targetPos = BlockPos.containing(player.getX(), player.getY(), player.getZ());
         SelectionManager.getInstance().setPos1(player, targetPos);
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "selection.pos1_set", targetPos.getX(), targetPos.getY(), targetPos.getZ())));
@@ -346,7 +375,8 @@ public class NetworkHandler {
     }
 
     private static void handlePos2(ServerPlayer player) {
-        BlockPos targetPos = player.blockPosition().below();
+        // Usa le coordinate precise del giocatore, funziona anche in spectator mode
+        BlockPos targetPos = BlockPos.containing(player.getX(), player.getY(), player.getZ());
         SelectionManager.getInstance().setPos2(player, targetPos);
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "selection.pos2_set", targetPos.getX(), targetPos.getY(), targetPos.getZ())));
@@ -376,8 +406,12 @@ public class NetworkHandler {
         ServerLevel level = (ServerLevel) player.level();
         EditMode mode = session.getMode();
 
+        // Check if we're editing a room
+        boolean inRoom = session.isInRoom();
+        Room room = inRoom ? session.getCurrentRoomObject() : null;
+
         if (mode == EditMode.ADD) {
-            // Mode ADD: aggiungi i blocchi alla costruzione
+            // Mode ADD: aggiungi i blocchi alla costruzione o stanza
             int addedCount = 0;
             int skippedAir = 0;
 
@@ -393,8 +427,14 @@ public class NetworkHandler {
                             continue;
                         }
 
-                        // Aggiungi il blocco alla costruzione
-                        construction.addBlock(pos, state);
+                        // Aggiungi il blocco alla costruzione o stanza
+                        if (inRoom && room != null) {
+                            room.setBlockChange(pos, state);
+                            // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
+                            construction.getBounds().expandToInclude(pos);
+                        } else {
+                            construction.addBlock(pos, state);
+                        }
                         addedCount++;
                     }
                 }
@@ -405,24 +445,34 @@ public class NetworkHandler {
             sendWireframeSync(player);
             sendBlockList(player);
 
+            int totalBlocks = inRoom && room != null ? room.getChangedBlockCount() : construction.getBlockCount();
             player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "select.apply.add_success", addedCount, skippedAir, construction.getBlockCount())));
+                    I18n.tr(player, "select.apply.add_success", addedCount, skippedAir, totalBlocks)));
         } else {
-            // Mode REMOVE: rimuovi i blocchi dalla costruzione
+            // Mode REMOVE: rimuovi i blocchi dalla costruzione o stanza
             int removedCount = 0;
-            int skippedNotInConstruction = 0;
+            int skippedNotInTarget = 0;
 
             for (int x = min.getX(); x <= max.getX(); x++) {
                 for (int y = min.getY(); y <= max.getY(); y++) {
                     for (int z = min.getZ(); z <= max.getZ(); z++) {
                         BlockPos pos = new BlockPos(x, y, z);
 
-                        // Rimuovi solo se il blocco è nella costruzione
-                        if (construction.containsBlock(pos)) {
-                            construction.removeBlock(pos);
-                            removedCount++;
+                        // Rimuovi solo se il blocco è nel target (costruzione o stanza)
+                        if (inRoom && room != null) {
+                            if (room.hasBlockChange(pos)) {
+                                room.removeBlockChange(pos);
+                                removedCount++;
+                            } else {
+                                skippedNotInTarget++;
+                            }
                         } else {
-                            skippedNotInConstruction++;
+                            if (construction.containsBlock(pos)) {
+                                construction.removeBlock(pos);
+                                removedCount++;
+                            } else {
+                                skippedNotInTarget++;
+                            }
                         }
                     }
                 }
@@ -433,8 +483,9 @@ public class NetworkHandler {
             sendWireframeSync(player);
             sendBlockList(player);
 
+            int totalBlocks = inRoom && room != null ? room.getChangedBlockCount() : construction.getBlockCount();
             player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "select.apply.remove_success", removedCount, skippedNotInConstruction, construction.getBlockCount())));
+                    I18n.tr(player, "select.apply.remove_success", removedCount, skippedNotInTarget, totalBlocks)));
         }
     }
 
@@ -473,7 +524,14 @@ public class NetworkHandler {
             case "spawn" -> handleGuiSpawn(player, targetId);
             case "move" -> handleGuiMove(player, targetId);
             case "remove_block" -> handleGuiRemoveBlock(player, targetId);
+            case "remove_entity" -> handleGuiRemoveEntity(player, targetId);  // targetId = entityType (e.g., "minecraft:pig")
             case "short_desc" -> handleGuiShortDesc(player, targetId, extraData);  // targetId = langId
+            case "room_create" -> handleGuiRoomCreate(player, targetId, extraData);  // targetId = roomId, extraData = roomName
+            case "room_edit" -> handleGuiRoomEdit(player, targetId);
+            case "room_delete" -> handleGuiRoomDelete(player, targetId);
+            case "room_rename" -> handleGuiRoomRename(player, targetId, extraData);  // targetId = oldId, extraData = newId|newName
+            case "room_exit" -> handleGuiRoomExit(player, true);  // Exit room, return to building editing
+            case "room_exit_nomob" -> handleGuiRoomExit(player, false);  // Exit room without saving entities
             default -> Architect.LOGGER.warn("Unknown GUI action: {}", action);
         }
     }
@@ -1158,6 +1216,33 @@ public class NetworkHandler {
             // Aggiorna l'NBT dei block entity
             construction.getBlockEntityNbtMap().clear();
             construction.getBlockEntityNbtMap().putAll(newBlockEntityNbt);
+
+            // Aggiorna anche le coordinate delle room (traslate insieme alla costruzione)
+            for (Room room : construction.getRooms().values()) {
+                java.util.Map<BlockPos, BlockState> newRoomBlocks = new java.util.HashMap<>();
+                java.util.Map<BlockPos, CompoundTag> newRoomNbt = new java.util.HashMap<>();
+
+                for (java.util.Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
+                    BlockPos originalPos = entry.getKey();
+                    BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
+                    newRoomBlocks.put(newPos, entry.getValue());
+
+                    CompoundTag nbt = room.getBlockEntityNbt(originalPos);
+                    if (nbt != null) {
+                        CompoundTag nbtCopy = nbt.copy();
+                        nbtCopy.putInt("x", newPos.getX());
+                        nbtCopy.putInt("y", newPos.getY());
+                        nbtCopy.putInt("z", newPos.getZ());
+                        newRoomNbt.put(newPos, nbtCopy);
+                    }
+                }
+
+                // Sostituisci i blocchi della room con quelli traslati
+                room.getBlockChanges().clear();
+                room.getBlockChanges().putAll(newRoomBlocks);
+                room.getBlockEntityNbtMap().clear();
+                room.getBlockEntityNbtMap().putAll(newRoomNbt);
+            }
         }
 
         // Spawna le entità con l'offset appropriato
@@ -1359,6 +1444,322 @@ public class NetworkHandler {
             player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
                     I18n.tr(player, "remove_block.not_found", blockId)));
         }
+    }
+
+    /**
+     * Handles remove_entity action via GUI.
+     * Removes ALL entities of a specific type from the construction or room.
+     */
+    private static void handleGuiRemoveEntity(ServerPlayer player, String entityType) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+        Construction construction = session.getConstruction();
+        boolean inRoom = session.isInRoom();
+        it.magius.struttura.architect.model.Room room = inRoom ? session.getCurrentRoomObject() : null;
+
+        // Get the entity list
+        java.util.List<it.magius.struttura.architect.model.EntityData> entityList;
+        if (inRoom && room != null) {
+            entityList = room.getEntities();
+        } else {
+            entityList = construction.getEntities();
+        }
+
+        // Find indices of all entities matching this type (iterate in reverse to safely remove)
+        java.util.List<Integer> indicesToRemove = new java.util.ArrayList<>();
+        for (int i = 0; i < entityList.size(); i++) {
+            if (entityList.get(i).getEntityType().equals(entityType)) {
+                indicesToRemove.add(i);
+            }
+        }
+
+        // Remove all matching entities from construction/room (in reverse order to maintain correct indices)
+        int removedCount = 0;
+        for (int i = indicesToRemove.size() - 1; i >= 0; i--) {
+            int indexToRemove = indicesToRemove.get(i);
+            boolean removed;
+            if (inRoom && room != null) {
+                removed = room.removeEntity(indexToRemove);
+            } else {
+                removed = construction.removeEntity(indexToRemove);
+            }
+            if (removed) {
+                removedCount++;
+            }
+        }
+
+        // Clear all tracking since we're removing entities (simpler than tracking each index shift)
+        // The tracking will be rebuilt when entities are spawned again if needed
+
+        // Also discard all entities of this type in the world within construction bounds
+        ServerLevel world = (ServerLevel) player.level();
+        var bounds = construction.getBounds();
+        if (bounds.isValid()) {
+            net.minecraft.world.phys.AABB aabb = new net.minecraft.world.phys.AABB(
+                bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
+                bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
+            );
+
+            // Find all entities of this type in the bounds
+            java.util.List<Entity> entitiesToDiscard = world.getEntitiesOfClass(
+                Entity.class,
+                aabb,
+                e -> {
+                    if (e instanceof net.minecraft.world.entity.player.Player) return false;
+                    String eType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
+                        .getKey(e.getType()).toString();
+                    return eType.equals(entityType);
+                }
+            );
+
+            for (Entity entity : entitiesToDiscard) {
+                java.util.UUID uuid = entity.getUUID();
+                // Untrack the entity
+                session.untrackEntity(uuid);
+                it.magius.struttura.architect.entity.EntityFreezeHandler.getInstance().unfreezeEntity(uuid);
+                it.magius.struttura.architect.entity.EntitySpawnHandler.getInstance().unignoreEntity(uuid);
+                entity.discard();
+            }
+        }
+
+        if (removedCount > 0) {
+            // Update UI
+            sendWireframeSync(player);
+            sendEditingInfo(player);
+            sendBlockList(player);
+
+            // Get display name from entity type
+            net.minecraft.resources.Identifier entityLoc = net.minecraft.resources.Identifier.tryParse(entityType);
+            String displayName = entityType;
+            if (entityLoc != null) {
+                var entityTypeObj = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getValue(entityLoc);
+                if (entityTypeObj != null) {
+                    displayName = entityTypeObj.getDescription().getString();
+                }
+            }
+
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                    I18n.tr(player, "entity.removed_count", removedCount, displayName)));
+        } else {
+            player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+                    I18n.tr(player, "entity.error.not_found")));
+        }
+    }
+
+    /**
+     * Gestisce l'azione room_create via GUI.
+     * Crea una nuova stanza e entra in editing.
+     */
+    private static void handleGuiRoomCreate(ServerPlayer player, String roomId, String roomName) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+        Construction construction = session.getConstruction();
+
+        // Verifica che l'ID sia valido
+        if (roomId == null || roomId.isEmpty()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "room.error.invalid_id")));
+            return;
+        }
+
+        // Verifica che non esista già una stanza con lo stesso ID
+        if (construction.getRoom(roomId) != null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "room.error.exists", roomId)));
+            return;
+        }
+
+        // Crea la stanza
+        Room room = new Room(roomId);
+        if (roomName != null && !roomName.isEmpty()) {
+            room.setName(roomName);
+        }
+        construction.addRoom(room);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "room.created", roomId)));
+
+        // Entra in editing della stanza
+        session.enterRoom(roomId);
+
+        // Aggiorna il client
+        sendWireframeSync(player);
+        sendEditingInfo(player);
+    }
+
+    /**
+     * Gestisce l'azione room_edit via GUI.
+     * Entra in editing di una stanza esistente.
+     */
+    private static void handleGuiRoomEdit(ServerPlayer player, String roomId) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+        Construction construction = session.getConstruction();
+
+        // Verifica che la stanza esista
+        if (construction.getRoom(roomId) == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "room.not_found", roomId)));
+            return;
+        }
+
+        // Entra in editing della stanza
+        session.enterRoom(roomId);
+
+        // Aggiorna il client
+        sendWireframeSync(player);
+        sendEditingInfo(player);
+    }
+
+    /**
+     * Gestisce l'azione room_delete via GUI.
+     * Elimina una stanza.
+     */
+    private static void handleGuiRoomDelete(ServerPlayer player, String roomId) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+        Construction construction = session.getConstruction();
+
+        // Verifica che la stanza esista
+        if (construction.getRoom(roomId) == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "room.not_found", roomId)));
+            return;
+        }
+
+        // Se siamo in editing della stanza che vogliamo eliminare, usciamo prima
+        if (session.isInRoom() && roomId.equals(session.getCurrentRoom())) {
+            session.exitRoom();
+        }
+
+        // Elimina la stanza
+        construction.removeRoom(roomId);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "room.deleted", roomId)));
+
+        // Aggiorna il client
+        sendWireframeSync(player);
+        sendEditingInfo(player);
+    }
+
+    /**
+     * Gestisce l'azione room_rename via GUI.
+     * Rinomina una stanza con nuovo ID e nome.
+     * @param oldId ID attuale della stanza
+     * @param extraData formato: "newId|newName"
+     */
+    private static void handleGuiRoomRename(ServerPlayer player, String oldId, String extraData) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+
+        // Parse extraData: newId|newName
+        String[] parts = extraData.split("\\|", 2);
+        if (parts.length < 2) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "room.error.invalid_data")));
+            return;
+        }
+
+        String newId = parts[0];
+        String newName = parts[1];
+
+        // Verifica che l'ID sia valido
+        if (newId == null || newId.isEmpty()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "room.error.invalid_id")));
+            return;
+        }
+
+        // Verifica lunghezza nome
+        if (newName.length() > 100) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "room.name_too_long")));
+            return;
+        }
+
+        // Rinomina la stanza (restituisce il nuovo ID o null se fallisce)
+        String resultId = session.renameRoomWithId(oldId, newId, newName);
+        if (resultId != null) {
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                    I18n.tr(player, "room.renamed", oldId, newName) +
+                    (resultId.equals(oldId) ? "" : "\nNew ID: " + resultId)));
+        } else {
+            // Fallimento: probabilmente ID già esistente
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "room.error.exists", newId)));
+        }
+
+        // Aggiorna il client
+        sendWireframeSync(player);
+        sendEditingInfo(player);
+    }
+
+    /**
+     * Gestisce l'azione room_exit via GUI.
+     * Esce dalla modalità editing room e torna all'editing building.
+     * @param saveEntities se true mantiene le entità, se false le rimuove dalla room
+     */
+    private static void handleGuiRoomExit(ServerPlayer player, boolean saveEntities) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+
+        if (!session.isInRoom()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "room.not_in_room")));
+            return;
+        }
+
+        String roomId = session.getCurrentRoom();
+
+        // Se non salviamo le entità, rimuovile dalla room
+        if (!saveEntities) {
+            Room room = session.getCurrentRoomObject();
+            if (room != null) {
+                room.clearEntities();
+                Architect.LOGGER.info("Cleared entities from room {} (exit nomob)", roomId);
+            }
+        }
+
+        // Esci dalla room
+        session.exitRoom();
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "room.exited", roomId)));
+
+        // Aggiorna il client
+        sendWireframeSync(player);
+        sendEditingInfo(player);
     }
 
     /**
@@ -1587,20 +1988,87 @@ public class NetworkHandler {
         String shortDesc = construction.getShortDescriptionWithFallback(lang);
         if (shortDesc == null) shortDesc = "";
 
-        int airCount = construction.getBlockCount() - construction.getSolidBlockCount();
+        // Room info
+        boolean inRoom = session.isInRoom();
+        String currentRoomId = "";
+        String currentRoomName = "";
+        int roomBlockChanges = 0;
+
+        // Stats to send - use total stats (base + all rooms) for building editing
+        int statsBlockCount = construction.getTotalBlockCount();
+        int statsSolidBlockCount = construction.getTotalSolidBlockCount();
+        int statsAirCount = construction.getTotalAirBlockCount();
+        int statsEntityCount = construction.getTotalEntityCount();
+        int statsMobCount = construction.getTotalMobCount();
+        String statsBoundsStr = boundsStr;
+
+        if (inRoom) {
+            currentRoomId = session.getCurrentRoom();
+            var room = construction.getRoom(currentRoomId);
+            if (room != null) {
+                currentRoomName = room.getName();
+                roomBlockChanges = room.getChangedBlockCount();
+
+                // Calculate room-specific stats
+                int roomSolidBlocks = 0;
+                int roomAirBlocks = 0;
+                for (var entry : room.getBlockChanges().entrySet()) {
+                    if (entry.getValue().isAir()) {
+                        roomAirBlocks++;
+                    } else {
+                        roomSolidBlocks++;
+                    }
+                }
+
+                // Override stats with room-specific values
+                statsBlockCount = room.getChangedBlockCount();
+                statsSolidBlockCount = roomSolidBlocks;
+                statsAirCount = roomAirBlocks;
+                statsEntityCount = room.getEntityCount();
+                // Count mobs in room entities
+                statsMobCount = 0;
+                for (var entityData : room.getEntities()) {
+                    if (entityData != null && Construction.isMobEntity(entityData.getEntityType())) {
+                        statsMobCount++;
+                    }
+                }
+                // Rooms don't have their own bounds, so show N/A
+                statsBoundsStr = "N/A";
+            }
+        }
+
+        // Build room list
+        java.util.List<EditingInfoPacket.RoomInfo> roomList = new java.util.ArrayList<>();
+        for (var room : construction.getRooms().values()) {
+            roomList.add(new EditingInfoPacket.RoomInfo(
+                room.getId(),
+                room.getName(),
+                room.getChangedBlockCount(),
+                room.getEntityCount()
+            ));
+        }
+        // Sort by name
+        roomList.sort((a, b) -> a.name().compareToIgnoreCase(b.name()));
 
         EditingInfoPacket packet = new EditingInfoPacket(
                 true,
                 construction.getId(),
                 title,
-                construction.getBlockCount(),
-                construction.getSolidBlockCount(),
-                airCount,
-                construction.getEntityCount(),
-                construction.getMobCount(),
-                boundsStr,
+                statsBlockCount,
+                statsSolidBlockCount,
+                statsAirCount,
+                statsEntityCount,
+                statsMobCount,
+                statsBoundsStr,
                 session.getMode().name(),
-                shortDesc
+                shortDesc,
+                // Room fields
+                inRoom,
+                currentRoomId,
+                currentRoomName,
+                construction.getRoomCount(),
+                roomBlockChanges,
+                roomList
         );
 
         ServerPlayNetworking.send(player, packet);
@@ -1638,7 +2106,7 @@ public class NetworkHandler {
     }
 
     /**
-     * Invia la lista blocchi al client per il dropdown nel pannello editing.
+     * Invia la lista blocchi e entità al client per il dropdown nel pannello editing.
      */
     public static void sendBlockList(ServerPlayer player) {
         EditingSession session = EditingSession.getSession(player);
@@ -1648,6 +2116,10 @@ public class NetworkHandler {
         }
 
         Construction construction = session.getConstruction();
+        boolean inRoom = session.isInRoom();
+        it.magius.struttura.architect.model.Room room = inRoom ? session.getCurrentRoomObject() : null;
+
+        // --- Build block list ---
         java.util.Map<String, Integer> blockCounts = construction.getBlockCounts();
 
         List<BlockListPacket.BlockInfo> blocks = new ArrayList<>();
@@ -1668,14 +2140,53 @@ public class NetworkHandler {
             blocks.add(new BlockListPacket.BlockInfo(blockId, displayName, count));
         }
 
-        // Sort by count descending
+        // Sort blocks by count descending
         blocks.sort((a, b) -> Integer.compare(b.count(), a.count()));
 
-        ServerPlayNetworking.send(player, new BlockListPacket(blocks));
+        // --- Build entity list (grouped by type) ---
+        java.util.List<it.magius.struttura.architect.model.EntityData> entityList;
+
+        if (inRoom && room != null) {
+            entityList = room.getEntities();
+        } else {
+            entityList = construction.getEntities();
+        }
+
+        // Count entities by type
+        java.util.Map<String, Integer> entityCounts = new java.util.HashMap<>();
+        for (it.magius.struttura.architect.model.EntityData data : entityList) {
+            String entityType = data.getEntityType();
+            entityCounts.merge(entityType, 1, Integer::sum);
+        }
+
+        // Build entity info list
+        List<BlockListPacket.EntityInfo> entities = new ArrayList<>();
+        for (java.util.Map.Entry<String, Integer> entry : entityCounts.entrySet()) {
+            String entityType = entry.getKey();
+            int count = entry.getValue();
+
+            // Get display name from entity type
+            net.minecraft.resources.Identifier entityLoc = net.minecraft.resources.Identifier.tryParse(entityType);
+            String displayName = entityType; // fallback
+            if (entityLoc != null) {
+                var entityTypeObj = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getValue(entityLoc);
+                if (entityTypeObj != null) {
+                    displayName = entityTypeObj.getDescription().getString();
+                }
+            }
+
+            entities.add(new BlockListPacket.EntityInfo(entityType, displayName, count));
+        }
+
+        // Sort entities by count descending
+        entities.sort((a, b) -> Integer.compare(b.count(), a.count()));
+
+        ServerPlayNetworking.send(player, new BlockListPacket(blocks, entities));
     }
 
     /**
      * Invia la lista delle costruzioni al client.
+     * Usa i totali (base + room) per blockCount e entityCount.
      */
     public static void sendConstructionList(ServerPlayer player) {
         List<ConstructionListPacket.ConstructionInfo> list = new ArrayList<>();
@@ -1689,8 +2200,8 @@ public class NetworkHandler {
             list.add(new ConstructionListPacket.ConstructionInfo(
                     c.getId(),
                     c.getTitleWithFallback(lang),
-                    c.getBlockCount(),
-                    c.getEntityCount(),
+                    c.getTotalBlockCount(),
+                    c.getTotalEntityCount(),
                     isEditing
             ));
         }
@@ -1703,8 +2214,8 @@ public class NetworkHandler {
                 list.add(new ConstructionListPacket.ConstructionInfo(
                         c.getId(),
                         c.getTitleWithFallback(lang),
-                        c.getBlockCount(),
-                        c.getEntityCount(),
+                        c.getTotalBlockCount(),
+                        c.getTotalEntityCount(),
                         true
                 ));
             }
@@ -1798,14 +2309,14 @@ public class NetworkHandler {
     // ===== Entity spawning =====
 
     /**
-     * Spawna le entità di una costruzione nel mondo.
+     * Spawns entities of a construction into the world.
      *
-     * @param construction la costruzione
-     * @param level il ServerLevel dove spawnare
-     * @param originX offset X per le coordinate (0 per piazzamento originale)
-     * @param originY offset Y per le coordinate (0 per piazzamento originale)
-     * @param originZ offset Z per le coordinate (0 per piazzamento originale)
-     * @return il numero di entità spawnate
+     * @param construction the construction
+     * @param level the ServerLevel to spawn into
+     * @param originX X offset for coordinates (0 for original placement)
+     * @param originY Y offset for coordinates (0 for original placement)
+     * @param originZ Z offset for coordinates (0 for original placement)
+     * @return the number of spawned entities
      */
     public static int spawnConstructionEntities(Construction construction, ServerLevel level,
                                                  int originX, int originY, int originZ) {
@@ -1815,8 +2326,7 @@ public class NetworkHandler {
 
         int spawnedCount = 0;
 
-        for (Map.Entry<UUID, EntityData> entry : construction.getEntities().entrySet()) {
-            EntityData data = entry.getValue();
+        for (EntityData data : construction.getEntities()) {
 
             try {
                 // Calcola la posizione nel mondo

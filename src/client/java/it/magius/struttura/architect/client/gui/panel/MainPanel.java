@@ -185,26 +185,23 @@ public class MainPanel {
                 }
 
                 // Construction info
-                String idText = info.id();
-                if (idText.length() > 28) {
-                    idText = idText.substring(0, 25) + "...";
-                }
+                int maxTextWidth = WIDTH - PADDING * 2 - 6;
+                String idText = truncateToWidth(font, info.id(), maxTextWidth);
                 int idColor = info.isBeingEdited() ? 0xFFFFAA00 : 0xFFFFFFFF;
                 graphics.drawString(font, idText, x + PADDING + 3, itemY + 2, idColor, false);
 
-                // Title (max 20 chars) + block/entity count
+                // Title + block/entity count: "title - Xb/Ye" or "title - Xb"
                 String titleText = info.title().isEmpty() ? "(no title)" : info.title();
-                if (titleText.length() > 20) {
-                    titleText = titleText.substring(0, 17) + "...";
-                }
-                // Format: title - Xblk, Yent (or just Xblk if entityCount == 0)
                 String countPart = info.entityCount() > 0
-                    ? info.blockCount() + "blk, " + info.entityCount() + "ent"
-                    : info.blockCount() + " blk";
-                String detailText = titleText + " - " + countPart;
-                if (detailText.length() > 38) {
-                    detailText = detailText.substring(0, 35) + "...";
-                }
+                    ? info.blockCount() + "b/" + info.entityCount() + "e"
+                    : info.blockCount() + "b";
+                String separator = " - ";
+                String suffix = separator + countPart;
+                // Truncate title to fit, keeping suffix always visible
+                int suffixWidth = font.width(suffix);
+                int availableForTitle = maxTextWidth - suffixWidth;
+                String truncatedTitle = truncateToWidth(font, titleText, availableForTitle);
+                String detailText = truncatedTitle + suffix;
                 graphics.drawString(font, detailText, x + PADDING + 3, itemY + 11, 0xFF808080, false);
             }
         }
@@ -1053,5 +1050,30 @@ public class MainPanel {
         }
 
         return true; // Consume click within modal
+    }
+
+    /**
+     * Truncates a string to fit within the given pixel width, adding "..." if truncated.
+     */
+    private String truncateToWidth(Font font, String text, int maxWidth) {
+        if (font.width(text) <= maxWidth) {
+            return text;
+        }
+        String ellipsis = "...";
+        int ellipsisWidth = font.width(ellipsis);
+        int availableWidth = maxWidth - ellipsisWidth;
+        if (availableWidth <= 0) {
+            return ellipsis;
+        }
+        // Binary search or simple iteration to find max length
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            sb.append(text.charAt(i));
+            if (font.width(sb.toString()) > availableWidth) {
+                sb.deleteCharAt(sb.length() - 1);
+                break;
+            }
+        }
+        return sb.toString() + ellipsis;
     }
 }
