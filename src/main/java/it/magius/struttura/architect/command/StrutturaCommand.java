@@ -15,6 +15,8 @@ import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.registry.ModItems;
 import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
+import it.magius.struttura.architect.vanilla.VanillaBatchPushState;
+import it.magius.struttura.architect.vanilla.VanillaStructureLoader;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.server.permissions.Permissions;
@@ -239,6 +241,20 @@ public class StrutturaCommand {
                             .then(Commands.argument("new_name", StringArgumentType.greedyString())
                                 .executes(StrutturaCommand::executeRoomRename)
                             )
+                        )
+                    )
+                )
+                .then(Commands.literal("vanilla")
+                    .then(Commands.literal("list")
+                        .executes(StrutturaCommand::executeVanillaList)
+                        .then(Commands.argument("filter", StringArgumentType.greedyString())
+                            .executes(StrutturaCommand::executeVanillaListFiltered)
+                        )
+                    )
+                    .then(Commands.literal("batchpush")
+                        .executes(StrutturaCommand::executeVanillaBatchPush)
+                        .then(Commands.argument("filter", StringArgumentType.greedyString())
+                            .executes(StrutturaCommand::executeVanillaBatchPushFiltered)
                         )
                     )
                 )
@@ -2113,5 +2129,619 @@ public class StrutturaCommand {
             source.sendFailure(Component.literal(I18n.tr(player, "room.rename_failed", roomId)));
             return 0;
         }
+    }
+
+    // ===== Vanilla Commands =====
+
+    /**
+     * Executes /struttura vanilla list
+     * Lists all available vanilla structure templates.
+     */
+    private static int executeVanillaList(CommandContext<CommandSourceStack> ctx) {
+        return executeVanillaListCommon(ctx, null);
+    }
+
+    /**
+     * Executes /struttura vanilla list <filter>
+     * Lists vanilla structure templates matching the filter.
+     */
+    private static int executeVanillaListFiltered(CommandContext<CommandSourceStack> ctx) {
+        String filter = StringArgumentType.getString(ctx, "filter");
+        return executeVanillaListCommon(ctx, filter);
+    }
+
+    /**
+     * Common logic for vanilla list command.
+     */
+    private static int executeVanillaListCommon(CommandContext<CommandSourceStack> ctx, String filter) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+
+        // Discover or filter structures
+        java.util.List<VanillaStructureLoader.VanillaStructureInfo> structures;
+        if (filter != null && !filter.isEmpty()) {
+            structures = VanillaStructureLoader.searchStructures(level, filter);
+        } else {
+            structures = VanillaStructureLoader.discoverStructures(level);
+        }
+
+        if (structures.isEmpty()) {
+            if (filter != null) {
+                source.sendSuccess(() -> Component.literal(
+                    I18n.tr(player, "vanilla.list.no_match", filter)
+                ), false);
+            } else {
+                source.sendSuccess(() -> Component.literal(
+                    I18n.tr(player, "vanilla.list.empty")
+                ), false);
+            }
+            return 1;
+        }
+
+        // Build list message
+        StringBuilder sb = new StringBuilder();
+        sb.append(I18n.tr(player, "vanilla.list.header", structures.size()));
+
+        // Show first 20 structures (to avoid chat spam)
+        int shown = 0;
+        for (VanillaStructureLoader.VanillaStructureInfo info : structures) {
+            if (shown >= 20) {
+                sb.append("\n... ").append(I18n.tr(player, "vanilla.list.more", structures.size() - 20));
+                break;
+            }
+            sb.append("\n  - ").append(info.templateId().getPath());
+            shown++;
+        }
+
+        if (filter == null) {
+            sb.append("\n").append(I18n.tr(player, "vanilla.list.hint"));
+        }
+
+        final String message = sb.toString();
+        source.sendSuccess(() -> Component.literal(message), false);
+
+        return 1;
+    }
+
+    /**
+     * Executes /struttura vanilla batchpush
+     * Pushes all vanilla structures to the server.
+     */
+    private static int executeVanillaBatchPush(CommandContext<CommandSourceStack> ctx) {
+        return executeVanillaBatchPushCommon(ctx, null);
+    }
+
+    /**
+     * Executes /struttura vanilla batchpush <filter>
+     * Pushes vanilla structures matching the filter.
+     */
+    private static int executeVanillaBatchPushFiltered(CommandContext<CommandSourceStack> ctx) {
+        String filter = StringArgumentType.getString(ctx, "filter");
+        return executeVanillaBatchPushCommon(ctx, filter);
+    }
+
+    /**
+     * Common logic for vanilla batchpush command.
+     * Two-phase approach:
+     * 1. Load all constructions into memory (not spawned in world)
+     * 2. For each: spawn -> screenshot -> destroy -> async upload -> next
+     */
+    private static int executeVanillaBatchPushCommon(CommandContext<CommandSourceStack> ctx, String filter) {
+        CommandSourceStack source = ctx.getSource();
+
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        // Player must not be in editing mode
+        if (EditingSession.hasSession(player)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "vanilla.batchpush.exit_editing")));
+            return 0;
+        }
+
+        // Check if player already has an active batch push
+        if (VanillaBatchPushState.hasActiveState(player)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "vanilla.batchpush.already_running")));
+            return 0;
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+
+        // Discover or filter structures
+        java.util.List<VanillaStructureLoader.VanillaStructureInfo> structures;
+        if (filter != null && !filter.isEmpty()) {
+            structures = VanillaStructureLoader.searchStructures(level, filter);
+        } else {
+            structures = VanillaStructureLoader.discoverStructures(level);
+        }
+
+        if (structures.isEmpty()) {
+            if (filter != null) {
+                source.sendFailure(Component.literal(I18n.tr(player, "vanilla.list.no_match", filter)));
+            } else {
+                source.sendFailure(Component.literal(I18n.tr(player, "vanilla.list.empty")));
+            }
+            return 0;
+        }
+
+        // Create state
+        VanillaBatchPushState state = VanillaBatchPushState.start(player, level, new java.util.ArrayList<>(structures));
+        state.setState(VanillaBatchPushState.State.LOADING_ALL);
+
+        // Phase 1: Load all constructions into memory
+        source.sendSuccess(() -> Component.literal(
+            I18n.tr(player, "vanilla.batchpush.loading", structures.size())
+        ), false);
+
+        Architect.LOGGER.info("Player {} starting vanilla batchpush - loading {} structures",
+            player.getName().getString(), structures.size());
+
+        loadAllConstructions(state);
+
+        return 1;
+    }
+
+    /**
+     * Phase 1: Load all constructions into memory without spawning them.
+     * After loading, starts phase 2 (processing).
+     */
+    private static void loadAllConstructions(VanillaBatchPushState state) {
+        ServerPlayer player = state.getPlayer();
+        ServerLevel level = state.getLevel();
+        ConstructionRegistry registry = ConstructionRegistry.getInstance();
+
+        int loadedCount = 0;
+        int failedCount = 0;
+
+        for (VanillaStructureLoader.VanillaStructureInfo info : state.getStructures()) {
+            String constructionId = info.constructionId();
+
+            // Remove existing if present
+            if (registry.exists(constructionId)) {
+                registry.unregister(constructionId);
+            }
+
+            // Load the structure (skip loot chests)
+            VanillaStructureLoader.LoadResult result = VanillaStructureLoader.loadStructure(level, info, true);
+
+            if (!result.success()) {
+                Architect.LOGGER.warn("Failed to load vanilla structure {}: {}", info.templateId(), result.message());
+                failedCount++;
+                continue;
+            }
+
+            Construction construction = result.construction();
+
+            // Determine screenshot title
+            String screenshotTitle = construction.getTitle("en");
+            if (screenshotTitle == null || screenshotTitle.isEmpty()) {
+                screenshotTitle = info.templateId().getPath();
+            }
+
+            // Store for phase 2 (don't register yet - will register when spawning)
+            state.addLoadedConstruction(new VanillaBatchPushState.LoadedConstruction(
+                info, construction, screenshotTitle
+            ));
+            loadedCount++;
+        }
+
+        Architect.LOGGER.info("Loaded {} constructions ({} failed)", loadedCount, failedCount);
+
+        if (loadedCount == 0) {
+            player.sendSystemMessage(Component.literal(
+                I18n.tr(player, "vanilla.batchpush.load_failed")
+            ));
+            state.fail();
+            return;
+        }
+
+        // Start phase 2: processing
+        player.sendSystemMessage(Component.literal(
+            I18n.tr(player, "vanilla.batchpush.starting", loadedCount)
+        ));
+
+        state.setState(VanillaBatchPushState.State.PROCESSING);
+        state.setCurrentIndex(0);
+
+        // Start processing first construction
+        processNextConstruction(state);
+    }
+
+    /**
+     * Phase 2: Process constructions one by one.
+     * Flow: spawn -> request screenshot -> wait for client response
+     * (continuation in onVanillaScreenshotReceived)
+     */
+    private static void processNextConstruction(VanillaBatchPushState state) {
+        ServerPlayer player = state.getPlayer();
+        ServerLevel level = state.getLevel();
+
+        // Check for async upload errors
+        if (state.hasUploadError()) {
+            player.sendSystemMessage(Component.literal(
+                "§c[Struttura] Upload error: " + state.getUploadErrorMessage()
+            ));
+            Architect.LOGGER.error("Batch push aborted due to upload error: {}", state.getUploadErrorMessage());
+            state.fail();
+            return;
+        }
+
+        // Check if batch is complete
+        if (state.isComplete()) {
+            player.sendSystemMessage(Component.literal(
+                I18n.tr(player, "vanilla.batchpush.complete", state.getSuccessCount(), state.getFailCount())
+            ));
+            Architect.LOGGER.info("Vanilla batchpush complete: {} success, {} failed",
+                state.getSuccessCount(), state.getFailCount());
+            state.complete();
+            return;
+        }
+
+        VanillaBatchPushState.LoadedConstruction loaded = state.getCurrentLoadedConstruction();
+        if (loaded == null) {
+            state.fail();
+            return;
+        }
+
+        String constructionId = loaded.info().constructionId();
+        Construction construction = loaded.construction();
+
+        state.setCurrentConstructionId(constructionId);
+        state.setCurrentConstruction(construction);
+
+        // Send progress message
+        player.sendSystemMessage(Component.literal(
+            I18n.tr(player, "vanilla.batchpush.processing",
+                state.getCurrentIndex() + 1, state.getLoadedCount(), constructionId)
+        ));
+
+        // Spawn the construction in front of the player
+        BlockPos spawnPos = spawnConstructionForScreenshot(player, level, construction);
+        state.setSpawnPosition(spawnPos);
+
+        // Set state to waiting for screenshot and request it immediately
+        // The client will respond when ready (after rendering)
+        state.setState(VanillaBatchPushState.State.WAITING_SCREENSHOT);
+        NetworkHandler.sendScreenshotRequest(player, constructionId, loaded.screenshotTitle());
+        Architect.LOGGER.debug("Requested screenshot for vanilla structure: {}", constructionId);
+    }
+
+    /**
+     * Spawns a construction in front of the player at a distance optimized for screenshot.
+     * Returns the spawn position (min corner).
+     */
+    private static BlockPos spawnConstructionForScreenshot(ServerPlayer player, ServerLevel level, Construction construction) {
+        if (construction.getBlockCount() == 0) {
+            return player.blockPosition();
+        }
+
+        var bounds = construction.getBounds();
+        int sizeX = bounds.getSizeX();
+        int sizeY = bounds.getSizeY();
+        int sizeZ = bounds.getSizeZ();
+
+        int originalMinX = bounds.getMinX();
+        int originalMinY = bounds.getMinY();
+        int originalMinZ = bounds.getMinZ();
+
+        // Calculate spawn position in front of player
+        float yaw = player.getYRot();
+        double radians = Math.toRadians(yaw);
+        double dirX = -Math.sin(radians);
+        double dirZ = Math.cos(radians);
+
+        // Calculate distance for screenshot - structure should fit in view
+        // Use max dimension to ensure structure fits in frame
+        int maxSize = Math.max(Math.max(sizeX, sizeY), sizeZ);
+        // Distance = half structure size + some margin for good framing
+        int distance = (maxSize / 2) + Math.max(5, maxSize / 3);
+
+        int offsetX = (int) Math.round(player.getX() + dirX * distance) - originalMinX - sizeX / 2;
+        int offsetY = (int) player.getY() - originalMinY;
+        int offsetZ = (int) Math.round(player.getZ() + dirZ * distance) - originalMinZ - sizeZ / 2;
+
+        // Place blocks
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
+
+        java.util.List<java.util.Map.Entry<BlockPos, BlockState>> sortedBlocks =
+            new java.util.ArrayList<>(construction.getBlocks().entrySet());
+        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
+
+        for (java.util.Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
+            BlockPos originalPos = entry.getKey();
+            BlockState blockState = entry.getValue();
+            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
+            if (!blockState.isAir()) {
+                level.setBlock(newPos, blockState, placementFlags);
+
+                // Apply block entity NBT if present
+                net.minecraft.nbt.CompoundTag blockNbt = construction.getBlockEntityNbt(originalPos);
+                if (blockNbt != null) {
+                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(newPos);
+                    if (blockEntity != null) {
+                        net.minecraft.nbt.CompoundTag nbtCopy = blockNbt.copy();
+                        nbtCopy.putInt("x", newPos.getX());
+                        nbtCopy.putInt("y", newPos.getY());
+                        nbtCopy.putInt("z", newPos.getZ());
+                        net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
+                            net.minecraft.util.ProblemReporter.DISCARDING,
+                            level.registryAccess(),
+                            nbtCopy
+                        );
+                        blockEntity.loadCustomOnly(input);
+                        blockEntity.setChanged();
+                    }
+                }
+            }
+        }
+
+        // Spawn entities
+        for (var entityData : construction.getEntities()) {
+            try {
+                net.minecraft.world.phys.Vec3 relativePos = entityData.getRelativePos();
+                double worldX = relativePos.x + originalMinX + offsetX;
+                double worldY = relativePos.y + originalMinY + offsetY;
+                double worldZ = relativePos.z + originalMinZ + offsetZ;
+
+                // Prepare NBT for entity creation
+                net.minecraft.nbt.CompoundTag nbt = entityData.getNbt();
+                if (nbt == null) {
+                    nbt = new net.minecraft.nbt.CompoundTag();
+                } else {
+                    nbt = nbt.copy();
+                }
+
+                // Ensure NBT contains the entity type id
+                if (!nbt.contains("id")) {
+                    nbt.putString("id", entityData.getEntityType());
+                }
+
+                // Remove UUID to avoid conflicts
+                nbt.remove("UUID");
+
+                // Update block_pos for hanging entities (paintings, item frames, etc.)
+                // MC 1.21+ uses "block_pos" (CompoundTag with X, Y, Z)
+                if (nbt.contains("block_pos")) {
+                    nbt.getCompound("block_pos").ifPresent(blockPos -> {
+                        int bpX = blockPos.getIntOr("X", 0);
+                        int bpY = blockPos.getIntOr("Y", 0);
+                        int bpZ = blockPos.getIntOr("Z", 0);
+                        // Add offset to convert from relative to world coordinates
+                        blockPos.putInt("X", bpX + offsetX);
+                        blockPos.putInt("Y", bpY + offsetY);
+                        blockPos.putInt("Z", bpZ + offsetZ);
+                    });
+                }
+                // Fallback for old formats (TileX/Y/Z)
+                else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+                    int tileX = nbt.getIntOr("TileX", 0);
+                    int tileY = nbt.getIntOr("TileY", 0);
+                    int tileZ = nbt.getIntOr("TileZ", 0);
+                    nbt.putInt("TileX", tileX + offsetX);
+                    nbt.putInt("TileY", tileY + offsetY);
+                    nbt.putInt("TileZ", tileZ + offsetZ);
+                }
+
+                // Create entity from NBT using loadEntityRecursive
+                net.minecraft.world.entity.Entity entity = net.minecraft.world.entity.EntityType.loadEntityRecursive(
+                    nbt, level, net.minecraft.world.entity.EntitySpawnReason.LOAD, e -> e);
+
+                if (entity != null) {
+                    entity.setPos(worldX, worldY, worldZ);
+                    entity.setYRot(entityData.getYaw());
+                    entity.setXRot(entityData.getPitch());
+                    entity.setUUID(java.util.UUID.randomUUID());
+                    level.addFreshEntity(entity);
+                }
+            } catch (Exception e) {
+                Architect.LOGGER.warn("Failed to spawn entity for vanilla structure: {}", e.getMessage());
+            }
+        }
+
+        return new BlockPos(originalMinX + offsetX, originalMinY + offsetY, originalMinZ + offsetZ);
+    }
+
+    /**
+     * Called when screenshot is received for vanilla batch push.
+     * New flow: destroy immediately -> queue async upload -> continue to next.
+     */
+    public static void onVanillaScreenshotReceived(VanillaBatchPushState state, byte[] screenshotData) {
+        ServerPlayer player = state.getPlayer();
+        ServerLevel level = state.getLevel();
+        Construction construction = state.getCurrentConstruction();
+        String constructionId = state.getCurrentConstructionId();
+
+        // 1. Immediately destroy the spawned construction
+        cleanupSpawnedConstruction(state);
+
+        // 2. Queue async upload (building + screenshot) - don't wait for response
+        queueAsyncUpload(state, construction, constructionId, screenshotData);
+
+        // 3. Move to next structure immediately
+        state.incrementSuccessCount();
+        state.nextStructure();
+
+        // 4. Continue with next construction on next tick
+        level.getServer().execute(() -> processNextConstruction(state));
+    }
+
+    /**
+     * Queues the building push and screenshot upload asynchronously.
+     * Does not block - errors are tracked in state and checked at next iteration.
+     */
+    private static void queueAsyncUpload(VanillaBatchPushState state, Construction construction,
+                                          String constructionId, byte[] screenshotData) {
+        ServerLevel level = state.getLevel();
+        ServerPlayer player = state.getPlayer();
+
+        // Run uploads in a separate thread to not block the main thread
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                // Push construction (synchronous in this thread)
+                java.util.concurrent.CountDownLatch pushLatch = new java.util.concurrent.CountDownLatch(1);
+                final boolean[] pushSuccess = {false};
+                final String[] pushError = {null};
+
+                boolean pushStarted = ApiClient.pushConstruction(construction, true, response -> {
+                    pushSuccess[0] = response.success();
+                    if (!response.success()) {
+                        pushError[0] = "Push failed: " + response.statusCode() + " - " + response.message();
+                    }
+                    pushLatch.countDown();
+                });
+
+                if (!pushStarted) {
+                    // Retry after a short delay
+                    Thread.sleep(100);
+                    pushStarted = ApiClient.pushConstruction(construction, true, response -> {
+                        pushSuccess[0] = response.success();
+                        if (!response.success()) {
+                            pushError[0] = "Push failed: " + response.statusCode() + " - " + response.message();
+                        }
+                        pushLatch.countDown();
+                    });
+                }
+
+                if (!pushStarted) {
+                    state.setUploadError("API busy, could not push " + constructionId);
+                    return;
+                }
+
+                // Wait for push to complete
+                pushLatch.await();
+
+                if (!pushSuccess[0]) {
+                    state.setUploadError(pushError[0]);
+                    return;
+                }
+
+                Architect.LOGGER.debug("Async pushed: {}", constructionId);
+
+                // Upload screenshot if available
+                if (screenshotData != null && screenshotData.length > 0) {
+                    java.util.concurrent.CountDownLatch screenshotLatch = new java.util.concurrent.CountDownLatch(1);
+                    final boolean[] screenshotSuccess = {false};
+                    final String[] screenshotError = {null};
+
+                    String screenshotTitle = construction.getTitle("en");
+                    if (screenshotTitle == null || screenshotTitle.isEmpty()) {
+                        screenshotTitle = "Screenshot";
+                    }
+                    String filename = "screenshot_" + System.currentTimeMillis() + ".jpg";
+
+                    boolean screenshotStarted = ApiClient.uploadScreenshot(
+                        constructionId, screenshotData, filename, screenshotTitle, true, response -> {
+                            screenshotSuccess[0] = response.success();
+                            if (!response.success()) {
+                                screenshotError[0] = "Screenshot upload failed: " + response.statusCode() + " - " + response.message();
+                            }
+                            screenshotLatch.countDown();
+                        });
+
+                    if (!screenshotStarted) {
+                        // Retry after a short delay
+                        Thread.sleep(100);
+                        screenshotStarted = ApiClient.uploadScreenshot(
+                            constructionId, screenshotData, filename, screenshotTitle, true, response -> {
+                                screenshotSuccess[0] = response.success();
+                                if (!response.success()) {
+                                    screenshotError[0] = "Screenshot upload failed: " + response.statusCode() + " - " + response.message();
+                                }
+                                screenshotLatch.countDown();
+                            });
+                    }
+
+                    if (screenshotStarted) {
+                        screenshotLatch.await();
+                        if (!screenshotSuccess[0]) {
+                            // Screenshot failure is not fatal, just log it
+                            Architect.LOGGER.warn("Screenshot upload failed for {}: {}", constructionId, screenshotError[0]);
+                        } else {
+                            Architect.LOGGER.debug("Async uploaded screenshot: {}", constructionId);
+                        }
+                    }
+                }
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                state.setUploadError("Upload interrupted for " + constructionId);
+            } catch (Exception e) {
+                Architect.LOGGER.error("Async upload error for {}", constructionId, e);
+                state.setUploadError("Upload error: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Cleans up the spawned construction (removes blocks and entities).
+     * Does NOT unregister from registry (constructions are not registered in new flow).
+     */
+    private static void cleanupSpawnedConstruction(VanillaBatchPushState state) {
+        ServerLevel level = state.getLevel();
+        Construction construction = state.getCurrentConstruction();
+        BlockPos spawnPos = state.getSpawnPosition();
+
+        if (construction == null || spawnPos == null) {
+            return;
+        }
+
+        var bounds = construction.getBounds();
+        int offsetX = spawnPos.getX() - bounds.getMinX();
+        int offsetY = spawnPos.getY() - bounds.getMinY();
+        int offsetZ = spawnPos.getZ() - bounds.getMinZ();
+
+        // 1. First remove entities BEFORE blocks to prevent item drops
+        var aabb = new net.minecraft.world.phys.AABB(
+            spawnPos.getX() - 1, spawnPos.getY() - 1, spawnPos.getZ() - 1,
+            spawnPos.getX() + bounds.getSizeX() + 1,
+            spawnPos.getY() + bounds.getSizeY() + 1,
+            spawnPos.getZ() + bounds.getSizeZ() + 1
+        );
+        java.util.List<net.minecraft.world.entity.Entity> entities = level.getEntities(
+            (net.minecraft.world.entity.Entity) null, aabb,
+            e -> !(e instanceof net.minecraft.world.entity.player.Player)
+        );
+        for (net.minecraft.world.entity.Entity entity : entities) {
+            entity.discard();
+        }
+
+        // 2. Clear container contents to prevent item drops
+        for (BlockPos originalPos : construction.getBlocks().keySet()) {
+            BlockPos worldPos = originalPos.offset(offsetX, offsetY, offsetZ);
+            net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(worldPos);
+            if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
+                clearable.clearContent();
+            }
+        }
+
+        // 3. Remove blocks with flags that prevent particles and drops
+        int removeFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
+        for (BlockPos originalPos : construction.getBlocks().keySet()) {
+            BlockPos worldPos = originalPos.offset(offsetX, offsetY, offsetZ);
+            level.setBlock(worldPos, Blocks.AIR.defaultBlockState(), removeFlags);
+        }
+    }
+
+    /**
+     * Called when screenshot fails or times out for vanilla batch push.
+     */
+    public static void onVanillaScreenshotFailed(VanillaBatchPushState state, String error) {
+        ServerPlayer player = state.getPlayer();
+        String constructionId = state.getCurrentConstructionId();
+
+        Architect.LOGGER.warn("Screenshot failed for vanilla structure {}: {}", constructionId, error);
+        player.sendSystemMessage(Component.literal(
+            I18n.tr(player, "vanilla.batchpush.screenshot_failed", constructionId)
+        ));
+
+        // Continue without screenshot - still push the structure (with null screenshot data)
+        onVanillaScreenshotReceived(state, null);
     }
 }

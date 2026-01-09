@@ -13,6 +13,8 @@ import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.registry.ModItems;
 import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
+import it.magius.struttura.architect.vanilla.VanillaBatchPushState;
+import it.magius.struttura.architect.command.StrutturaCommand;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
@@ -289,6 +291,16 @@ public class NetworkHandler {
         Architect.LOGGER.info("Received screenshot data from {} for {}: {} bytes",
             player.getName().getString(), constructionId, imageData.length);
 
+        // Check if this is part of a vanilla batch push
+        VanillaBatchPushState batchState = VanillaBatchPushState.getState(player);
+        if (batchState != null && batchState.getState() == VanillaBatchPushState.State.WAITING_SCREENSHOT) {
+            // This screenshot is for the vanilla batch push - delegate to StrutturaCommand
+            Architect.LOGGER.debug("Screenshot is for vanilla batch push, delegating to batch handler");
+            StrutturaCommand.onVanillaScreenshotReceived(batchState, imageData);
+            return;
+        }
+
+        // Normal screenshot flow (not part of batch push)
         // Genera un nome file unico basato sul timestamp
         String filename = "screenshot_" + System.currentTimeMillis() + ".jpg";
 

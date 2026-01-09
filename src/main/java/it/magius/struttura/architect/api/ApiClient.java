@@ -62,13 +62,25 @@ public class ApiClient {
      * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
      */
     public static boolean pushConstruction(Construction construction, Consumer<ApiResponse> onComplete) {
+        return pushConstruction(construction, false, onComplete);
+    }
+
+    /**
+     * Esegue il push di una costruzione al server in modo asincrono.
+     *
+     * @param construction la costruzione da inviare
+     * @param purge se true, elimina tutti i dati esistenti della costruzione prima di aggiungere i nuovi
+     * @param onComplete callback chiamato al completamento (sul main thread)
+     * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
+     */
+    public static boolean pushConstruction(Construction construction, boolean purge, Consumer<ApiResponse> onComplete) {
         if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
             return false;
         }
 
         CompletableFuture.supplyAsync(() -> {
             try {
-                return executePush(construction);
+                return executePush(construction, purge);
             } catch (Exception e) {
                 Architect.LOGGER.error("Push request failed", e);
                 return new ApiResponse(0, "Error: " + e.getMessage(), false);
@@ -80,10 +92,13 @@ public class ApiClient {
         return true;
     }
 
-    private static ApiResponse executePush(Construction construction) throws Exception {
+    private static ApiResponse executePush(Construction construction, boolean purge) throws Exception {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String endpoint = config.getEndpoint();
         String url = endpoint + "/building/add/" + construction.getId();
+        if (purge) {
+            url += "?purge=yes";
+        }
 
         Architect.LOGGER.info("Pushing construction {} to {}", construction.getId(), url);
 
@@ -571,13 +586,29 @@ public class ApiClient {
      */
     public static boolean uploadScreenshot(String constructionId, byte[] imageData, String filename,
                                            String title, Consumer<ApiResponse> onComplete) {
+        return uploadScreenshot(constructionId, imageData, filename, title, false, onComplete);
+    }
+
+    /**
+     * Esegue l'upload di uno screenshot al server in modo asincrono.
+     *
+     * @param constructionId l'ID della costruzione (formato RDNS)
+     * @param imageData i dati JPEG dell'immagine
+     * @param filename il nome del file (es: "screenshot_001.jpg")
+     * @param title il titolo dell'immagine
+     * @param purge se true, elimina tutti gli screenshot esistenti prima di aggiungere il nuovo
+     * @param onComplete callback chiamato al completamento
+     * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
+     */
+    public static boolean uploadScreenshot(String constructionId, byte[] imageData, String filename,
+                                           String title, boolean purge, Consumer<ApiResponse> onComplete) {
         if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
             return false;
         }
 
         CompletableFuture.supplyAsync(() -> {
             try {
-                return executeUploadScreenshot(constructionId, imageData, filename, title);
+                return executeUploadScreenshot(constructionId, imageData, filename, title, purge);
             } catch (Exception e) {
                 Architect.LOGGER.error("Screenshot upload failed", e);
                 return new ApiResponse(0, "Error: " + e.getMessage(), false);
@@ -593,10 +624,13 @@ public class ApiClient {
      * Esegue l'upload dello screenshot.
      */
     private static ApiResponse executeUploadScreenshot(String constructionId, byte[] imageData,
-                                                       String filename, String title) throws Exception {
+                                                       String filename, String title, boolean purge) throws Exception {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String endpoint = config.getEndpoint();
         String url = endpoint + "/building/" + constructionId + "/images";
+        if (purge) {
+            url += "?purge=yes";
+        }
 
         Architect.LOGGER.info("Uploading screenshot for {} to {}", constructionId, url);
 
