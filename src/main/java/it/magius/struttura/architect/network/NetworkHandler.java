@@ -29,6 +29,7 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
@@ -402,7 +403,7 @@ public class NetworkHandler {
         sendWireframeSync(player);
     }
 
-    private static void handleApply(ServerPlayer player, EditingSession session, boolean includeAir) {
+    public static void handleApply(ServerPlayer player, EditingSession session, boolean includeAir) {
         // Controlla se ha una selezione completa
         SelectionManager.Selection selection = SelectionManager.getInstance().getSelection(player);
         if (selection == null || !selection.isComplete()) {
@@ -452,14 +453,43 @@ public class NetworkHandler {
                 }
             }
 
-            // Pulisci la selezione dopo l'aggiunta
+            // Capture entities in the selected area
+            AABB entityArea = new AABB(
+                min.getX(), min.getY(), min.getZ(),
+                max.getX() + 1, max.getY() + 1, max.getZ() + 1
+            );
+
+            List<Entity> worldEntities = level.getEntities(
+                (Entity) null,
+                entityArea,
+                EntityData::shouldSaveEntity
+            );
+
+            int entitiesAdded = 0;
+            var bounds = construction.getBounds();
+
+            for (Entity entity : worldEntities) {
+                EntityData data = EntityData.fromEntity(entity, bounds, level.registryAccess());
+                int newIndex;
+                if (inRoom && room != null) {
+                    newIndex = room.addEntity(data);
+                } else {
+                    newIndex = construction.addEntity(data);
+                }
+                // Track the entity so it can be managed during the session
+                session.trackEntity(entity.getUUID(), newIndex);
+                entitiesAdded++;
+            }
+
+            // Clear selection after adding
             SelectionManager.getInstance().clearSelection(player);
             sendWireframeSync(player);
             sendBlockList(player);
 
             int totalBlocks = inRoom && room != null ? room.getChangedBlockCount() : construction.getBlockCount();
+            String entityMsg = entitiesAdded > 0 ? " +" + entitiesAdded + " entities" : "";
             player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "select.apply.add_success", addedCount, skippedAir, totalBlocks)));
+                    I18n.tr(player, "select.apply.add_success", addedCount, skippedAir, totalBlocks) + entityMsg));
         } else {
             // Mode REMOVE: rimuovi i blocchi dalla costruzione o stanza
             int removedCount = 0;

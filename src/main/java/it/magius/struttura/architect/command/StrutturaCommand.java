@@ -1117,99 +1117,13 @@ public class StrutturaCommand {
             return 0;
         }
 
-        // Il giocatore deve essere in modalita' editing
         if (!EditingSession.hasSession(player)) {
             source.sendFailure(Component.literal(I18n.tr(player, "command.not_editing_hint")));
             return 0;
         }
 
-        // Verifica che la selezione sia completa
-        if (!SelectionManager.getInstance().hasCompleteSelection(player)) {
-            source.sendFailure(Component.literal(I18n.tr(player, "select.incomplete")));
-            return 0;
-        }
-
-        SelectionManager.Selection selection = SelectionManager.getInstance().getSelection(player);
-        BlockPos min = selection.getMin();
-        BlockPos max = selection.getMax();
-
-        EditingSession session = EditingSession.getSession(player);
-        Construction construction = session.getConstruction();
-        ServerLevel level = (ServerLevel) player.level();
-        EditMode mode = session.getMode();
-
-        int processedCount = 0;
-        int skippedCount = 0;
-
-        if (mode == EditMode.ADD) {
-            // Mode ADD: aggiungi i blocchi alla costruzione
-            for (int x = min.getX(); x <= max.getX(); x++) {
-                for (int y = min.getY(); y <= max.getY(); y++) {
-                    for (int z = min.getZ(); z <= max.getZ(); z++) {
-                        BlockPos pos = new BlockPos(x, y, z);
-                        BlockState state = level.getBlockState(pos);
-
-                        // Salta i blocchi aria se non includeAir
-                        if (!includeAir && state.isAir()) {
-                            skippedCount++;
-                            continue;
-                        }
-
-                        // Aggiungi il blocco alla costruzione
-                        construction.addBlock(pos, state);
-                        processedCount++;
-                    }
-                }
-            }
-
-            // Pulisci la selezione dopo l'aggiunta
-            SelectionManager.getInstance().clearSelection(player);
-            NetworkHandler.sendWireframeSync(player);
-
-            final int finalProcessed = processedCount;
-            final int finalSkipped = skippedCount;
-            final int totalBlocks = construction.getBlockCount();
-
-            Architect.LOGGER.info("Player {} added {} blocks from selection to construction {} (skipped {} air blocks)",
-                player.getName().getString(), finalProcessed, construction.getId(), finalSkipped);
-
-            source.sendSuccess(() -> Component.literal(
-                I18n.tr(player, "select.apply.add_success", finalProcessed, finalSkipped, totalBlocks)
-            ), false);
-        } else {
-            // Mode REMOVE: rimuovi i blocchi dalla costruzione
-            for (int x = min.getX(); x <= max.getX(); x++) {
-                for (int y = min.getY(); y <= max.getY(); y++) {
-                    for (int z = min.getZ(); z <= max.getZ(); z++) {
-                        BlockPos pos = new BlockPos(x, y, z);
-
-                        // Rimuovi solo se il blocco è nella costruzione
-                        if (construction.containsBlock(pos)) {
-                            construction.removeBlock(pos);
-                            processedCount++;
-                        } else {
-                            skippedCount++;
-                        }
-                    }
-                }
-            }
-
-            // Pulisci la selezione dopo la rimozione
-            SelectionManager.getInstance().clearSelection(player);
-            NetworkHandler.sendWireframeSync(player);
-
-            final int finalProcessed = processedCount;
-            final int finalSkipped = skippedCount;
-            final int totalBlocks = construction.getBlockCount();
-
-            Architect.LOGGER.info("Player {} removed {} blocks from selection from construction {} (skipped {} not in construction)",
-                player.getName().getString(), finalProcessed, construction.getId(), finalSkipped);
-
-            source.sendSuccess(() -> Component.literal(
-                I18n.tr(player, "select.apply.remove_success", finalProcessed, finalSkipped, totalBlocks)
-            ), false);
-        }
-
+        // Delegate to centralized handler in NetworkHandler
+        NetworkHandler.handleApply(player, EditingSession.getSession(player), includeAir);
         return 1;
     }
 
