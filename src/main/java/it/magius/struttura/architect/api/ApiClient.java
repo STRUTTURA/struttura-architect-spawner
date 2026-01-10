@@ -166,7 +166,7 @@ public class ApiClient {
         for (var entry : construction.getShortDescriptions().entrySet()) {
             shortDescriptions.addProperty(entry.getKey(), entry.getValue());
         }
-        json.add("short_descriptions", shortDescriptions);
+        json.add("shortDescriptions", shortDescriptions);
 
         // Descrizioni complete multilingua
         JsonObject descriptions = new JsonObject();
@@ -176,9 +176,9 @@ public class ApiClient {
         json.add("descriptions", descriptions);
 
         // Conteggi totali (base + tutte le stanze)
-        json.addProperty("blockCount", construction.getTotalBlockCount());
-        json.addProperty("solidBlockCount", construction.getTotalSolidBlockCount());
-        json.addProperty("entityCount", construction.getTotalEntityCount());
+        json.addProperty("blocksCount", construction.getTotalBlockCount());
+        json.addProperty("mobsCount", construction.getTotalMobCount());
+        json.addProperty("commandBlocksCount", construction.getTotalCommandBlockCount());
 
         // Bounds (normalizzati: min=0, max=size-1)
         JsonObject bounds = new JsonObject();
@@ -202,7 +202,8 @@ public class ApiClient {
             JsonObject modJson = new JsonObject();
             modJson.addProperty("displayName", mod.getDisplayName());
             modJson.addProperty("blockCount", mod.getBlockCount());
-            modJson.addProperty("entityCount", mod.getEntityCount());
+            modJson.addProperty("mobsCount", mod.getMobsCount());
+            modJson.addProperty("commandBlocksCount", mod.getCommandBlocksCount());
             if (mod.getVersion() != null) {
                 modJson.addProperty("version", mod.getVersion());
             }
@@ -227,7 +228,7 @@ public class ApiClient {
         json.add("rooms", roomsArray);
 
         // Versione del mod Struttura
-        json.addProperty("strutturaVersion", Architect.MOD_VERSION);
+        json.addProperty("modVersion", Architect.MOD_VERSION);
 
         // Blocchi in formato NBT compresso e codificato base64
         byte[] nbtBytes = serializeBlocksToNbt(construction);
@@ -904,8 +905,11 @@ public class ApiClient {
                     if (modJson.has("blockCount")) {
                         info.setBlockCount(modJson.get("blockCount").getAsInt());
                     }
-                    if (modJson.has("entityCount")) {
-                        info.setEntityCount(modJson.get("entityCount").getAsInt());
+                    if (modJson.has("mobsCount")) {
+                        info.setMobsCount(modJson.get("mobsCount").getAsInt());
+                    }
+                    if (modJson.has("commandBlocksCount")) {
+                        info.setCommandBlocksCount(modJson.get("commandBlocksCount").getAsInt());
                     }
                     if (modJson.has("version") && !modJson.get("version").isJsonNull()) {
                         info.setVersion(modJson.get("version").getAsString());
@@ -1272,8 +1276,11 @@ public class ApiClient {
                     if (modJson.has("blockCount")) {
                         info.setBlockCount(modJson.get("blockCount").getAsInt());
                     }
-                    if (modJson.has("entityCount")) {
-                        info.setEntityCount(modJson.get("entityCount").getAsInt());
+                    if (modJson.has("mobsCount")) {
+                        info.setMobsCount(modJson.get("mobsCount").getAsInt());
+                    }
+                    if (modJson.has("commandBlocksCount")) {
+                        info.setCommandBlocksCount(modJson.get("commandBlocksCount").getAsInt());
                     }
                     if (modJson.has("version") && !modJson.get("version").isJsonNull()) {
                         info.setVersion(modJson.get("version").getAsString());

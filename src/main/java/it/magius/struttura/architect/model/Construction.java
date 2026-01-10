@@ -460,6 +460,46 @@ public class Construction {
     }
 
     /**
+     * Counts command blocks in base construction.
+     * Includes all types: command_block, chain_command_block, repeating_command_block.
+     */
+    public int getCommandBlockCount() {
+        int count = 0;
+        for (BlockState state : blocks.values()) {
+            String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+            if (isCommandBlock(blockId)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Counts total command blocks (base + all rooms).
+     */
+    public int getTotalCommandBlockCount() {
+        int total = getCommandBlockCount();
+        for (Room room : rooms.values()) {
+            for (BlockState state : room.getBlockChanges().values()) {
+                String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                if (isCommandBlock(blockId)) {
+                    total++;
+                }
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Checks if a block ID is a command block type.
+     */
+    private static boolean isCommandBlock(String blockId) {
+        return blockId.equals("minecraft:command_block") ||
+               blockId.equals("minecraft:chain_command_block") ||
+               blockId.equals("minecraft:repeating_command_block");
+    }
+
+    /**
      * Verifica se un tipo di entità è un mob (entità vivente).
      * Metodo pubblico per essere utilizzabile anche da altre classi (es: NetworkHandler).
      */
@@ -626,14 +666,14 @@ public class Construction {
             }
         }
 
-        // Count entities for each non-vanilla mod
+        // Count mobs for each non-vanilla mod
         for (EntityData entityData : entities) {
             String namespace = entityData.getModNamespace();
 
             // Ignora le entità vanilla
-            if (!"minecraft".equals(namespace)) {
+            if (!"minecraft".equals(namespace) && isMobEntity(entityData.getEntityType())) {
                 ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
-                info.incrementEntityCount();
+                info.incrementMobsCount();
             }
         }
 

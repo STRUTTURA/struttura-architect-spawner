@@ -82,10 +82,13 @@ public class EditingSession {
 
     /**
      * Inizia una nuova sessione per un giocatore.
+     * Automatically tracks existing entities in the construction bounds.
      */
     public static EditingSession startSession(ServerPlayer player, Construction construction) {
         EditingSession session = new EditingSession(player, construction);
         ACTIVE_SESSIONS.put(player.getUUID(), session);
+        // Track entities already in the world (e.g., after a pull)
+        session.trackExistingEntitiesInWorld();
         return session;
     }
 
@@ -1056,5 +1059,92 @@ public class EditingSession {
         }
         activeEntityToIndex.clear();
         activeEntityToIndex.putAll(updated);
+    }
+
+    /**
+     * Scans the world for existing entities in the construction bounds and tracks them.
+     * This is called when starting an edit session to protect entities that were
+     * spawned before the session started (e.g., after a pull).
+     * Matches world entities to EntityData in the construction by type and approximate position.
+     */
+    public void trackExistingEntitiesInWorld() {
+        var bounds = construction.getBounds();
+        if (!bounds.isValid()) {
+            return;
+        }
+
+        ServerLevel world = (ServerLevel) player.level();
+
+        // Create AABB from bounds
+        AABB area = new AABB(
+            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
+            bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
+        );
+
+        // Get all entities in the area
+        List<Entity> worldEntities = world.getEntities(
+            (Entity) null,
+            area,
+            EntityData::shouldSaveEntity
+        );
+
+        List<EntityData> constructionEntities = construction.getEntities();
+        if (constructionEntities.isEmpty()) {
+            return;
+        }
+
+        int originX = bounds.getMinX();
+        int originY = bounds.getMinY();
+        int originZ = bounds.getMinZ();
+
+        int trackedCount = 0;
+
+        // For each entity in the world, try to find a matching EntityData
+        for (Entity worldEntity : worldEntities) {
+            if (isEntityTracked(worldEntity.getUUID())) {
+                continue; // Already tracked
+            }
+
+            String entityType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
+                .getKey(worldEntity.getType()).toString();
+            double worldX = worldEntity.getX();
+            double worldY = worldEntity.getY();
+            double worldZ = worldEntity.getZ();
+
+            // Find matching EntityData by type and approximate position
+            for (int i = 0; i < constructionEntities.size(); i++) {
+                EntityData data = constructionEntities.get(i);
+
+                // Check type match
+                if (!data.getEntityType().equals(entityType)) {
+                    continue;
+                }
+
+                // Calculate expected world position from EntityData
+                double expectedX = originX + data.getRelativePos().x;
+                double expectedY = originY + data.getRelativePos().y;
+                double expectedZ = originZ + data.getRelativePos().z;
+
+                // Check position match (within 1 block tolerance)
+                double dx = Math.abs(worldX - expectedX);
+                double dy = Math.abs(worldY - expectedY);
+                double dz = Math.abs(worldZ - expectedZ);
+
+                if (dx < 1.0 && dy < 1.0 && dz < 1.0) {
+                    // Check if this index is already used by another entity
+                    boolean indexAlreadyUsed = activeEntityToIndex.containsValue(i);
+                    if (!indexAlreadyUsed) {
+                        trackEntity(worldEntity.getUUID(), i);
+                        trackedCount++;
+                        break; // Move to next world entity
+                    }
+                }
+            }
+        }
+
+        if (trackedCount > 0) {
+            Architect.LOGGER.info("Tracked {} existing entities in world for construction {}",
+                trackedCount, construction.getId());
+        }
     }
 }

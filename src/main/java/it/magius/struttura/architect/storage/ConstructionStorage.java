@@ -276,7 +276,7 @@ public class ConstructionStorage {
         for (var entry : construction.getShortDescriptions().entrySet()) {
             shortDescriptions.addProperty(entry.getKey(), entry.getValue());
         }
-        json.add("short_descriptions", shortDescriptions);
+        json.add("shortDescriptions", shortDescriptions);
 
         // Descrizioni complete multilingua
         JsonObject descriptions = new JsonObject();
@@ -309,7 +309,8 @@ public class ConstructionStorage {
             JsonObject modJson = new JsonObject();
             modJson.addProperty("displayName", mod.getDisplayName());
             modJson.addProperty("blockCount", mod.getBlockCount());
-            modJson.addProperty("entityCount", mod.getEntityCount());
+            modJson.addProperty("mobsCount", mod.getMobsCount());
+            modJson.addProperty("commandBlocksCount", mod.getCommandBlocksCount());
             if (mod.getVersion() != null) {
                 modJson.addProperty("version", mod.getVersion());
             }
@@ -334,7 +335,7 @@ public class ConstructionStorage {
         json.add("rooms", roomsArray);
 
         // Versione del mod Struttura
-        json.addProperty("strutturaVersion", Architect.MOD_VERSION);
+        json.addProperty("modVersion", Architect.MOD_VERSION);
 
         Path metadataFile = directory.resolve("metadata.json");
         try (Writer writer = Files.newBufferedWriter(metadataFile, StandardCharsets.UTF_8)) {
@@ -366,25 +367,16 @@ public class ConstructionStorage {
                         titles.put(entry.getKey(), entry.getValue().getAsString());
                     }
                 }
-            } else if (json.has("title") && !json.get("title").isJsonNull()) {
-                // Retrocompatibilità: vecchio formato con singolo title -> usa "en"
-                titles.put("en", json.get("title").getAsString());
             }
 
             // Carica descrizioni brevi multilingua
             Map<String, String> shortDescriptions = new HashMap<>();
-            if (json.has("short_descriptions") && json.get("short_descriptions").isJsonObject()) {
-                JsonObject shortDescObj = json.getAsJsonObject("short_descriptions");
+            if (json.has("shortDescriptions") && json.get("shortDescriptions").isJsonObject()) {
+                JsonObject shortDescObj = json.getAsJsonObject("shortDescriptions");
                 for (var entry : shortDescObj.entrySet()) {
                     if (!entry.getValue().isJsonNull()) {
                         shortDescriptions.put(entry.getKey(), entry.getValue().getAsString());
                     }
-                }
-            } else if (json.has("description") && !json.get("description").isJsonNull()) {
-                // Retrocompatibilità: vecchio formato con singola description -> metti in short_descriptions
-                String desc = json.get("description").getAsString();
-                if (!desc.isEmpty()) {
-                    shortDescriptions.put("en", desc);
                 }
             }
 
@@ -416,8 +408,11 @@ public class ConstructionStorage {
                     if (modJson.has("blockCount")) {
                         info.setBlockCount(modJson.get("blockCount").getAsInt());
                     }
-                    if (modJson.has("entityCount")) {
-                        info.setEntityCount(modJson.get("entityCount").getAsInt());
+                    if (modJson.has("mobsCount")) {
+                        info.setMobsCount(modJson.get("mobsCount").getAsInt());
+                    }
+                    if (modJson.has("commandBlocksCount")) {
+                        info.setCommandBlocksCount(modJson.get("commandBlocksCount").getAsInt());
                     }
                     if (modJson.has("version") && !modJson.get("version").isJsonNull()) {
                         info.setVersion(modJson.get("version").getAsString());

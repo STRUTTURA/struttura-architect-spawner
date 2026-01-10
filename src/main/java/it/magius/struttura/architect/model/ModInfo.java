@@ -2,7 +2,7 @@ package it.magius.struttura.architect.model;
 
 /**
  * Informazioni su un mod richiesto da una costruzione.
- * Contiene dettagli sul mod e quanti blocchi/entità della costruzione lo richiedono.
+ * Contiene dettagli sul mod e quanti blocchi/mob/command blocks della costruzione lo richiedono.
  */
 public class ModInfo {
 
@@ -21,21 +21,26 @@ public class ModInfo {
     // Numero di blocchi che richiedono questo mod
     private int blockCount;
 
-    // Numero di entità che richiedono questo mod (per futuro uso)
-    private int entityCount;
+    // Numero di mob che richiedono questo mod
+    private int mobsCount;
+
+    // Numero di command blocks che richiedono questo mod
+    private int commandBlocksCount;
 
     public ModInfo(String modId) {
         this.modId = modId;
         this.displayName = modId; // default al modId
         this.blockCount = 0;
-        this.entityCount = 0;
+        this.mobsCount = 0;
+        this.commandBlocksCount = 0;
     }
 
-    public ModInfo(String modId, String displayName, int blockCount, int entityCount, String downloadUrl, String version) {
+    public ModInfo(String modId, String displayName, int blockCount, int mobsCount, int commandBlocksCount, String downloadUrl, String version) {
         this.modId = modId;
         this.displayName = displayName != null ? displayName : modId;
         this.blockCount = blockCount;
-        this.entityCount = entityCount;
+        this.mobsCount = mobsCount;
+        this.commandBlocksCount = commandBlocksCount;
         this.downloadUrl = downloadUrl;
         this.version = version;
     }
@@ -46,7 +51,8 @@ public class ModInfo {
     public String getDownloadUrl() { return downloadUrl; }
     public String getVersion() { return version; }
     public int getBlockCount() { return blockCount; }
-    public int getEntityCount() { return entityCount; }
+    public int getMobsCount() { return mobsCount; }
+    public int getCommandBlocksCount() { return commandBlocksCount; }
 
     // Setters
     public void setDisplayName(String displayName) {
@@ -61,8 +67,12 @@ public class ModInfo {
         this.blockCount = blockCount;
     }
 
-    public void setEntityCount(int entityCount) {
-        this.entityCount = entityCount;
+    public void setMobsCount(int mobsCount) {
+        this.mobsCount = mobsCount;
+    }
+
+    public void setCommandBlocksCount(int commandBlocksCount) {
+        this.commandBlocksCount = commandBlocksCount;
     }
 
     public void setVersion(String version) {
@@ -74,8 +84,12 @@ public class ModInfo {
         this.blockCount++;
     }
 
-    public void incrementEntityCount() {
-        this.entityCount++;
+    public void incrementMobsCount() {
+        this.mobsCount++;
+    }
+
+    public void incrementCommandBlocksCount() {
+        this.commandBlocksCount++;
     }
 
     @Override
@@ -85,7 +99,8 @@ public class ModInfo {
             ", displayName='" + displayName + '\'' +
             ", version='" + version + '\'' +
             ", blockCount=" + blockCount +
-            ", entityCount=" + entityCount +
+            ", mobsCount=" + mobsCount +
+            ", commandBlocksCount=" + commandBlocksCount +
             ", downloadUrl='" + downloadUrl + '\'' +
             '}';
     }

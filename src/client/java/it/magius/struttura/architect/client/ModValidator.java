@@ -61,18 +61,18 @@ public class ModValidator {
     }
 
     /**
-     * Calculates the total number of entities that will be lost due to missing mods.
+     * Calculates the total number of mobs that will be lost due to missing mods.
      *
      * @param missingMods the map of missing mods with their info
-     * @return total entity count from missing mods
+     * @return total mobs count from missing mods
      */
-    public static int getTotalMissingEntities(Map<String, ModInfo> missingMods) {
+    public static int getTotalMissingMobs(Map<String, ModInfo> missingMods) {
         if (missingMods == null) {
             return 0;
         }
 
         return missingMods.values().stream()
-            .mapToInt(ModInfo::getEntityCount)
+            .mapToInt(ModInfo::getMobsCount)
             .sum();
     }
 }
