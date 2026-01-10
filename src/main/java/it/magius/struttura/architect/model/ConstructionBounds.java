@@ -71,6 +71,16 @@ public class ConstructionBounds {
         return initialized;
     }
 
+    /**
+     * Creates a copy of these bounds.
+     */
+    public ConstructionBounds copy() {
+        if (!initialized) {
+            return new ConstructionBounds();
+        }
+        return new ConstructionBounds(minX, minY, minZ, maxX, maxY, maxZ);
+    }
+
     // Getters per i valori min/max
     public int getMinX() { return minX; }
     public int getMinY() { return minY; }

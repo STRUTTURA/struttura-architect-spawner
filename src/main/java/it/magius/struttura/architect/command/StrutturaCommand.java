@@ -8,9 +8,11 @@ import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EditMode;
 import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
+import it.magius.struttura.architect.placement.ConstructionOperations;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.registry.ModItems;
 import it.magius.struttura.architect.selection.SelectionManager;
@@ -741,17 +743,18 @@ public class StrutturaCommand {
             return 0;
         }
 
-        // Usa la funzione centralizzata per spawnare la costruzione
-        // updateConstruction=false: non modifica le coordinate della costruzione nel registry
-        int placedCount = NetworkHandler.spawnConstructionInFrontOfPlayer(player, construction, false);
+        // Use centralized placement function
+        // updateConstructionCoords=false: don't modify the construction coordinates in registry
+        var result = ConstructionOperations.placeConstruction(
+            player, construction, ConstructionOperations.PlacementMode.SPAWN, false
+        );
 
-        if (placedCount > 0) {
-            Architect.LOGGER.info("Player {} spawned construction {} ({} blocks)",
-                player.getName().getString(), id, placedCount);
+        if (result.blocksPlaced() > 0) {
+            Architect.LOGGER.info("Player {} spawned construction {} ({} blocks, {} entities)",
+                player.getName().getString(), id, result.blocksPlaced(), result.entitiesSpawned());
 
-            final int finalCount = placedCount;
             source.sendSuccess(() -> Component.literal(
-                I18n.tr(player, "spawn.success_simple", id, finalCount)
+                I18n.tr(player, "spawn.success_simple", id, result.blocksPlaced())
             ), true);
         } else {
             source.sendFailure(Component.literal(I18n.tr(player, "spawn.failed", id)));
@@ -796,19 +799,18 @@ public class StrutturaCommand {
             return 0;
         }
 
-        ServerLevel level = (ServerLevel) player.level();
-
-        // Usa la funzione centralizzata per mostrare la costruzione nella sua posizione originale
-        int placedCount = NetworkHandler.showConstructionInPlace(level, construction);
+        // Use centralized placement function with SHOW mode (original position)
+        var result = ConstructionOperations.placeConstruction(
+            player, construction, ConstructionOperations.PlacementMode.SHOW, false
+        );
 
         VISIBLE_CONSTRUCTIONS.add(id);
 
-        final int finalCount = placedCount;
-        Architect.LOGGER.info("Player {} showed construction {} ({} blocks)",
-            player.getName().getString(), id, finalCount);
+        Architect.LOGGER.info("Player {} showed construction {} ({} blocks, {} entities)",
+            player.getName().getString(), id, result.blocksPlaced(), result.entitiesSpawned());
 
         source.sendSuccess(() -> Component.literal(
-            I18n.tr(player, "show.success", id, finalCount)
+            I18n.tr(player, "show.success", id, result.blocksPlaced())
         ), true);
 
         return 1;
@@ -845,17 +847,18 @@ public class StrutturaCommand {
 
         ServerLevel level = (ServerLevel) player.level();
 
-        // Usa la funzione centralizzata per rimuovere tutti i blocchi
-        int removedCount = NetworkHandler.hideConstructionFromWorld(level, construction);
+        // Use centralized removal function with HIDE mode
+        var result = ConstructionOperations.removeConstruction(
+            level, construction, ConstructionOperations.RemovalMode.HIDE, null
+        );
 
         VISIBLE_CONSTRUCTIONS.remove(id);
 
-        final int finalCount = removedCount;
         Architect.LOGGER.info("Player {} hid construction {} ({} blocks removed)",
-            player.getName().getString(), id, finalCount);
+            player.getName().getString(), id, result.blocksRemoved());
 
         source.sendSuccess(() -> Component.literal(
-            I18n.tr(player, "hide.success", id, finalCount)
+            I18n.tr(player, "hide.success", id, result.blocksRemoved())
         ), true);
 
         return 1;
@@ -1497,10 +1500,12 @@ public class StrutturaCommand {
         ServerLevel level = (ServerLevel) player.level();
         Construction construction = getConstructionIncludingEditing(constructionId);
 
-        // 1. Rimuovi entità, svuota container e rimuovi blocchi
-        int blocksRemoved = NetworkHandler.clearConstructionFromWorld(level, construction);
-        if (blocksRemoved > 0) {
-            Architect.LOGGER.info("Destroy: removed {} blocks for construction {}", blocksRemoved, constructionId);
+        // 1. Use centralized removal function with DESTROY mode
+        var result = ConstructionOperations.removeConstruction(
+            level, construction, ConstructionOperations.RemovalMode.DESTROY, null
+        );
+        if (result.blocksRemoved() > 0) {
+            Architect.LOGGER.info("Destroy: removed {} blocks for construction {}", result.blocksRemoved(), constructionId);
         }
 
         // 2. Pulisci i dati di visibilità
@@ -1604,19 +1609,20 @@ public class StrutturaCommand {
                     if (response.success() && response.construction() != null) {
                         Construction construction = response.construction();
 
-                        // Registra la costruzione nel registry
+                        // Register the construction in the registry
                         ConstructionRegistry.getInstance().register(construction);
 
-                        // Piazza la costruzione di fronte al giocatore usando la funzione centralizzata
-                        // updateConstruction=true perché PULL deve aggiornare le coordinate della costruzione
-                        int placedCount = NetworkHandler.spawnConstructionInFrontOfPlayer(player, construction, true);
+                        // Use centralized placement with PULL mode (updates construction coordinates)
+                        var placementResult = ConstructionOperations.placeConstruction(
+                            player, construction, ConstructionOperations.PlacementMode.PULL, true
+                        );
 
                         player.sendSystemMessage(Component.literal(
-                            I18n.tr(player, "pull.success", id, placedCount)
+                            I18n.tr(player, "pull.success", id, placementResult.blocksPlaced())
                         ));
 
                         Architect.LOGGER.info("Pull successful for {}: {} blocks placed",
-                            id, placedCount);
+                            id, placementResult.blocksPlaced());
                     } else {
                         player.sendSystemMessage(Component.literal(
                             I18n.tr(player, "pull.failed", id, response.statusCode(), response.message())
@@ -1688,96 +1694,32 @@ public class StrutturaCommand {
         }
 
         ServerLevel level = (ServerLevel) player.level();
-        var bounds = construction.getBounds();
 
-        // 1. Salva i vecchi bounds PRIMA di modificare la costruzione
-        int oldMinX = bounds.getMinX();
-        int oldMinY = bounds.getMinY();
-        int oldMinZ = bounds.getMinZ();
-        int oldMaxX = bounds.getMaxX();
-        int oldMaxY = bounds.getMaxY();
-        int oldMaxZ = bounds.getMaxZ();
+        // 1. Save old bounds BEFORE removing the construction
+        ConstructionBounds oldBounds = construction.getBounds().copy();
 
-        // 2. Calcola la nuova posizione davanti al giocatore
-        int sizeX = bounds.getSizeX();
-        int sizeZ = bounds.getSizeZ();
+        // 2. Remove from old position first (use MOVE_CLEAR mode with old bounds)
+        ConstructionOperations.removeConstruction(
+            level, construction, ConstructionOperations.RemovalMode.MOVE_CLEAR, oldBounds
+        );
 
-        float yaw = player.getYRot();
-        yaw = ((yaw % 360) + 360) % 360;
+        // 3. Place at new position in front of player (updates construction coordinates)
+        var placementResult = ConstructionOperations.placeConstruction(
+            player, construction, ConstructionOperations.PlacementMode.MOVE, true
+        );
 
-        int offsetX, offsetZ;
-        BlockPos playerPos = player.blockPosition();
-
-        if (yaw >= 315 || yaw < 45) {
-            // Sud (+Z)
-            offsetX = playerPos.getX() - bounds.getMinX() - (sizeX / 2);
-            offsetZ = playerPos.getZ() + 2 - bounds.getMinZ();
-        } else if (yaw >= 45 && yaw < 135) {
-            // Ovest (-X)
-            offsetX = playerPos.getX() - 2 - bounds.getMaxX();
-            offsetZ = playerPos.getZ() - bounds.getMinZ() - (sizeZ / 2);
-        } else if (yaw >= 135 && yaw < 225) {
-            // Nord (-Z)
-            offsetX = playerPos.getX() - bounds.getMinX() - (sizeX / 2);
-            offsetZ = playerPos.getZ() - 2 - bounds.getMaxZ();
-        } else {
-            // Est (+X)
-            offsetX = playerPos.getX() + 2 - bounds.getMinX();
-            offsetZ = playerPos.getZ() - bounds.getMinZ() - (sizeZ / 2);
-        }
-
-        int offsetY = playerPos.getY() - bounds.getMinY();
-
-        // 3. Crea una nuova mappa di blocchi con le posizioni aggiornate
-        Map<BlockPos, BlockState> newBlocks = new HashMap<>();
-        int placedCount = 0;
-
-        // Ordina i blocchi per Y crescente per piazzare prima i blocchi di supporto
-        // (es. trapdoor prima dei carpet che ci stanno sopra)
-        java.util.List<Map.Entry<BlockPos, BlockState>> sortedBlocks =
-            new java.util.ArrayList<>(construction.getBlocks().entrySet());
-        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
-
-        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
-        for (Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
-            BlockPos originalPos = entry.getKey();
-            BlockState state = entry.getValue();
-
-            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
-
-            // Piazza il blocco nel mondo
-            if (!state.isAir()) {
-                level.setBlock(newPos, state, placementFlags);
-                placedCount++;
-            }
-
-            // Aggiungi alla nuova mappa (inclusi i blocchi aria per mantenere la struttura)
-            newBlocks.put(newPos, state);
-        }
-
-        // 4. DESTROY: Rimuovi i blocchi dalla vecchia posizione usando i bounds salvati
-        NetworkHandler.clearAreaFromWorld(level, oldMinX, oldMinY, oldMinZ, oldMaxX, oldMaxY, oldMaxZ);
-
-        // 5. Aggiorna la costruzione con le nuove posizioni
-        construction.getBlocks().clear();
-        construction.getBounds().reset();
-        for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
-            construction.addBlock(entry.getKey(), entry.getValue());
-        }
-
-        // 6. Salva la costruzione aggiornata
+        // 4. Save the updated construction
         ConstructionRegistry.getInstance().register(construction);
 
-        // 7. Aggiorna lo stato di visibilità
+        // 5. Update visibility state
         VISIBLE_CONSTRUCTIONS.add(id);
 
+        BlockPos playerPos = player.blockPosition();
         Architect.LOGGER.info("Player {} moved construction {} from old position to ({}, {}, {})",
             player.getName().getString(), id, playerPos.getX(), playerPos.getY(), playerPos.getZ());
 
-        final int finalPlacedCount = placedCount;
         source.sendSuccess(() -> Component.literal(
-            I18n.tr(player, "move.success", id, finalPlacedCount)
+            I18n.tr(player, "move.success", id, placementResult.blocksPlaced())
         ), true);
 
         return 1;

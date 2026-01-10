@@ -6,6 +6,7 @@ import it.magius.struttura.architect.model.EditMode;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
+import it.magius.struttura.architect.placement.ConstructionOperations;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
@@ -686,140 +687,23 @@ public class EditingSession {
     }
 
     /**
-     * Applica i blocchi delta di una room nel mondo.
-     * I blocchi delta sovrascrivono temporaneamente i blocchi base.
-     * Usa le stesse logiche di piazzamento della costruzione base:
-     * - Ordine per Y crescente (blocchi di supporto prima)
-     * - UPDATE_SKIP_ON_PLACE per evitare trigger
-     * - Svuota container prima di rimuoverli
-     * - Applica NBT dei block entity
+     * Applies room delta blocks in the world.
+     * Delegates to centralized ConstructionOperations.placeRoomBlocks.
      */
     private void applyRoomBlocks(ServerLevel world, Room room) {
-        // Prima svuota i container dei blocchi base che verranno sostituiti
-        for (BlockPos pos : room.getBlockChanges().keySet()) {
-            net.minecraft.world.level.block.entity.BlockEntity blockEntity = world.getBlockEntity(pos);
-            if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
-                clearable.clearContent();
-            }
-        }
-
-        // Ordina i blocchi per Y crescente per piazzare prima i blocchi di supporto
-        java.util.List<Map.Entry<BlockPos, BlockState>> sortedBlocks =
-            new java.util.ArrayList<>(room.getBlockChanges().entrySet());
-        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
-
-        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare orientamento e evitare trigger
-        int placementFlags = net.minecraft.world.level.block.Block.UPDATE_CLIENTS |
-                             net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE;
-
-        int appliedCount = 0;
-        int blockEntityCount = 0;
-
-        for (Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
-            BlockPos pos = entry.getKey();
-            BlockState state = entry.getValue();
-
-            // Piazza il blocco delta nel mondo
-            world.setBlock(pos, state, placementFlags);
-            appliedCount++;
-
-            // Applica NBT del block entity se presente
-            CompoundTag blockNbt = room.getBlockEntityNbt(pos);
-            if (blockNbt != null && !state.isAir()) {
-                net.minecraft.world.level.block.entity.BlockEntity blockEntity = world.getBlockEntity(pos);
-                if (blockEntity != null) {
-                    CompoundTag nbtCopy = blockNbt.copy();
-                    nbtCopy.putInt("x", pos.getX());
-                    nbtCopy.putInt("y", pos.getY());
-                    nbtCopy.putInt("z", pos.getZ());
-                    net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
-                        net.minecraft.util.ProblemReporter.DISCARDING,
-                        world.registryAccess(),
-                        nbtCopy
-                    );
-                    blockEntity.loadCustomOnly(input);
-                    blockEntity.setChanged();
-                    blockEntityCount++;
-                }
-            }
-        }
-
-        Architect.LOGGER.debug("Applied {} room blocks ({} block entities) for room '{}' in construction {}",
-            appliedCount, blockEntityCount, room.getId(), construction.getId());
+        int appliedCount = ConstructionOperations.placeRoomBlocks(world, room, construction);
+        Architect.LOGGER.debug("Applied {} room blocks for room '{}' in construction {}",
+            appliedCount, room.getId(), construction.getId());
     }
 
     /**
-     * Ripristina i blocchi base della costruzione dove la room aveva modifiche.
-     * Se un blocco della room non esiste nella costruzione base, viene messa aria.
-     * Usa le stesse logiche di rimozione/piazzamento della costruzione base:
-     * - Svuota container prima di rimuoverli
-     * - Ordine per Y crescente
-     * - UPDATE_SKIP_ON_PLACE per evitare trigger
-     * - Applica NBT dei block entity base
+     * Restores base construction blocks where the room had modifications.
+     * Delegates to centralized ConstructionOperations.restoreBaseBlocks.
      */
     private void restoreBaseBlocks(ServerLevel world, Room room) {
-        // Prima svuota i container dei blocchi della room che verranno sostituiti
-        for (BlockPos pos : room.getBlockChanges().keySet()) {
-            net.minecraft.world.level.block.entity.BlockEntity blockEntity = world.getBlockEntity(pos);
-            if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
-                clearable.clearContent();
-            }
-        }
-
-        // Prepara la lista di blocchi da ripristinare
-        java.util.List<Map.Entry<BlockPos, BlockState>> blocksToRestore = new java.util.ArrayList<>();
-        for (BlockPos pos : room.getBlockChanges().keySet()) {
-            BlockState baseState = construction.getBlocks().get(pos);
-            if (baseState != null) {
-                blocksToRestore.add(Map.entry(pos, baseState));
-            } else {
-                // Se non c'era un blocco base, metti aria
-                blocksToRestore.add(Map.entry(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
-            }
-        }
-
-        // Ordina per Y crescente per piazzare prima i blocchi di supporto
-        blocksToRestore.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
-
-        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare orientamento e evitare trigger
-        int placementFlags = net.minecraft.world.level.block.Block.UPDATE_CLIENTS |
-                             net.minecraft.world.level.block.Block.UPDATE_SKIP_ON_PLACE;
-
-        int restoredCount = 0;
-        int blockEntityCount = 0;
-
-        for (Map.Entry<BlockPos, BlockState> entry : blocksToRestore) {
-            BlockPos pos = entry.getKey();
-            BlockState state = entry.getValue();
-
-            world.setBlock(pos, state, placementFlags);
-            restoredCount++;
-
-            // Applica NBT del block entity base se presente
-            if (!state.isAir()) {
-                CompoundTag blockNbt = construction.getBlockEntityNbt(pos);
-                if (blockNbt != null) {
-                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = world.getBlockEntity(pos);
-                    if (blockEntity != null) {
-                        CompoundTag nbtCopy = blockNbt.copy();
-                        nbtCopy.putInt("x", pos.getX());
-                        nbtCopy.putInt("y", pos.getY());
-                        nbtCopy.putInt("z", pos.getZ());
-                        net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
-                            net.minecraft.util.ProblemReporter.DISCARDING,
-                            world.registryAccess(),
-                            nbtCopy
-                        );
-                        blockEntity.loadCustomOnly(input);
-                        blockEntity.setChanged();
-                        blockEntityCount++;
-                    }
-                }
-            }
-        }
-
-        Architect.LOGGER.debug("Restored {} base blocks ({} block entities) after exiting room '{}' in construction {}",
-            restoredCount, blockEntityCount, room.getId(), construction.getId());
+        int restoredCount = ConstructionOperations.restoreBaseBlocks(world, room, construction);
+        Architect.LOGGER.debug("Restored {} base blocks after exiting room '{}' in construction {}",
+            restoredCount, room.getId(), construction.getId());
     }
 
     /**
