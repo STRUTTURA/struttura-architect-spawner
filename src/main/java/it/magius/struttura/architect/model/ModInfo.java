@@ -21,6 +21,9 @@ public class ModInfo {
     // Numero di blocchi che richiedono questo mod
     private int blockCount;
 
+    // Numero di entità che richiedono questo mod
+    private int entitiesCount;
+
     // Numero di mob che richiedono questo mod
     private int mobsCount;
 
@@ -31,14 +34,16 @@ public class ModInfo {
         this.modId = modId;
         this.displayName = modId; // default al modId
         this.blockCount = 0;
+        this.entitiesCount = 0;
         this.mobsCount = 0;
         this.commandBlocksCount = 0;
     }
 
-    public ModInfo(String modId, String displayName, int blockCount, int mobsCount, int commandBlocksCount, String downloadUrl, String version) {
+    public ModInfo(String modId, String displayName, int blockCount, int entitiesCount, int mobsCount, int commandBlocksCount, String downloadUrl, String version) {
         this.modId = modId;
         this.displayName = displayName != null ? displayName : modId;
         this.blockCount = blockCount;
+        this.entitiesCount = entitiesCount;
         this.mobsCount = mobsCount;
         this.commandBlocksCount = commandBlocksCount;
         this.downloadUrl = downloadUrl;
@@ -51,6 +56,7 @@ public class ModInfo {
     public String getDownloadUrl() { return downloadUrl; }
     public String getVersion() { return version; }
     public int getBlockCount() { return blockCount; }
+    public int getEntitiesCount() { return entitiesCount; }
     public int getMobsCount() { return mobsCount; }
     public int getCommandBlocksCount() { return commandBlocksCount; }
 
@@ -65,6 +71,10 @@ public class ModInfo {
 
     public void setBlockCount(int blockCount) {
         this.blockCount = blockCount;
+    }
+
+    public void setEntitiesCount(int entitiesCount) {
+        this.entitiesCount = entitiesCount;
     }
 
     public void setMobsCount(int mobsCount) {
@@ -84,6 +94,10 @@ public class ModInfo {
         this.blockCount++;
     }
 
+    public void incrementEntitiesCount() {
+        this.entitiesCount++;
+    }
+
     public void incrementMobsCount() {
         this.mobsCount++;
     }
@@ -99,6 +113,7 @@ public class ModInfo {
             ", displayName='" + displayName + '\'' +
             ", version='" + version + '\'' +
             ", blockCount=" + blockCount +
+            ", entitiesCount=" + entitiesCount +
             ", mobsCount=" + mobsCount +
             ", commandBlocksCount=" + commandBlocksCount +
             ", downloadUrl='" + downloadUrl + '\'' +

@@ -666,14 +666,19 @@ public class Construction {
             }
         }
 
-        // Count mobs for each non-vanilla mod
+        // Count entities and mobs for each non-vanilla mod
         for (EntityData entityData : entities) {
             String namespace = entityData.getModNamespace();
 
-            // Ignora le entità vanilla
-            if (!"minecraft".equals(namespace) && isMobEntity(entityData.getEntityType())) {
+            // Skip vanilla entities
+            if (!"minecraft".equals(namespace)) {
                 ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
-                info.incrementMobsCount();
+                info.incrementEntitiesCount();
+
+                // Also count mobs separately
+                if (isMobEntity(entityData.getEntityType())) {
+                    info.incrementMobsCount();
+                }
             }
         }
 

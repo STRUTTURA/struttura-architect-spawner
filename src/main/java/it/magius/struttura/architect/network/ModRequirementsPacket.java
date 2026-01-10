@@ -35,6 +35,7 @@ public record ModRequirementsPacket(
             String modId = buf.readUtf(128);
             String displayName = buf.readUtf(256);
             int blockCount = buf.readVarInt();
+            int entitiesCount = buf.readVarInt();
             int mobsCount = buf.readVarInt();
             int commandBlocksCount = buf.readVarInt();
             boolean hasVersion = buf.readBoolean();
@@ -42,7 +43,7 @@ public record ModRequirementsPacket(
             boolean hasDownloadUrl = buf.readBoolean();
             String downloadUrl = hasDownloadUrl ? buf.readUtf(512) : null;
 
-            ModInfo info = new ModInfo(modId, displayName, blockCount, mobsCount, commandBlocksCount, downloadUrl, version);
+            ModInfo info = new ModInfo(modId, displayName, blockCount, entitiesCount, mobsCount, commandBlocksCount, downloadUrl, version);
             requiredMods.put(modId, info);
         }
 
@@ -58,6 +59,7 @@ public record ModRequirementsPacket(
             buf.writeUtf(mod.getModId(), 128);
             buf.writeUtf(mod.getDisplayName(), 256);
             buf.writeVarInt(mod.getBlockCount());
+            buf.writeVarInt(mod.getEntitiesCount());
             buf.writeVarInt(mod.getMobsCount());
             buf.writeVarInt(mod.getCommandBlocksCount());
             buf.writeBoolean(mod.getVersion() != null);

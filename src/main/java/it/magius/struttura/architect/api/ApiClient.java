@@ -177,6 +177,7 @@ public class ApiClient {
 
         // Conteggi totali (base + tutte le stanze)
         json.addProperty("blocksCount", construction.getTotalBlockCount());
+        json.addProperty("entitiesCount", construction.getTotalEntityCount());
         json.addProperty("mobsCount", construction.getTotalMobCount());
         json.addProperty("commandBlocksCount", construction.getTotalCommandBlockCount());
 
@@ -201,7 +202,8 @@ public class ApiClient {
         for (ModInfo mod : construction.getRequiredMods().values()) {
             JsonObject modJson = new JsonObject();
             modJson.addProperty("displayName", mod.getDisplayName());
-            modJson.addProperty("blockCount", mod.getBlockCount());
+            modJson.addProperty("blocksCount", mod.getBlockCount());
+            modJson.addProperty("entitiesCount", mod.getEntitiesCount());
             modJson.addProperty("mobsCount", mod.getMobsCount());
             modJson.addProperty("commandBlocksCount", mod.getCommandBlocksCount());
             if (mod.getVersion() != null) {
@@ -222,7 +224,7 @@ public class ApiClient {
             roomJson.addProperty("name", room.getName());
             roomJson.addProperty("createdAt", room.getCreatedAt().toString());
             roomJson.addProperty("blockChanges", room.getChangedBlockCount());
-            roomJson.addProperty("entityCount", room.getEntityCount());
+            roomJson.addProperty("entitiesCount", room.getEntityCount());
             roomsArray.add(roomJson);
         }
         json.add("rooms", roomsArray);
@@ -902,8 +904,11 @@ public class ApiClient {
                     if (modJson.has("displayName")) {
                         info.setDisplayName(modJson.get("displayName").getAsString());
                     }
-                    if (modJson.has("blockCount")) {
-                        info.setBlockCount(modJson.get("blockCount").getAsInt());
+                    if (modJson.has("blocksCount")) {
+                        info.setBlockCount(modJson.get("blocksCount").getAsInt());
+                    }
+                    if (modJson.has("entitiesCount")) {
+                        info.setEntitiesCount(modJson.get("entitiesCount").getAsInt());
                     }
                     if (modJson.has("mobsCount")) {
                         info.setMobsCount(modJson.get("mobsCount").getAsInt());
@@ -1273,8 +1278,11 @@ public class ApiClient {
                     if (modJson.has("displayName")) {
                         info.setDisplayName(modJson.get("displayName").getAsString());
                     }
-                    if (modJson.has("blockCount")) {
-                        info.setBlockCount(modJson.get("blockCount").getAsInt());
+                    if (modJson.has("blocksCount")) {
+                        info.setBlockCount(modJson.get("blocksCount").getAsInt());
+                    }
+                    if (modJson.has("entitiesCount")) {
+                        info.setEntitiesCount(modJson.get("entitiesCount").getAsInt());
                     }
                     if (modJson.has("mobsCount")) {
                         info.setMobsCount(modJson.get("mobsCount").getAsInt());
