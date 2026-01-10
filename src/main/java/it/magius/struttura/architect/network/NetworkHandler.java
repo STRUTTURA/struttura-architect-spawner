@@ -424,9 +424,10 @@ public class NetworkHandler {
         Room room = inRoom ? session.getCurrentRoomObject() : null;
 
         if (mode == EditMode.ADD) {
-            // Mode ADD: aggiungi i blocchi alla costruzione o stanza
+            // Mode ADD: add blocks to construction or room
             int addedCount = 0;
             int skippedAir = 0;
+            int skippedExisting = 0;
 
             for (int x = min.getX(); x <= max.getX(); x++) {
                 for (int y = min.getY(); y <= max.getY(); y++) {
@@ -434,16 +435,28 @@ public class NetworkHandler {
                         BlockPos pos = new BlockPos(x, y, z);
                         BlockState state = level.getBlockState(pos);
 
-                        // Salta i blocchi aria se non includeAir
+                        // Skip air blocks if not includeAir
                         if (!includeAir && state.isAir()) {
                             skippedAir++;
                             continue;
                         }
 
-                        // Aggiungi il blocco alla costruzione o stanza
+                        // Check if block already exists in target
+                        boolean alreadyExists;
+                        if (inRoom && room != null) {
+                            alreadyExists = room.hasBlockChange(pos);
+                        } else {
+                            alreadyExists = construction.containsBlock(pos);
+                        }
+
+                        if (alreadyExists) {
+                            skippedExisting++;
+                            continue;
+                        }
+
+                        // Add block to construction or room
                         if (inRoom && room != null) {
                             room.setBlockChange(pos, state);
-                            // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
                             construction.getBounds().expandToInclude(pos);
                         } else {
                             construction.addBlock(pos, state);
@@ -469,6 +482,11 @@ public class NetworkHandler {
             var bounds = construction.getBounds();
 
             for (Entity entity : worldEntities) {
+                // Skip if entity is already tracked in the session
+                if (session.isEntityTracked(entity.getUUID())) {
+                    continue;
+                }
+
                 EntityData data = EntityData.fromEntity(entity, bounds, level.registryAccess());
                 int newIndex;
                 if (inRoom && room != null) {
@@ -476,7 +494,6 @@ public class NetworkHandler {
                 } else {
                     newIndex = construction.addEntity(data);
                 }
-                // Track the entity so it can be managed during the session
                 session.trackEntity(entity.getUUID(), newIndex);
                 entitiesAdded++;
             }
