@@ -2271,6 +2271,7 @@ public class StrutturaCommand {
 
     /**
      * Spawns a construction in front of the player at a distance optimized for screenshot.
+     * Uses centralized ConstructionOperations.placeConstructionAt for consistent behavior.
      * Returns the spawn position (min corner).
      */
     private static BlockPos spawnConstructionForScreenshot(ServerPlayer player, ServerLevel level, Construction construction) {
@@ -2278,14 +2279,23 @@ public class StrutturaCommand {
             return player.blockPosition();
         }
 
-        var bounds = construction.getBounds();
+        // Calculate screenshot-optimized position
+        BlockPos targetPos = calculateScreenshotPosition(player, construction.getBounds());
+
+        // Use centralized placement (no coordinate update needed for temporary screenshot spawn)
+        var result = ConstructionOperations.placeConstructionAt(level, construction, targetPos, false);
+
+        return result.newOrigin();
+    }
+
+    /**
+     * Calculates a position optimized for screenshot framing.
+     * The construction is placed at a distance that allows it to fit in the camera view.
+     */
+    private static BlockPos calculateScreenshotPosition(ServerPlayer player, ConstructionBounds bounds) {
         int sizeX = bounds.getSizeX();
         int sizeY = bounds.getSizeY();
         int sizeZ = bounds.getSizeZ();
-
-        int originalMinX = bounds.getMinX();
-        int originalMinY = bounds.getMinY();
-        int originalMinZ = bounds.getMinZ();
 
         // Calculate spawn position in front of player
         float yaw = player.getYRot();
@@ -2299,109 +2309,11 @@ public class StrutturaCommand {
         // Distance = half structure size + some margin for good framing
         int distance = (maxSize / 2) + Math.max(5, maxSize / 3);
 
-        int offsetX = (int) Math.round(player.getX() + dirX * distance) - originalMinX - sizeX / 2;
-        int offsetY = (int) player.getY() - originalMinY;
-        int offsetZ = (int) Math.round(player.getZ() + dirZ * distance) - originalMinZ - sizeZ / 2;
+        int targetX = (int) Math.round(player.getX() + dirX * distance) - sizeX / 2;
+        int targetY = (int) player.getY();
+        int targetZ = (int) Math.round(player.getZ() + dirZ * distance) - sizeZ / 2;
 
-        // Place blocks
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
-
-        java.util.List<java.util.Map.Entry<BlockPos, BlockState>> sortedBlocks =
-            new java.util.ArrayList<>(construction.getBlocks().entrySet());
-        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
-
-        for (java.util.Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
-            BlockPos originalPos = entry.getKey();
-            BlockState blockState = entry.getValue();
-            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
-            if (!blockState.isAir()) {
-                level.setBlock(newPos, blockState, placementFlags);
-
-                // Apply block entity NBT if present
-                net.minecraft.nbt.CompoundTag blockNbt = construction.getBlockEntityNbt(originalPos);
-                if (blockNbt != null) {
-                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(newPos);
-                    if (blockEntity != null) {
-                        net.minecraft.nbt.CompoundTag nbtCopy = blockNbt.copy();
-                        nbtCopy.putInt("x", newPos.getX());
-                        nbtCopy.putInt("y", newPos.getY());
-                        nbtCopy.putInt("z", newPos.getZ());
-                        net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
-                            net.minecraft.util.ProblemReporter.DISCARDING,
-                            level.registryAccess(),
-                            nbtCopy
-                        );
-                        blockEntity.loadCustomOnly(input);
-                        blockEntity.setChanged();
-                    }
-                }
-            }
-        }
-
-        // Spawn entities
-        for (var entityData : construction.getEntities()) {
-            try {
-                net.minecraft.world.phys.Vec3 relativePos = entityData.getRelativePos();
-                double worldX = relativePos.x + originalMinX + offsetX;
-                double worldY = relativePos.y + originalMinY + offsetY;
-                double worldZ = relativePos.z + originalMinZ + offsetZ;
-
-                // Prepare NBT for entity creation
-                net.minecraft.nbt.CompoundTag nbt = entityData.getNbt();
-                if (nbt == null) {
-                    nbt = new net.minecraft.nbt.CompoundTag();
-                } else {
-                    nbt = nbt.copy();
-                }
-
-                // Ensure NBT contains the entity type id
-                if (!nbt.contains("id")) {
-                    nbt.putString("id", entityData.getEntityType());
-                }
-
-                // Remove UUID to avoid conflicts
-                nbt.remove("UUID");
-
-                // Update block_pos for hanging entities (paintings, item frames, etc.)
-                // MC 1.21+ uses "block_pos" (CompoundTag with X, Y, Z)
-                if (nbt.contains("block_pos")) {
-                    nbt.getCompound("block_pos").ifPresent(blockPos -> {
-                        int bpX = blockPos.getIntOr("X", 0);
-                        int bpY = blockPos.getIntOr("Y", 0);
-                        int bpZ = blockPos.getIntOr("Z", 0);
-                        // Add offset to convert from relative to world coordinates
-                        blockPos.putInt("X", bpX + offsetX);
-                        blockPos.putInt("Y", bpY + offsetY);
-                        blockPos.putInt("Z", bpZ + offsetZ);
-                    });
-                }
-                // Fallback for old formats (TileX/Y/Z)
-                else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
-                    int tileX = nbt.getIntOr("TileX", 0);
-                    int tileY = nbt.getIntOr("TileY", 0);
-                    int tileZ = nbt.getIntOr("TileZ", 0);
-                    nbt.putInt("TileX", tileX + offsetX);
-                    nbt.putInt("TileY", tileY + offsetY);
-                    nbt.putInt("TileZ", tileZ + offsetZ);
-                }
-
-                // Create entity from NBT using loadEntityRecursive
-                net.minecraft.world.entity.Entity entity = net.minecraft.world.entity.EntityType.loadEntityRecursive(
-                    nbt, level, net.minecraft.world.entity.EntitySpawnReason.LOAD, e -> e);
-
-                if (entity != null) {
-                    entity.setPos(worldX, worldY, worldZ);
-                    entity.setYRot(entityData.getYaw());
-                    entity.setXRot(entityData.getPitch());
-                    entity.setUUID(java.util.UUID.randomUUID());
-                    level.addFreshEntity(entity);
-                }
-            } catch (Exception e) {
-                Architect.LOGGER.warn("Failed to spawn entity for vanilla structure: {}", e.getMessage());
-            }
-        }
-
-        return new BlockPos(originalMinX + offsetX, originalMinY + offsetY, originalMinZ + offsetZ);
+        return new BlockPos(targetX, targetY, targetZ);
     }
 
     /**
@@ -2537,6 +2449,7 @@ public class StrutturaCommand {
 
     /**
      * Cleans up the spawned construction (removes blocks and entities).
+     * Uses centralized ConstructionOperations.removeConstruction for consistent behavior.
      * Does NOT unregister from registry (constructions are not registered in new flow).
      */
     private static void cleanupSpawnedConstruction(VanillaBatchPushState state) {
@@ -2548,41 +2461,21 @@ public class StrutturaCommand {
             return;
         }
 
-        var bounds = construction.getBounds();
-        int offsetX = spawnPos.getX() - bounds.getMinX();
-        int offsetY = spawnPos.getY() - bounds.getMinY();
-        int offsetZ = spawnPos.getZ() - bounds.getMinZ();
-
-        // 1. First remove entities BEFORE blocks to prevent item drops
-        var aabb = new net.minecraft.world.phys.AABB(
-            spawnPos.getX() - 1, spawnPos.getY() - 1, spawnPos.getZ() - 1,
-            spawnPos.getX() + bounds.getSizeX() + 1,
-            spawnPos.getY() + bounds.getSizeY() + 1,
-            spawnPos.getZ() + bounds.getSizeZ() + 1
+        // Create bounds at the spawn position
+        var originalBounds = construction.getBounds();
+        ConstructionBounds spawnedBounds = new ConstructionBounds(
+            spawnPos.getX(),
+            spawnPos.getY(),
+            spawnPos.getZ(),
+            spawnPos.getX() + originalBounds.getSizeX() - 1,
+            spawnPos.getY() + originalBounds.getSizeY() - 1,
+            spawnPos.getZ() + originalBounds.getSizeZ() - 1
         );
-        java.util.List<net.minecraft.world.entity.Entity> entities = level.getEntities(
-            (net.minecraft.world.entity.Entity) null, aabb,
-            e -> !(e instanceof net.minecraft.world.entity.player.Player)
+
+        // Use centralized removal with DESTROY mode (removes all entities except players)
+        ConstructionOperations.removeConstruction(
+            level, construction, ConstructionOperations.RemovalMode.DESTROY, spawnedBounds
         );
-        for (net.minecraft.world.entity.Entity entity : entities) {
-            entity.discard();
-        }
-
-        // 2. Clear container contents to prevent item drops
-        for (BlockPos originalPos : construction.getBlocks().keySet()) {
-            BlockPos worldPos = originalPos.offset(offsetX, offsetY, offsetZ);
-            net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(worldPos);
-            if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
-                clearable.clearContent();
-            }
-        }
-
-        // 3. Remove blocks with flags that prevent particles and drops
-        int removeFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
-        for (BlockPos originalPos : construction.getBlocks().keySet()) {
-            BlockPos worldPos = originalPos.offset(offsetX, offsetY, offsetZ);
-            level.setBlock(worldPos, Blocks.AIR.defaultBlockState(), removeFlags);
-        }
     }
 
     /**

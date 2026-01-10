@@ -79,24 +79,47 @@ public class ConstructionOperations {
         ServerLevel level = (ServerLevel) player.level();
         ConstructionBounds bounds = construction.getBounds();
 
-        // Calculate offset based on mode
-        int offsetX, offsetY, offsetZ;
+        // Calculate target position based on mode
+        BlockPos targetPos;
+        if (mode == PlacementMode.SHOW) {
+            // SHOW: use original position
+            targetPos = bounds.getMin();
+        } else {
+            // SPAWN/PULL/MOVE: calculate position in front of player
+            targetPos = calculatePositionInFront(player, bounds);
+        }
+
+        return placeConstructionAt(level, construction, targetPos, updateConstructionCoords);
+    }
+
+    /**
+     * Places a construction at a specific target position without triggering physics.
+     * The target position is where the construction's min corner will be placed.
+     *
+     * @param level The ServerLevel
+     * @param construction The construction to place
+     * @param targetPos The target position for the construction's min corner
+     * @param updateConstructionCoords If true, updates the construction's stored coordinates
+     * @return PlacementResult with counts and new origin position
+     */
+    public static PlacementResult placeConstructionAt(
+        ServerLevel level,
+        Construction construction,
+        BlockPos targetPos,
+        boolean updateConstructionCoords
+    ) {
+        if (construction.getBlockCount() == 0) {
+            return new PlacementResult(0, 0, BlockPos.ZERO);
+        }
+
+        ConstructionBounds bounds = construction.getBounds();
         int originalMinX = bounds.getMinX();
         int originalMinY = bounds.getMinY();
         int originalMinZ = bounds.getMinZ();
 
-        if (mode == PlacementMode.SHOW) {
-            // SHOW: no offset, use original positions
-            offsetX = 0;
-            offsetY = 0;
-            offsetZ = 0;
-        } else {
-            // SPAWN/PULL/MOVE: calculate position in front of player
-            BlockPos targetPos = calculatePositionInFront(player, bounds);
-            offsetX = targetPos.getX() - originalMinX;
-            offsetY = targetPos.getY() - originalMinY;
-            offsetZ = targetPos.getZ() - originalMinZ;
-        }
+        int offsetX = targetPos.getX() - originalMinX;
+        int offsetY = targetPos.getY() - originalMinY;
+        int offsetZ = targetPos.getZ() - originalMinZ;
 
         // Phase 1: Place all blocks WITHOUT any updates
         Map<BlockPos, BlockState> newBlocks = new HashMap<>();

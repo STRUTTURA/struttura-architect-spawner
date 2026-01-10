@@ -176,10 +176,20 @@ public class ApiClient {
         json.add("descriptions", descriptions);
 
         // Conteggi totali (base + tutte le stanze)
-        json.addProperty("blocksCount", construction.getTotalBlockCount());
-        json.addProperty("entitiesCount", construction.getTotalEntityCount());
-        json.addProperty("mobsCount", construction.getTotalMobCount());
-        json.addProperty("commandBlocksCount", construction.getTotalCommandBlockCount());
+        int blocksCount = construction.getTotalBlockCount();
+        int entitiesCount = construction.getTotalEntityCount();
+        int mobsCount = construction.getTotalMobCount();
+        int commandBlocksCount = construction.getTotalCommandBlockCount();
+        int roomsCount = construction.getRooms().size();
+
+        Architect.LOGGER.info("Push counts for {}: blocks={}, entities={}, mobs={}, commandBlocks={}, rooms={}",
+            construction.getId(), blocksCount, entitiesCount, mobsCount, commandBlocksCount, roomsCount);
+
+        json.addProperty("blocksCount", blocksCount);
+        json.addProperty("entitiesCount", entitiesCount);
+        json.addProperty("mobsCount", mobsCount);
+        json.addProperty("commandBlocksCount", commandBlocksCount);
+        json.addProperty("roomsCount", roomsCount);
 
         // Bounds (normalizzati: min=0, max=size-1)
         JsonObject bounds = new JsonObject();
