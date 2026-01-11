@@ -91,6 +91,9 @@ public class EditingPanel {
     private int cachedDropdownListY = 0;
     private int cachedDropdownListHeight = 0;
 
+    // Bottom section cached positions for click handling
+    private int cachedDoneY = 0;
+
     // Scrollbar drag state
     private boolean draggingScrollbar = false;
     private int dragStartY = 0;
@@ -756,74 +759,7 @@ public class EditingPanel {
         graphics.drawString(font, statsRow3, x + PADDING, currentY, 0xFFCCCCCC, false);
         currentY += LINE_HEIGHT + PADDING;
 
-        // Mode toggle button
-        String modeText = "Mode: " + pm.getMode();
-        int modeBtnY = currentY;
-        boolean modeHovered = effectiveMouseX >= x + PADDING && effectiveMouseX < x + WIDTH - PADDING &&
-                             effectiveMouseY >= modeBtnY && effectiveMouseY < modeBtnY + BUTTON_HEIGHT;
-
-        int modeBgColor = modeHovered ? 0xFF505050 : 0xFF303030;
-        int modeAccentColor = pm.getMode().equals("ADD") ? 0xFF60A060 : 0xFFA06060;
-        graphics.fill(x + PADDING, modeBtnY, x + WIDTH - PADDING, modeBtnY + BUTTON_HEIGHT, modeBgColor);
-        graphics.renderOutline(x + PADDING, modeBtnY, WIDTH - PADDING * 2, BUTTON_HEIGHT, modeAccentColor);
-        int modeTextWidth = font.width(modeText);
-        graphics.drawString(font, modeText, x + (WIDTH - modeTextWidth) / 2, modeBtnY + 4,
-                           pm.getMode().equals("ADD") ? 0xFF88FF88 : 0xFFFF8888, false);
-        currentY += BUTTON_HEIGHT + PADDING;
-
-        // Selection section
-        graphics.drawString(font, "Selection:", x + PADDING, currentY, 0xFF808080, false);
-        currentY += LINE_HEIGHT;
-
-        // Selection buttons row 1: POS1, POS2, CLEAR (con allineamento migliorato)
-        String[] selBtns1 = {"POS1", "POS2", "CLEAR"};
-        int totalWidth = WIDTH - PADDING * 2;
-        int gapCount = selBtns1.length - 1;
-        int selBtnWidth = (totalWidth - gapCount * 2) / selBtns1.length;
-        // Ricalcola per evitare pixel avanzati
-        int remainder = (totalWidth - gapCount * 2) % selBtns1.length;
-
-        for (int i = 0; i < selBtns1.length; i++) {
-            // Distribuisci il remainder ai primi pulsanti
-            int thisWidth = selBtnWidth + (i < remainder ? 1 : 0);
-            int btnX = x + PADDING;
-            for (int j = 0; j < i; j++) {
-                btnX += (selBtnWidth + (j < remainder ? 1 : 0)) + 2;
-            }
-            int btnY = currentY;
-
-            boolean btnHovered = effectiveMouseX >= btnX && effectiveMouseX < btnX + thisWidth &&
-                                effectiveMouseY >= btnY && effectiveMouseY < btnY + BUTTON_HEIGHT;
-
-            int bgColor = btnHovered ? 0xFF505050 : 0xFF303030;
-            graphics.fill(btnX, btnY, btnX + thisWidth, btnY + BUTTON_HEIGHT, bgColor);
-            graphics.renderOutline(btnX, btnY, thisWidth, BUTTON_HEIGHT, 0xFF606060);
-
-            int textWidth = font.width(selBtns1[i]);
-            graphics.drawString(font, selBtns1[i], btnX + (thisWidth - textWidth) / 2, btnY + 4, 0xFFFFFFFF, false);
-        }
-        currentY += BUTTON_HEIGHT + 2;
-
-        // Selection buttons row 2: APPLY, APPLY ALL
-        String[] selBtns2 = {"APPLY", "APPLY ALL"};
-        int selBtn2Width = (WIDTH - PADDING * 2 - 2) / 2;
-        for (int i = 0; i < selBtns2.length; i++) {
-            int btnX = x + PADDING + i * (selBtn2Width + 2);
-            int btnY = currentY;
-
-            boolean btnHovered = effectiveMouseX >= btnX && effectiveMouseX < btnX + selBtn2Width &&
-                                effectiveMouseY >= btnY && effectiveMouseY < btnY + BUTTON_HEIGHT;
-
-            int bgColor = btnHovered ? 0xFF505050 : 0xFF303030;
-            graphics.fill(btnX, btnY, btnX + selBtn2Width, btnY + BUTTON_HEIGHT, bgColor);
-            graphics.renderOutline(btnX, btnY, selBtn2Width, BUTTON_HEIGHT, 0xFF606060);
-
-            int textWidth = font.width(selBtns2[i]);
-            graphics.drawString(font, selBtns2[i], btnX + (selBtn2Width - textWidth) / 2, btnY + 4, 0xFFFFFFFF, false);
-        }
-        currentY += BUTTON_HEIGHT + 2;
-
-        // Block/Entity removal section: dropdown + REMOVE button
+        // Block/Entity removal section: dropdown + REMOVE button (moved before Mode)
         java.util.List<RemovableItem> removableList = buildRemovableList(pm);
         int dropdownWidth = WIDTH - PADDING * 2 - 50 - 2; // Leave space for REMOVE button
         int removeBtnWidth = 50;
@@ -896,7 +832,145 @@ public class EditingPanel {
 
         currentY += DROPDOWN_HEIGHT + PADDING;
 
-        // Room dropdown with EDIT/REMOVE buttons (only when NOT in room editing)
+        // Mode toggle button
+        String modeText = "Mode: " + pm.getMode();
+        int modeBtnY = currentY;
+        boolean modeHovered = effectiveMouseX >= x + PADDING && effectiveMouseX < x + WIDTH - PADDING &&
+                             effectiveMouseY >= modeBtnY && effectiveMouseY < modeBtnY + BUTTON_HEIGHT;
+
+        int modeBgColor = modeHovered ? 0xFF505050 : 0xFF303030;
+        int modeAccentColor = pm.getMode().equals("ADD") ? 0xFF60A060 : 0xFFA06060;
+        graphics.fill(x + PADDING, modeBtnY, x + WIDTH - PADDING, modeBtnY + BUTTON_HEIGHT, modeBgColor);
+        graphics.renderOutline(x + PADDING, modeBtnY, WIDTH - PADDING * 2, BUTTON_HEIGHT, modeAccentColor);
+        int modeTextWidth = font.width(modeText);
+        graphics.drawString(font, modeText, x + (WIDTH - modeTextWidth) / 2, modeBtnY + 4,
+                           pm.getMode().equals("ADD") ? 0xFF88FF88 : 0xFFFF8888, false);
+        currentY += BUTTON_HEIGHT + PADDING;
+
+        // Selection section - label and all buttons on same line
+        String selLabel = "Selection:";
+        int selLabelWidth = font.width(selLabel);
+        graphics.drawString(font, selLabel, x + PADDING, currentY + 4, 0xFF808080, false);
+
+        // Selection buttons: 1, 2, X, ↓, ↓Air - with custom widths
+        // Buttons 0-2 (1, 2, X) are small, button 3 (↓) is smaller, button 4 (↓Air) is wider
+        String[] selBtns = {"1", "2", "\u2715", "\u2193", "\u2193Air"};
+        int buttonsStartX = x + PADDING + selLabelWidth + 4;
+        int availableWidth = WIDTH - PADDING - (buttonsStartX - x);
+        int gapCount = 4; // 5 buttons = 4 gaps
+        int totalGaps = gapCount * 2;
+        // Custom widths: small (1,2,X), smaller (↓), wider (↓Air)
+        int smallBtnWidth = 14;  // for 1, 2, X
+        int arrowBtnWidth = 12;  // for ↓ (smaller)
+        int airBtnWidth = availableWidth - totalGaps - (smallBtnWidth * 3) - arrowBtnWidth;  // remaining for ↓Air
+        int[] btnWidths = {smallBtnWidth, smallBtnWidth, smallBtnWidth, arrowBtnWidth, airBtnWidth};
+
+        int btnX = buttonsStartX;
+        for (int i = 0; i < selBtns.length; i++) {
+            int thisWidth = btnWidths[i];
+            int btnY = currentY;
+
+            boolean btnHovered = effectiveMouseX >= btnX && effectiveMouseX < btnX + thisWidth &&
+                                effectiveMouseY >= btnY && effectiveMouseY < btnY + BUTTON_HEIGHT;
+
+            int bgColor = btnHovered ? 0xFF505050 : 0xFF303030;
+            graphics.fill(btnX, btnY, btnX + thisWidth, btnY + BUTTON_HEIGHT, bgColor);
+            graphics.renderOutline(btnX, btnY, thisWidth, BUTTON_HEIGHT, 0xFF606060);
+
+            int textWidth = font.width(selBtns[i]);
+            graphics.drawString(font, selBtns[i], btnX + (thisWidth - textWidth) / 2, btnY + 4, 0xFFFFFFFF, false);
+
+            btnX += thisWidth + 2;
+        }
+
+        // Entrance anchor row (only for base construction editing, not rooms)
+        if (!inRoomEditing) {
+            currentY += BUTTON_HEIGHT + PADDING;
+
+            // Home icon (⌂ or similar)
+            String homeIcon = "\u2302";  // ⌂
+            int homeIconWidth = font.width(homeIcon);
+            graphics.drawString(font, homeIcon, x + PADDING, currentY + 4, 0xFF808080, false);
+
+            // Coordinates display (x, y, z, yaw)
+            int coordsX = x + PADDING + homeIconWidth + 4;
+            String coordsText;
+            if (pm.hasEntrance()) {
+                int[] entrance = pm.getEntrance();
+                int yawInt = Math.round(pm.getEntranceYaw());
+                coordsText = entrance[0] + ", " + entrance[1] + ", " + entrance[2] + ", " + yawInt + "\u00B0";
+            } else {
+                coordsText = "- - -";
+            }
+            int coordsWidth = font.width(coordsText);
+            graphics.drawString(font, coordsText, coordsX, currentY + 4, pm.hasEntrance() ? 0xFFCCCCCC : 0xFF666666, false);
+
+            // Check if player is at the entrance position (only coordinates, not yaw)
+            boolean playerAtEntrance = false;
+            if (pm.hasEntrance()) {
+                var player = Minecraft.getInstance().player;
+                if (player != null) {
+                    int[] entrance = pm.getEntrance();
+                    int playerX = player.blockPosition().getX();
+                    int playerY = player.blockPosition().getY();
+                    int playerZ = player.blockPosition().getZ();
+                    // Player is at entrance if same block position
+                    playerAtEntrance = playerX == entrance[0] && playerY == entrance[1] && playerZ == entrance[2];
+                }
+            }
+
+            // SET and TP buttons (right-aligned)
+            int setBtnWidth = 24;
+            int tpBtnWidth = 20;
+            int gap = 2;
+            int tpBtnX = x + WIDTH - PADDING - tpBtnWidth;
+            int setBtnX = tpBtnX - gap - setBtnWidth;
+
+            // SET button (disabled if player is already at entrance)
+            boolean setDisabled = playerAtEntrance;
+            boolean setHovered = !setDisabled && effectiveMouseX >= setBtnX && effectiveMouseX < setBtnX + setBtnWidth &&
+                                effectiveMouseY >= currentY && effectiveMouseY < currentY + BUTTON_HEIGHT;
+            int setBgColor = setDisabled ? 0xFF202020 : (setHovered ? 0xFF405040 : 0xFF304030);
+            int setTextColor = setDisabled ? 0xFF606060 : 0xFF88FF88;
+            int setBorderColor = setDisabled ? 0xFF404040 : 0xFF608060;
+            graphics.fill(setBtnX, currentY, setBtnX + setBtnWidth, currentY + BUTTON_HEIGHT, setBgColor);
+            graphics.renderOutline(setBtnX, currentY, setBtnWidth, BUTTON_HEIGHT, setBorderColor);
+            int setTextWidth = font.width("SET");
+            graphics.drawString(font, "SET", setBtnX + (setBtnWidth - setTextWidth) / 2, currentY + 4, setTextColor, false);
+
+            // TP button (disabled if no entrance or player already at entrance)
+            boolean tpDisabled = !pm.hasEntrance() || playerAtEntrance;
+            boolean tpHovered = !tpDisabled && effectiveMouseX >= tpBtnX && effectiveMouseX < tpBtnX + tpBtnWidth &&
+                               effectiveMouseY >= currentY && effectiveMouseY < currentY + BUTTON_HEIGHT;
+            int tpBgColor = tpDisabled ? 0xFF202020 : (tpHovered ? 0xFF405060 : 0xFF304050);
+            int tpTextColor = tpDisabled ? 0xFF606060 : 0xFF88CCFF;
+            int tpBorderColor = tpDisabled ? 0xFF404040 : 0xFF6080A0;
+            graphics.fill(tpBtnX, currentY, tpBtnX + tpBtnWidth, currentY + BUTTON_HEIGHT, tpBgColor);
+            graphics.renderOutline(tpBtnX, currentY, tpBtnWidth, BUTTON_HEIGHT, tpBorderColor);
+            int tpTextWidth = font.width("TP");
+            graphics.drawString(font, "TP", tpBtnX + (tpBtnWidth - tpTextWidth) / 2, currentY + 4, tpTextColor, false);
+        }
+
+        // === BOTTOM SECTION: Render from the bottom of the panel ===
+        int bottomY = y + HEIGHT - PADDING;
+
+        // DONE button (full width, at very bottom)
+        int doneY = bottomY - BUTTON_HEIGHT;
+        int doneBtnWidth = WIDTH - PADDING * 2;
+        boolean doneHovered = effectiveMouseX >= x + PADDING && effectiveMouseX < x + WIDTH - PADDING &&
+                             effectiveMouseY >= doneY && effectiveMouseY < doneY + BUTTON_HEIGHT;
+
+        int doneBgColor = doneHovered ? 0xFF604040 : 0xFF403030;
+        graphics.fill(x + PADDING, doneY, x + WIDTH - PADDING, doneY + BUTTON_HEIGHT, doneBgColor);
+        graphics.renderOutline(x + PADDING, doneY, doneBtnWidth, BUTTON_HEIGHT, 0xFF806060);
+
+        int doneTextWidth = font.width("DONE");
+        graphics.drawString(font, "DONE", x + (WIDTH - doneTextWidth) / 2, doneY + 4, 0xFFFFAAAA, false);
+
+        // Cache done button Y for click handling
+        cachedDoneY = doneY;
+
+        // Room dropdown with EDIT/DEL buttons (only when NOT in room editing) - above DONE
         if (!inRoomEditing) {
             java.util.List<PanelManager.RoomInfo> roomListData = pm.getRoomList();
 
@@ -905,7 +979,7 @@ public class EditingPanel {
             int editBtnWidth = 25;
             int delBtnWidth = 50;
 
-            int roomDropdownY = currentY;
+            int roomDropdownY = doneY - DROPDOWN_HEIGHT - 2;
 
             // Determine selected item text
             String selectedRoomText;
@@ -970,26 +1044,6 @@ public class EditingPanel {
             graphics.renderOutline(delBtnX, roomDropdownY, delBtnWidth, DROPDOWN_HEIGHT, delDisabled ? 0xFF404040 : 0xFFA06060);
             int delTextWidth = font.width("DEL");
             graphics.drawString(font, "DEL", delBtnX + (delBtnWidth - delTextWidth) / 2, roomDropdownY + 3, delTextColor, false);
-
-            currentY += DROPDOWN_HEIGHT + 2;
-        }
-
-        // DONE buttons row: DONE, DONE noMOB (split in due pulsanti)
-        String[] doneBtns = {"DONE", "DONE noMOB"};
-        int doneBtnWidth = (WIDTH - PADDING * 2 - 2) / 2;
-        for (int i = 0; i < doneBtns.length; i++) {
-            int btnX = x + PADDING + i * (doneBtnWidth + 2);
-            int btnY = currentY;
-
-            boolean btnHovered = effectiveMouseX >= btnX && effectiveMouseX < btnX + doneBtnWidth &&
-                                effectiveMouseY >= btnY && effectiveMouseY < btnY + BUTTON_HEIGHT;
-
-            int bgColor = btnHovered ? 0xFF604040 : 0xFF403030;
-            graphics.fill(btnX, btnY, btnX + doneBtnWidth, btnY + BUTTON_HEIGHT, bgColor);
-            graphics.renderOutline(btnX, btnY, doneBtnWidth, BUTTON_HEIGHT, 0xFF806060);
-
-            int textWidth = font.width(doneBtns[i]);
-            graphics.drawString(font, doneBtns[i], btnX + (doneBtnWidth - textWidth) / 2, btnY + 4, 0xFFFFAAAA, false);
         }
 
         // Render block/entity dropdown list ON TOP of other elements (opens upward)
@@ -1754,68 +1808,7 @@ public class EditingPanel {
         // Skip stats section (3 rows for both room and building editing)
         currentY += LINE_HEIGHT * 3 + PADDING;
 
-        // Mode button
-        if (mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT &&
-            mouseX >= x + PADDING && mouseX < x + WIDTH - PADDING) {
-            // Toggle mode
-            sendSelectionAction(SelectionKeyPacket.Action.MODE_TOGGLE);
-            return true;
-        }
-        currentY += BUTTON_HEIGHT + PADDING + LINE_HEIGHT;
-
-        // Selection buttons row 1 (con calcolo allineamento migliorato)
-        int totalWidth = WIDTH - PADDING * 2;
-        int gapCount = 2; // 3 pulsanti = 2 gap
-        int selBtnWidth = (totalWidth - gapCount * 2) / 3;
-        int remainder = (totalWidth - gapCount * 2) % 3;
-
-        // POS1
-        int btnX = x + PADDING;
-        int thisWidth = selBtnWidth + (0 < remainder ? 1 : 0);
-        if (mouseX >= btnX && mouseX < btnX + thisWidth &&
-            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
-            Minecraft.getInstance().setScreen(null);  // Chiudi GUI
-            sendSelectionAction(SelectionKeyPacket.Action.POS1);
-            return true;
-        }
-        btnX += thisWidth + 2;
-
-        // POS2
-        thisWidth = selBtnWidth + (1 < remainder ? 1 : 0);
-        if (mouseX >= btnX && mouseX < btnX + thisWidth &&
-            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
-            Minecraft.getInstance().setScreen(null);  // Chiudi GUI
-            sendSelectionAction(SelectionKeyPacket.Action.POS2);
-            return true;
-        }
-        btnX += thisWidth + 2;
-
-        // CLEAR
-        thisWidth = selBtnWidth + (2 < remainder ? 1 : 0);
-        if (mouseX >= btnX && mouseX < btnX + thisWidth &&
-            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
-            sendSelectionAction(SelectionKeyPacket.Action.CLEAR);
-            return true;
-        }
-        currentY += BUTTON_HEIGHT + 2;
-
-        // Selection buttons row 2: APPLY, APPLY ALL
-        int selBtn2Width = (WIDTH - PADDING * 2 - 2) / 2;
-        if (mouseX >= x + PADDING && mouseX < x + PADDING + selBtn2Width &&
-            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
-            Minecraft.getInstance().setScreen(null);  // Chiudi GUI
-            sendSelectionAction(SelectionKeyPacket.Action.APPLY);
-            return true;
-        }
-        if (mouseX >= x + PADDING + selBtn2Width + 2 && mouseX < x + WIDTH - PADDING &&
-            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
-            Minecraft.getInstance().setScreen(null);  // Chiudi GUI
-            sendSelectionAction(SelectionKeyPacket.Action.APPLYALL);
-            return true;
-        }
-        currentY += BUTTON_HEIGHT + 2;
-
-        // Block/Entity removal section: dropdown + REMOVE button
+        // Block/Entity removal section: dropdown + REMOVE button (moved before Mode)
         java.util.List<RemovableItem> removableList = buildRemovableList(PanelManager.getInstance());
         int dropdownWidth = WIDTH - PADDING * 2 - 50 - 2;
         int removeBtnWidth = 50;
@@ -1881,17 +1874,140 @@ public class EditingPanel {
 
         currentY += DROPDOWN_HEIGHT + PADDING;
 
-        // Room dropdown with EDIT/DEL buttons (only when NOT in room editing)
+        // Mode button
+        if (mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT &&
+            mouseX >= x + PADDING && mouseX < x + WIDTH - PADDING) {
+            // Toggle mode
+            sendSelectionAction(SelectionKeyPacket.Action.MODE_TOGGLE);
+            return true;
+        }
+        currentY += BUTTON_HEIGHT + PADDING;
+
+        // Selection buttons - with custom widths matching render
+        String selLabel = "Selection:";
+        int selLabelWidth = Minecraft.getInstance().font.width(selLabel);
+        int buttonsStartX = x + PADDING + selLabelWidth + 4;
+        int availableWidth = WIDTH - PADDING - (buttonsStartX - x);
+        int totalGaps = 4 * 2; // 5 buttons = 4 gaps
+        // Custom widths: small (1,2,X), smaller (↓), wider (↓Air)
+        int smallBtnWidth = 14;
+        int arrowBtnWidth = 12;
+        int airBtnWidth = availableWidth - totalGaps - (smallBtnWidth * 3) - arrowBtnWidth;
+        int[] btnWidths = {smallBtnWidth, smallBtnWidth, smallBtnWidth, arrowBtnWidth, airBtnWidth};
+
+        // Button 0: "1" (POS1)
+        int btnX = buttonsStartX;
+        if (mouseX >= btnX && mouseX < btnX + btnWidths[0] &&
+            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
+            Minecraft.getInstance().setScreen(null);
+            sendSelectionAction(SelectionKeyPacket.Action.POS1);
+            return true;
+        }
+
+        // Button 1: "2" (POS2)
+        btnX += btnWidths[0] + 2;
+        if (mouseX >= btnX && mouseX < btnX + btnWidths[1] &&
+            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
+            Minecraft.getInstance().setScreen(null);
+            sendSelectionAction(SelectionKeyPacket.Action.POS2);
+            return true;
+        }
+
+        // Button 2: "X" (CLEAR)
+        btnX += btnWidths[1] + 2;
+        if (mouseX >= btnX && mouseX < btnX + btnWidths[2] &&
+            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
+            sendSelectionAction(SelectionKeyPacket.Action.CLEAR);
+            return true;
+        }
+
+        // Button 3: "↓" (APPLY)
+        btnX += btnWidths[2] + 2;
+        if (mouseX >= btnX && mouseX < btnX + btnWidths[3] &&
+            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
+            Minecraft.getInstance().setScreen(null);
+            sendSelectionAction(SelectionKeyPacket.Action.APPLY);
+            return true;
+        }
+
+        // Button 4: "↓Air" (APPLY ALL)
+        btnX += btnWidths[3] + 2;
+        if (mouseX >= btnX && mouseX < btnX + btnWidths[4] &&
+            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
+            Minecraft.getInstance().setScreen(null);
+            sendSelectionAction(SelectionKeyPacket.Action.APPLYALL);
+            return true;
+        }
+
+        // Entrance anchor row (only for base construction editing, not rooms)
+        if (!inRoomEditing) {
+            currentY += BUTTON_HEIGHT + PADDING;
+
+            // Check if player is at the entrance position (only coordinates, not yaw)
+            boolean playerAtEntrance = false;
+            if (pm.hasEntrance()) {
+                var player = Minecraft.getInstance().player;
+                if (player != null) {
+                    int[] entrance = pm.getEntrance();
+                    int playerX = player.blockPosition().getX();
+                    int playerY = player.blockPosition().getY();
+                    int playerZ = player.blockPosition().getZ();
+                    // Player is at entrance if same block position
+                    playerAtEntrance = playerX == entrance[0] && playerY == entrance[1] && playerZ == entrance[2];
+                }
+            }
+
+            // SET and TP buttons (right-aligned, same layout as render)
+            int setBtnWidth = 24;
+            int tpBtnWidth = 20;
+            int gap = 2;
+            int tpBtnX = x + WIDTH - PADDING - tpBtnWidth;
+            int setBtnX = tpBtnX - gap - setBtnWidth;
+
+            // SET button click (disabled if player already at entrance)
+            if (!playerAtEntrance &&
+                mouseX >= setBtnX && mouseX < setBtnX + setBtnWidth &&
+                mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
+                // Send action to server to set entrance at player's current position
+                ClientPlayNetworking.send(new GuiActionPacket("set_entrance", "", ""));
+                return true;
+            }
+
+            // TP button click (disabled if no entrance or player already at entrance)
+            if (pm.hasEntrance() && !playerAtEntrance &&
+                mouseX >= tpBtnX && mouseX < tpBtnX + tpBtnWidth &&
+                mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
+                // Send action to server to teleport player to entrance
+                ClientPlayNetworking.send(new GuiActionPacket("tp_entrance", "", ""));
+                return true;
+            }
+        }
+
+        // === BOTTOM SECTION: Click handling using cached Y positions ===
+
+        // DONE button (full width, at very bottom) - uses cachedDoneY
+        if (mouseX >= x + PADDING && mouseX < x + WIDTH - PADDING &&
+            mouseY >= cachedDoneY && mouseY < cachedDoneY + BUTTON_HEIGHT) {
+            if (inRoomEditing) {
+                // Exit room and return to building editing
+                ClientPlayNetworking.send(new GuiActionPacket("room_exit", "", ""));
+            } else {
+                // Exit building editing completely
+                ClientPlayNetworking.send(new GuiActionPacket("done", "", ""));
+            }
+            return true;
+        }
+
+        // Room dropdown with EDIT/DEL buttons (only when NOT in room editing) - uses cachedRoomDropdownY
         if (!inRoomEditing) {
             java.util.List<PanelManager.RoomInfo> roomListData = pm.getRoomList();
             int roomDropdownWidth = WIDTH - PADDING * 2 - 50 - 25 - 4;
             int editBtnWidth = 25;
             int delBtnWidth = 50;
-            int roomDropdownY = currentY;
 
             // Room dropdown toggle click
             if (mouseX >= x + PADDING && mouseX < x + PADDING + roomDropdownWidth &&
-                mouseY >= roomDropdownY && mouseY < roomDropdownY + DROPDOWN_HEIGHT) {
+                mouseY >= cachedRoomDropdownY && mouseY < cachedRoomDropdownY + DROPDOWN_HEIGHT) {
                 roomDropdownOpen = !roomDropdownOpen;
                 return true;
             }
@@ -1899,7 +2015,7 @@ public class EditingPanel {
             // EDIT button click
             int editBtnX = x + PADDING + roomDropdownWidth + 2;
             if (mouseX >= editBtnX && mouseX < editBtnX + editBtnWidth &&
-                mouseY >= roomDropdownY && mouseY < roomDropdownY + DROPDOWN_HEIGHT) {
+                mouseY >= cachedRoomDropdownY && mouseY < cachedRoomDropdownY + DROPDOWN_HEIGHT) {
                 if (selectedRoomIndex == 0) {
                     // Open new room modal
                     newRoomModalOpen = true;
@@ -1920,7 +2036,7 @@ public class EditingPanel {
             // DEL button click
             int delBtnX = editBtnX + editBtnWidth + 2;
             if (selectedRoomIndex > 0 && mouseX >= delBtnX && mouseX < delBtnX + delBtnWidth &&
-                mouseY >= roomDropdownY && mouseY < roomDropdownY + DROPDOWN_HEIGHT) {
+                mouseY >= cachedRoomDropdownY && mouseY < cachedRoomDropdownY + DROPDOWN_HEIGHT) {
                 int roomIdx = selectedRoomIndex - 1;
                 if (roomIdx < roomListData.size()) {
                     String roomId = roomListData.get(roomIdx).id();
@@ -1930,36 +2046,6 @@ public class EditingPanel {
                 }
                 return true;
             }
-
-            currentY += DROPDOWN_HEIGHT + 2;
-        }
-
-        // DONE buttons row: DONE, DONE noMOB
-        // Behavior differs based on editing mode:
-        // - In room editing: DONE exits room and returns to building editing
-        // - In building editing: DONE exits editing completely
-        int doneBtnWidth = (WIDTH - PADDING * 2 - 2) / 2;
-        if (mouseX >= x + PADDING && mouseX < x + PADDING + doneBtnWidth &&
-            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
-            if (inRoomEditing) {
-                // Exit room and return to building editing
-                ClientPlayNetworking.send(new GuiActionPacket("room_exit", "", ""));
-            } else {
-                // Exit building editing completely
-                ClientPlayNetworking.send(new GuiActionPacket("done", "", ""));
-            }
-            return true;
-        }
-        if (mouseX >= x + PADDING + doneBtnWidth + 2 && mouseX < x + WIDTH - PADDING &&
-            mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
-            if (inRoomEditing) {
-                // In room editing: clear entities from room then exit room
-                ClientPlayNetworking.send(new GuiActionPacket("room_exit_nomob", "", ""));
-            } else {
-                // Exit building editing completely without saving entities
-                ClientPlayNetworking.send(new GuiActionPacket("done_nomob", "", ""));
-            }
-            return true;
         }
 
         return true; // Consume click within panel

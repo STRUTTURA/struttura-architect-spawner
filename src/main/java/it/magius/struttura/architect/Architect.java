@@ -49,8 +49,9 @@ public class Architect implements ModInitializer {
 		// Registra l'handler per lo spawn automatico di entità
 		EntitySpawnHandler.getInstance().register();
 
+		// TODO: Re-enable tape handler when keystone feature is implemented
 		// Registra l'handler per il left-click con il Tape sui blocchi
-		TapeAttackHandler.getInstance().register();
+		// TapeAttackHandler.getInstance().register();
 
 		// Registra il comando /struttura
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {

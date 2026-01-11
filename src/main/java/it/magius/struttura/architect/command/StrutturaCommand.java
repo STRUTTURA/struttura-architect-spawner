@@ -629,41 +629,12 @@ public class StrutturaCommand {
             return 0;
         }
 
-        // Calcola il centro della costruzione
-        BlockPos center = construction.getBounds().getCenter();
-        double centerX = center.getX() + 0.5;
-        double centerY = center.getY() + 0.5;
-        double centerZ = center.getZ() + 0.5;
+        // Use centralized teleport logic
+        BlockPos pos = NetworkHandler.teleportToConstruction(player, construction);
 
-        // Posizione di teleport (sul bordo della costruzione, lato sud)
-        BlockPos min = construction.getBounds().getMin();
-        double tpX = centerX;
-        double tpY = min.getY();
-        double tpZ = construction.getBounds().getMax().getZ() + 2; // 2 blocchi fuori dal bordo sud
-
-        // Calcola yaw per guardare verso il centro (nord = verso -Z)
-        double dx = centerX - tpX;
-        double dz = centerZ - tpZ;
-        float yaw = (float) (Math.atan2(-dx, dz) * 180.0 / Math.PI);
-
-        // Calcola pitch per guardare verso il centro
-        double dy = centerY - (tpY + 1.6); // 1.6 = altezza occhi
-        double horizontalDist = Math.sqrt(dx * dx + dz * dz);
-        float pitch = (float) (-Math.atan2(dy, horizontalDist) * 180.0 / Math.PI);
-
-        // Teleporta con rotazione
-        player.teleportTo(
-            (net.minecraft.server.level.ServerLevel) player.level(),
-            tpX, tpY, tpZ,
-            java.util.Set.of(), // No relative flags
-            yaw, pitch,
-            false // Non forzare il dismount
-        );
-
-        BlockPos pos = new BlockPos((int) tpX, (int) tpY, (int) tpZ);
-
-        Architect.LOGGER.info("Teleported {} to construction {} at [{}, {}, {}] facing center",
-            player.getName().getString(), id, pos.getX(), pos.getY(), pos.getZ());
+        Architect.LOGGER.info("Teleported {} to construction {} at [{}, {}, {}]{}",
+            player.getName().getString(), id, pos.getX(), pos.getY(), pos.getZ(),
+            construction.getAnchors().hasEntrance() ? " (entrance)" : " facing center");
 
         source.sendSuccess(() -> Component.literal(
             I18n.tr(player, "tp.success_self", id, pos.getX(), pos.getY(), pos.getZ())
@@ -1417,19 +1388,15 @@ public class StrutturaCommand {
 
         // Create items and add to inventory
         ItemStack hammerStack = new ItemStack(ModItems.CONSTRUCTION_HAMMER);
-        ItemStack tapeStack = new ItemStack(ModItems.MEASURING_TAPE);
+        // TODO: Re-enable tape when keystone feature is implemented
+        // ItemStack tapeStack = new ItemStack(ModItems.MEASURING_TAPE);
 
         boolean hammerAdded = player.getInventory().add(hammerStack);
-        boolean tapeAdded = player.getInventory().add(tapeStack);
+        // boolean tapeAdded = player.getInventory().add(tapeStack);
 
-        if (hammerAdded && tapeAdded) {
+        if (hammerAdded) {
             source.sendSuccess(() -> Component.literal(
                 "§a[Struttura] §f" + I18n.tr(player, "give.success")
-            ), false);
-            return 1;
-        } else if (hammerAdded || tapeAdded) {
-            source.sendSuccess(() -> Component.literal(
-                "§e[Struttura] §f" + I18n.tr(player, "give.partial")
             ), false);
             return 1;
         } else {

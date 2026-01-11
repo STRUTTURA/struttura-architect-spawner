@@ -334,6 +334,21 @@ public class ConstructionStorage {
         }
         json.add("rooms", roomsArray);
 
+        // Anchors (only save if any anchor is set)
+        if (construction.getAnchors().hasAnyAnchor()) {
+            JsonObject anchorsObj = new JsonObject();
+            if (construction.getAnchors().hasEntrance()) {
+                JsonObject entranceObj = new JsonObject();
+                BlockPos entrance = construction.getAnchors().getEntrance();
+                entranceObj.addProperty("x", entrance.getX());
+                entranceObj.addProperty("y", entrance.getY());
+                entranceObj.addProperty("z", entrance.getZ());
+                entranceObj.addProperty("yaw", construction.getAnchors().getEntranceYaw());
+                anchorsObj.add("entrance", entranceObj);
+            }
+            json.add("anchors", anchorsObj);
+        }
+
         // Versione del mod Struttura
         json.addProperty("modVersion", Architect.MOD_VERSION);
 
@@ -456,6 +471,19 @@ public class ConstructionStorage {
 
                     Room room = new Room(roomId, roomName, roomCreatedAt);
                     construction.addRoom(room);
+                }
+            }
+
+            // Load anchors
+            if (json.has("anchors") && json.get("anchors").isJsonObject()) {
+                JsonObject anchorsObj = json.getAsJsonObject("anchors");
+                if (anchorsObj.has("entrance") && anchorsObj.get("entrance").isJsonObject()) {
+                    JsonObject entranceObj = anchorsObj.getAsJsonObject("entrance");
+                    int x = entranceObj.get("x").getAsInt();
+                    int y = entranceObj.get("y").getAsInt();
+                    int z = entranceObj.get("z").getAsInt();
+                    float yaw = entranceObj.has("yaw") ? entranceObj.get("yaw").getAsFloat() : 0f;
+                    construction.getAnchors().setEntrance(new BlockPos(x, y, z), yaw);
                 }
             }
 

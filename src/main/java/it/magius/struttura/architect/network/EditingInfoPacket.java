@@ -31,7 +31,13 @@ public record EditingInfoPacket(
     String currentRoomName, // Nome della stanza corrente
     int roomCount,          // Numero totale di stanze nella costruzione
     int roomBlockChanges,   // Numero di blocchi modificati nella stanza corrente
-    List<RoomInfo> roomList // Lista di tutte le stanze
+    List<RoomInfo> roomList, // Lista di tutte le stanze
+    // Anchor fields (entrance coordinates are ABSOLUTE world coordinates for GUI display)
+    boolean hasEntrance,    // True if entrance anchor is set
+    int entranceX,          // Absolute X coordinate (or 0 if not set)
+    int entranceY,          // Absolute Y coordinate (or 0 if not set)
+    int entranceZ,          // Absolute Z coordinate (or 0 if not set)
+    float entranceYaw       // Player yaw rotation in degrees (or 0 if not set)
 ) implements CustomPacketPayload {
 
     /**
@@ -50,7 +56,8 @@ public record EditingInfoPacket(
      */
     public static EditingInfoPacket empty() {
         return new EditingInfoPacket(false, "", "", 0, 0, 0, 0, 0, "", "ADD", "",
-            false, "", "", 0, 0, List.of());
+            false, "", "", 0, 0, List.of(),
+            false, 0, 0, 0, 0f);
     }
 
     private static EditingInfoPacket read(FriendlyByteBuf buf) {
@@ -81,8 +88,15 @@ public record EditingInfoPacket(
             int roomEntities = buf.readVarInt();
             roomList.add(new RoomInfo(roomId, roomName, roomBlocks, roomEntities));
         }
+        // Anchor fields
+        boolean hasEntrance = buf.readBoolean();
+        int entranceX = buf.readVarInt();
+        int entranceY = buf.readVarInt();
+        int entranceZ = buf.readVarInt();
+        float entranceYaw = buf.readFloat();
         return new EditingInfoPacket(isEditing, constructionId, title, blockCount, solidBlockCount, airBlockCount, entityCount, mobCount, bounds, mode, shortDesc,
-            inRoom, currentRoomId, currentRoomName, roomCount, roomBlockChanges, roomList);
+            inRoom, currentRoomId, currentRoomName, roomCount, roomBlockChanges, roomList,
+            hasEntrance, entranceX, entranceY, entranceZ, entranceYaw);
     }
 
     private static void write(FriendlyByteBuf buf, EditingInfoPacket packet) {
@@ -111,6 +125,12 @@ public record EditingInfoPacket(
             buf.writeVarInt(room.blockCount);
             buf.writeVarInt(room.entityCount);
         }
+        // Anchor fields
+        buf.writeBoolean(packet.hasEntrance);
+        buf.writeVarInt(packet.entranceX);
+        buf.writeVarInt(packet.entranceY);
+        buf.writeVarInt(packet.entranceZ);
+        buf.writeFloat(packet.entranceYaw);
     }
 
     @Override

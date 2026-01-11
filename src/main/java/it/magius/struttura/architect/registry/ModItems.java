@@ -20,9 +20,11 @@ public class ModItems {
             ConstructionHammerItem::new,
             new Item.Properties().stacksTo(1));
 
-    public static final Item MEASURING_TAPE = register("measuring_tape",
-            MeasuringTapeItem::new,
-            new Item.Properties().stacksTo(1));
+    // TODO: Re-enable tape registration when keystone feature is implemented
+    // public static final Item MEASURING_TAPE = register("measuring_tape",
+    //         MeasuringTapeItem::new,
+    //         new Item.Properties().stacksTo(1));
+    public static final Item MEASURING_TAPE = null;
 
     private static Item register(String name, Function<Item.Properties, Item> factory, Item.Properties settings) {
         ResourceKey<Item> key = ResourceKey.create(

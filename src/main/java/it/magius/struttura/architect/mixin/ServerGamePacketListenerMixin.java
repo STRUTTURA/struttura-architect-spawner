@@ -102,6 +102,14 @@ public class ServerGamePacketListenerMixin {
             return;
         }
 
+        // For tape, show error if editing a room (tape only works on base construction)
+        if (holdingTape && session.isInRoom()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "tape.error.not_in_room")));
+            ci.cancel();
+            return;
+        }
+
         // Determina il tipo di interazione usando AtomicInteger
         // Usa AtomicBoolean per fermarsi alla prima chiamata del dispatch
         AtomicInteger interactionType = new AtomicInteger(INTERACTION_NONE);

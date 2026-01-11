@@ -56,6 +56,10 @@ public class PanelManager {
     private java.util.Map<String, String> allTitles = new java.util.HashMap<>();
     private java.util.Map<String, String> allShortDescriptions = new java.util.HashMap<>();
 
+    // Anchors (entrance coordinates - null if not set)
+    private int[] entrance = null;  // [x, y, z] absolute coordinates, or null
+    private float entranceYaw = 0f; // yaw rotation in degrees
+
     /**
      * Info about a block type in the construction.
      */
@@ -175,6 +179,7 @@ public class PanelManager {
         this.entityList.clear();
         this.allTitles.clear();
         this.allShortDescriptions.clear();
+        this.entrance = null;
         // Clear EditingPanel
         if (editingPanel != null) {
             editingPanel.setShortDescText("");
@@ -337,6 +342,48 @@ public class PanelManager {
      */
     public String getShortDescription(String langId) {
         return allShortDescriptions.getOrDefault(langId, "");
+    }
+
+    /**
+     * Get entrance coordinates (normalized).
+     * @return [x, y, z] or null if not set
+     */
+    public int[] getEntrance() {
+        return entrance;
+    }
+
+    /**
+     * Check if entrance is set.
+     */
+    public boolean hasEntrance() {
+        return entrance != null;
+    }
+
+    /**
+     * Set entrance coordinates from server packet.
+     * @param x x coordinate (absolute)
+     * @param y y coordinate (absolute)
+     * @param z z coordinate (absolute)
+     * @param yaw yaw rotation in degrees
+     */
+    public void setEntrance(int x, int y, int z, float yaw) {
+        this.entrance = new int[]{x, y, z};
+        this.entranceYaw = yaw;
+    }
+
+    /**
+     * Clear entrance.
+     */
+    public void clearEntrance() {
+        this.entrance = null;
+        this.entranceYaw = 0f;
+    }
+
+    /**
+     * Get entrance yaw rotation.
+     */
+    public float getEntranceYaw() {
+        return entranceYaw;
     }
 
     public MainPanel getMainPanel() {

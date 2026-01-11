@@ -61,16 +61,16 @@ public class MeasuringTapeItem extends Item {
             return InteractionResult.FAIL;
         }
 
+        // Check if editing a room - tape only works on base construction
+        if (session.isInRoom()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "tape.error.not_in_room")));
+            return InteractionResult.FAIL;
+        }
+
         // Check if block is part of the current construction
         Construction construction = session.getConstruction();
-        boolean isInConstruction;
-
-        if (session.isInRoom()) {
-            var room = session.getCurrentRoomObject();
-            isInConstruction = room != null && room.hasBlockChange(clickedPos);
-        } else {
-            isInConstruction = construction.containsBlock(clickedPos);
-        }
+        boolean isInConstruction = construction.containsBlock(clickedPos);
 
         if (!isInConstruction) {
             player.sendSystemMessage(Component.literal("§c[Struttura] §f" +

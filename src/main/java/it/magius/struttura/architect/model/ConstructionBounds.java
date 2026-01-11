@@ -118,6 +118,16 @@ public class ConstructionBounds {
         );
     }
 
+    /**
+     * Checks if a position is within these bounds (inclusive).
+     */
+    public boolean contains(BlockPos pos) {
+        if (!initialized) return false;
+        return pos.getX() >= minX && pos.getX() <= maxX &&
+               pos.getY() >= minY && pos.getY() <= maxY &&
+               pos.getZ() >= minZ && pos.getZ() <= maxZ;
+    }
+
     @Override
     public String toString() {
         if (!initialized) return "Bounds[empty]";

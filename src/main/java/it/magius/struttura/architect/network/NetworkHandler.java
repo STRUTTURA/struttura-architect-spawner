@@ -592,6 +592,8 @@ public class NetworkHandler {
             case "room_rename" -> handleGuiRoomRename(player, targetId, extraData);  // targetId = oldId, extraData = newId|newName
             case "room_exit" -> handleGuiRoomExit(player, true);  // Exit room, return to building editing
             case "room_exit_nomob" -> handleGuiRoomExit(player, false);  // Exit room without saving entities
+            case "set_entrance" -> handleGuiSetEntrance(player);
+            case "tp_entrance" -> handleGuiTpEntrance(player);
             default -> Architect.LOGGER.warn("Unknown GUI action: {}", action);
         }
     }
@@ -678,33 +680,7 @@ public class NetworkHandler {
             return;
         }
 
-        BlockPos center = construction.getBounds().getCenter();
-        double centerX = center.getX() + 0.5;
-        double centerY = center.getY() + 0.5;
-        double centerZ = center.getZ() + 0.5;
-
-        BlockPos min = construction.getBounds().getMin();
-        double tpX = centerX;
-        double tpY = min.getY();
-        double tpZ = construction.getBounds().getMax().getZ() + 2;
-
-        double dx = centerX - tpX;
-        double dz = centerZ - tpZ;
-        float yaw = (float) (Math.atan2(-dx, dz) * 180.0 / Math.PI);
-
-        double dy = centerY - (tpY + 1.6);
-        double horizontalDist = Math.sqrt(dx * dx + dz * dz);
-        float pitch = (float) (-Math.atan2(dy, horizontalDist) * 180.0 / Math.PI);
-
-        player.teleportTo(
-                (ServerLevel) player.level(),
-                tpX, tpY, tpZ,
-                java.util.Set.of(),
-                yaw, pitch,
-                false
-        );
-
-        BlockPos pos = new BlockPos((int) tpX, (int) tpY, (int) tpZ);
+        BlockPos pos = teleportToConstruction(player, construction);
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "tp.success_self", id, pos.getX(), pos.getY(), pos.getZ())));
     }
@@ -1831,6 +1807,111 @@ public class NetworkHandler {
     }
 
     /**
+     * Handles set_entrance action via GUI.
+     * Sets the entrance anchor at player's current position (normalized).
+     */
+    private static void handleGuiSetEntrance(ServerPlayer player) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+
+        // Entrance can only be set for base construction, not rooms
+        if (session.isInRoom()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.not_in_room")));
+            return;
+        }
+
+        Construction construction = session.getConstruction();
+        ConstructionBounds bounds = construction.getBounds();
+
+        if (!bounds.isValid()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.no_bounds")));
+            return;
+        }
+
+        // Get player's current position (block where feet are)
+        BlockPos playerPos = player.blockPosition();
+
+        // Check if player is within or directly above construction bounds on X/Z
+        // Player can be 1 block above the max Y (standing on top of the construction)
+        boolean withinXZ = playerPos.getX() >= bounds.getMinX() && playerPos.getX() <= bounds.getMaxX() &&
+                          playerPos.getZ() >= bounds.getMinZ() && playerPos.getZ() <= bounds.getMaxZ();
+        boolean withinY = playerPos.getY() >= bounds.getMinY() && playerPos.getY() <= bounds.getMaxY() + 1;
+
+        if (!withinXZ || !withinY) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.outside_bounds")));
+            return;
+        }
+
+        // Normalize coordinates (relative to bounds min corner)
+        // Note: Y can be up to sizeY (one above maxY) for standing on top of construction
+        int normalizedX = playerPos.getX() - bounds.getMinX();
+        int normalizedY = playerPos.getY() - bounds.getMinY();
+        int normalizedZ = playerPos.getZ() - bounds.getMinZ();
+
+        // Get player's yaw rotation
+        float yaw = player.getYRot();
+
+        // Set the entrance anchor with yaw
+        construction.getAnchors().setEntrance(new BlockPos(normalizedX, normalizedY, normalizedZ), yaw);
+
+        // Save construction
+        ConstructionRegistry.getInstance().register(construction);
+
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "entrance.set", playerPos.getX(), playerPos.getY(), playerPos.getZ())));
+
+        // Update client
+        sendEditingInfo(player);
+    }
+
+    /**
+     * Handles tp_entrance action via GUI.
+     * Teleports player to the entrance anchor position using centralized logic.
+     */
+    private static void handleGuiTpEntrance(ServerPlayer player) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+
+        // Entrance can only be used for base construction, not rooms
+        if (session.isInRoom()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.not_in_room")));
+            return;
+        }
+
+        Construction construction = session.getConstruction();
+
+        if (!construction.getAnchors().hasEntrance()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.not_set")));
+            return;
+        }
+
+        if (!construction.getBounds().isValid()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.no_bounds")));
+            return;
+        }
+
+        BlockPos pos = teleportToConstruction(player, construction);
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "entrance.tp", pos.getX(), pos.getY(), pos.getZ())));
+    }
+
+    /**
      * Handles move action via GUI.
      * Uses centralized operations to move construction to new position.
      */
@@ -2014,6 +2095,20 @@ public class NetworkHandler {
         // Sort by name
         roomList.sort((a, b) -> a.name().compareToIgnoreCase(b.name()));
 
+        // Entrance anchor data (only for base construction, not rooms)
+        // Send absolute (world) coordinates for GUI display
+        boolean hasEntrance = !inRoom && construction.getAnchors().hasEntrance() && bounds.isValid();
+        int entranceX = 0, entranceY = 0, entranceZ = 0;
+        float entranceYaw = 0f;
+        if (hasEntrance) {
+            BlockPos entrance = construction.getAnchors().getEntrance();
+            // Denormalize: convert from relative (0,0,0 based) to absolute world coordinates
+            entranceX = entrance.getX() + bounds.getMinX();
+            entranceY = entrance.getY() + bounds.getMinY();
+            entranceZ = entrance.getZ() + bounds.getMinZ();
+            entranceYaw = construction.getAnchors().getEntranceYaw();
+        }
+
         EditingInfoPacket packet = new EditingInfoPacket(
                 true,
                 construction.getId(),
@@ -2032,7 +2127,13 @@ public class NetworkHandler {
                 currentRoomName,
                 construction.getRoomCount(),
                 roomBlockChanges,
-                roomList
+                roomList,
+                // Anchor fields
+                hasEntrance,
+                entranceX,
+                entranceY,
+                entranceZ,
+                entranceYaw
         );
 
         ServerPlayNetworking.send(player, packet);
@@ -2607,5 +2708,64 @@ public class NetworkHandler {
             blocksRemoved, entitiesToRemove.size(), containersCleared);
 
         return blocksRemoved;
+    }
+
+    // ===== Centralized teleport logic =====
+
+    /**
+     * Teleports a player to a construction.
+     * If the construction has an entrance anchor, teleports to that position.
+     * Otherwise, teleports to the south edge facing the center.
+     *
+     * @param player The player to teleport
+     * @param construction The construction to teleport to
+     * @return The teleport position (for logging/messaging)
+     */
+    public static BlockPos teleportToConstruction(ServerPlayer player, Construction construction) {
+        var bounds = construction.getBounds();
+        double tpX, tpY, tpZ;
+        float yaw, pitch;
+
+        // Check if entrance anchor is set - use it for teleport destination
+        if (construction.getAnchors().hasEntrance()) {
+            // Denormalize entrance coordinates
+            BlockPos entrance = construction.getAnchors().getEntrance();
+            tpX = bounds.getMinX() + entrance.getX() + 0.5;
+            tpY = bounds.getMinY() + entrance.getY() + 1;  // +1 because anchor stores block pos, player stands ON TOP
+            tpZ = bounds.getMinZ() + entrance.getZ() + 0.5;
+
+            // Use saved yaw rotation, keep current pitch
+            yaw = construction.getAnchors().getEntranceYaw();
+            pitch = player.getXRot();
+        } else {
+            // Fall back to default behavior: teleport to south edge facing center
+            BlockPos center = bounds.getCenter();
+            double centerX = center.getX() + 0.5;
+            double centerY = center.getY() + 0.5;
+            double centerZ = center.getZ() + 0.5;
+
+            BlockPos min = bounds.getMin();
+            tpX = centerX;
+            tpY = min.getY();
+            tpZ = bounds.getMax().getZ() + 2;
+
+            double dx = centerX - tpX;
+            double dz = centerZ - tpZ;
+            yaw = (float) (Math.atan2(-dx, dz) * 180.0 / Math.PI);
+
+            double dy = centerY - (tpY + 1.6);
+            double horizontalDist = Math.sqrt(dx * dx + dz * dz);
+            pitch = (float) (-Math.atan2(dy, horizontalDist) * 180.0 / Math.PI);
+        }
+
+        player.teleportTo(
+                (ServerLevel) player.level(),
+                tpX, tpY, tpZ,
+                java.util.Set.of(),
+                yaw, pitch,
+                false
+        );
+
+        return new BlockPos((int) tpX, (int) tpY, (int) tpZ);
     }
 }

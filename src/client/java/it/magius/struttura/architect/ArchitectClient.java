@@ -95,6 +95,12 @@ public class ArchitectClient implements ClientModInitializer {
                             packet.roomBlockChanges(),
                             roomList
                     );
+                    // Update entrance anchor data
+                    if (packet.hasEntrance()) {
+                        pm.setEntrance(packet.entranceX(), packet.entranceY(), packet.entranceZ(), packet.entranceYaw());
+                    } else {
+                        pm.clearEntrance();
+                    }
                     // Aggiorna WireframeRenderer con lo stato della stanza
                     WireframeRenderer.setInRoomEditing(packet.inRoom());
                 } else {

@@ -63,6 +63,9 @@ public class Construction {
     // Stanze (varianti) della costruzione: id stanza -> Room
     private final Map<String, Room> rooms = new HashMap<>();
 
+    // Anchor points for the construction (only for base, not rooms)
+    private final Anchors anchors = new Anchors();
+
     public Construction(String id, UUID authorId, String authorName) {
         this.id = id;
         this.authorId = authorId;
@@ -235,11 +238,43 @@ public class Construction {
 
     /**
      * Ricalcola i bounds dai blocchi correnti.
+     * Also clears any anchors that are now outside the new bounds.
      */
     public void recalculateBounds() {
         bounds.reset();
         for (BlockPos pos : blocks.keySet()) {
             bounds.expandToInclude(pos);
+        }
+        // Validate anchors against new bounds
+        validateAnchors();
+    }
+
+    /**
+     * Validates that all anchors are within the current bounds.
+     * Clears any anchors that are outside.
+     */
+    private void validateAnchors() {
+        if (!bounds.isValid()) {
+            // No valid bounds means no blocks - clear all anchors
+            anchors.clearEntrance();
+            return;
+        }
+
+        // Check entrance anchor (stored as normalized coordinates)
+        if (anchors.hasEntrance()) {
+            BlockPos entrance = anchors.getEntrance();
+            // Normalized coords are relative to (0,0,0)
+            // X and Z: max valid is sizeX-1, sizeZ-1 (within bounds)
+            // Y: max valid is sizeY (player can stand ON TOP of the construction)
+            int maxX = bounds.getSizeX() - 1;
+            int maxY = bounds.getSizeY();  // Allow Y up to sizeY (standing on top)
+            int maxZ = bounds.getSizeZ() - 1;
+
+            if (entrance.getX() < 0 || entrance.getX() > maxX ||
+                entrance.getY() < 0 || entrance.getY() > maxY ||
+                entrance.getZ() < 0 || entrance.getZ() > maxZ) {
+                anchors.clearEntrance();
+            }
         }
     }
 
@@ -316,6 +351,7 @@ public class Construction {
     public Instant getCreatedAt() { return createdAt; }
     public Map<BlockPos, BlockState> getBlocks() { return blocks; }
     public ConstructionBounds getBounds() { return bounds; }
+    public Anchors getAnchors() { return anchors; }
 
     // ===== Entity management =====
 
@@ -634,6 +670,11 @@ public class Construction {
 
         // Copy required mods
         copy.setRequiredMods(this.requiredMods);
+
+        // Copy anchors
+        if (this.anchors.hasEntrance()) {
+            copy.getAnchors().setEntrance(this.anchors.getEntrance(), this.anchors.getEntranceYaw());
+        }
 
         return copy;
     }

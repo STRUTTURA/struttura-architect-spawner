@@ -68,16 +68,16 @@ public class TapeAttackHandler {
             return InteractionResult.FAIL;
         }
 
+        // Check if editing a room - tape only works on base construction
+        if (session.isInRoom()) {
+            serverPlayer.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(serverPlayer, "tape.error.not_in_room")));
+            return InteractionResult.FAIL;
+        }
+
         // Check if block is part of the current construction
         Construction construction = session.getConstruction();
-        boolean isInConstruction;
-
-        if (session.isInRoom()) {
-            var room = session.getCurrentRoomObject();
-            isInConstruction = room != null && room.hasBlockChange(pos);
-        } else {
-            isInConstruction = construction.containsBlock(pos);
-        }
+        boolean isInConstruction = construction.containsBlock(pos);
 
         if (!isInConstruction) {
             serverPlayer.sendSystemMessage(Component.literal("§c[Struttura] §f" +
