@@ -59,6 +59,7 @@ public class ConstructionOperations {
 
     /**
      * Places a construction in the world without triggering physics or block callbacks.
+     * Uses the player's position to calculate the spawn point.
      *
      * @param player The player (used to calculate position for SPAWN/PULL/MOVE modes)
      * @param construction The construction to place
@@ -71,6 +72,32 @@ public class ConstructionOperations {
         Construction construction,
         PlacementMode mode,
         boolean updateConstructionCoords
+    ) {
+        return placeConstruction(player, construction, mode, updateConstructionCoords, null, 0f, false);
+    }
+
+    /**
+     * Places a construction in the world without triggering physics or block callbacks.
+     *
+     * @param player The player (used to calculate position for SPAWN/PULL/MOVE modes if spawnPoint is null)
+     * @param construction The construction to place
+     * @param mode The placement mode
+     * @param updateConstructionCoords If true, updates the construction's stored coordinates
+     * @param spawnPoint Optional: the exact world position where the entrance anchor should be placed.
+     *                   If null, uses player position with round(Y) - 1.
+     *                   For natural spawning, pass the surface block position directly.
+     * @param yaw The rotation angle for the construction (not used yet)
+     * @param runInitCommandBlocks If true, runs initialization command blocks after placement (not used yet)
+     * @return PlacementResult with counts and new origin position
+     */
+    public static PlacementResult placeConstruction(
+        ServerPlayer player,
+        Construction construction,
+        PlacementMode mode,
+        boolean updateConstructionCoords,
+        @Nullable BlockPos spawnPoint,
+        float yaw,
+        boolean runInitCommandBlocks
     ) {
         if (construction.getBlockCount() == 0) {
             return new PlacementResult(0, 0, BlockPos.ZERO);
@@ -87,8 +114,13 @@ public class ConstructionOperations {
         } else {
             // SPAWN/PULL/MOVE: check if entrance anchor is set
             if (construction.getAnchors().hasEntrance()) {
-                // Calculate position so player ends up at entrance
-                targetPos = calculatePositionAtEntrance(player, construction);
+                if (spawnPoint != null) {
+                    // Use provided spawn point directly (for natural spawning)
+                    targetPos = calculatePositionAtEntrance(spawnPoint, construction);
+                } else {
+                    // Calculate position from player (uses round(Y) - 1)
+                    targetPos = calculatePositionAtEntrance(player, construction);
+                }
             } else {
                 // No entrance: calculate position in front of player (legacy behavior)
                 targetPos = calculatePositionInFront(player, bounds);
@@ -444,31 +476,40 @@ public class ConstructionOperations {
     // ============== HELPER METHODS ==============
 
     /**
-     * Calculate the position so that the player ends up at the entrance anchor.
+     * Calculate the position so that the entrance anchor ends up at the given spawn point.
      * The entrance anchor is stored in normalized coordinates (relative to bounds min 0,0,0).
-     * Entrance Y is stored as floor(player.getY()) + 1.
-     * We need to place the construction so that: playerY = targetY + entranceY
-     * Therefore: targetY = playerY - entranceY
+     *
+     * @param spawnPoint The world position where the entrance anchor should be placed
+     * @param construction The construction with entrance anchor
+     * @return The position where bounds min should be placed
+     */
+    public static BlockPos calculatePositionAtEntrance(BlockPos spawnPoint, Construction construction) {
+        BlockPos entrance = construction.getAnchors().getEntrance(); // normalized coords
+
+        // targetPos is where bounds min will be placed
+        // We want: spawnPoint = targetPos + entrance
+        // Therefore: targetPos = spawnPoint - entrance
+        return new BlockPos(
+            spawnPoint.getX() - entrance.getX(),
+            spawnPoint.getY() - entrance.getY(),
+            spawnPoint.getZ() - entrance.getZ()
+        );
+    }
+
+    /**
+     * Calculate the position so that the player ends up at the entrance anchor.
+     * Uses round(player.getY()) - 1 as the spawn Y coordinate.
      *
      * @param player The player
      * @param construction The construction with entrance anchor
      * @return The position where bounds min should be placed
      */
     public static BlockPos calculatePositionAtEntrance(ServerPlayer player, Construction construction) {
-        BlockPos entrance = construction.getAnchors().getEntrance(); // normalized coords
-        // Use round(player.getY()) - 1 for spawn position
-        int playerX = player.blockPosition().getX();
-        int playerY = (int) Math.round(player.getY()) - 1;
-        int playerZ = player.blockPosition().getZ();
-
-        // targetPos is where bounds min will be placed
-        // We want: playerPos = targetPos + entrance
-        // Therefore: targetPos = playerPos - entrance
-        return new BlockPos(
-            playerX - entrance.getX(),
-            playerY - entrance.getY(),
-            playerZ - entrance.getZ()
-        );
+        // Calculate spawn point from player position: X, Z from blockPosition, Y = round(Y) - 1
+        int spawnX = player.blockPosition().getX();
+        int spawnY = (int) Math.round(player.getY()) - 1;
+        int spawnZ = player.blockPosition().getZ();
+        return calculatePositionAtEntrance(new BlockPos(spawnX, spawnY, spawnZ), construction);
     }
 
     /**

@@ -717,7 +717,8 @@ public class StrutturaCommand {
         // Use centralized placement function
         // updateConstructionCoords=false: don't modify the construction coordinates in registry
         var result = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.SPAWN, false
+            player, construction, ConstructionOperations.PlacementMode.SPAWN, false,
+            null, player.getYRot(), false
         );
 
         if (result.blocksPlaced() > 0) {
@@ -1590,7 +1591,8 @@ public class StrutturaCommand {
 
                         // Use centralized placement with PULL mode (updates construction coordinates)
                         var placementResult = ConstructionOperations.placeConstruction(
-                            player, construction, ConstructionOperations.PlacementMode.PULL, true
+                            player, construction, ConstructionOperations.PlacementMode.PULL, true,
+                            null, player.getYRot(), false
                         );
 
                         player.sendSystemMessage(Component.literal(
@@ -1681,7 +1683,8 @@ public class StrutturaCommand {
 
         // 3. Place at new position in front of player (updates construction coordinates)
         var placementResult = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.MOVE, true
+            player, construction, ConstructionOperations.PlacementMode.MOVE, true,
+            null, player.getYRot(), false
         );
 
         // 4. Save the updated construction

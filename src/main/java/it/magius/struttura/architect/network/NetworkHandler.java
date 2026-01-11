@@ -1088,7 +1088,8 @@ public class NetworkHandler {
 
                         // Use centralized placement with PULL mode (updates construction coordinates)
                         var placementResult = ConstructionOperations.placeConstruction(
-                            player, construction, ConstructionOperations.PlacementMode.PULL, true
+                            player, construction, ConstructionOperations.PlacementMode.PULL, true,
+                            null, player.getYRot(), false
                         );
 
                         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
@@ -1390,7 +1391,8 @@ public class NetworkHandler {
 
         // Use centralized placement with SPAWN mode (does not modify construction)
         var result = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.SPAWN, false
+            player, construction, ConstructionOperations.PlacementMode.SPAWN, false,
+            null, player.getYRot(), false
         );
 
         Architect.LOGGER.info("Player {} spawned construction {} via GUI ({} blocks)",
@@ -1954,7 +1956,8 @@ public class NetworkHandler {
 
         // 3. Place at new position in front of player (updates construction coordinates)
         var placementResult = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.MOVE, true
+            player, construction, ConstructionOperations.PlacementMode.MOVE, true,
+            null, player.getYRot(), false
         );
 
         // 4. Save the updated construction
