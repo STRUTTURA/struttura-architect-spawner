@@ -16,7 +16,7 @@ import net.minecraft.network.chat.Component;
 
 /**
  * Modal screen for STRUTTURA GUI.
- * Opens when right-clicking with the Construction Hammer without targeting a block.
+ * Opens when right-clicking with the Struttura Hammer without targeting a block.
  * Contains both the main construction list panel and editing controls (when in editing mode).
  */
 @Environment(EnvType.CLIENT)

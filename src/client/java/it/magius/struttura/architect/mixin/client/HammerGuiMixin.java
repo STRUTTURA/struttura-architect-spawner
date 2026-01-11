@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Mixin to intercept right-click in air with the Construction Hammer.
+ * Mixin to intercept right-click in air with the Struttura Hammer.
  * Opens the Struttura modal screen instead of normal item use.
  */
 @Mixin(Minecraft.class)
@@ -30,7 +30,7 @@ public class HammerGuiMixin {
             return;
         }
 
-        // Check if holding the construction hammer
+        // Check if holding the Struttura Hammer
         ItemStack mainHand = mc.player.getItemInHand(InteractionHand.MAIN_HAND);
         ItemStack offHand = mc.player.getItemInHand(InteractionHand.OFF_HAND);
 

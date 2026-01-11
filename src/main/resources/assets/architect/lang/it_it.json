@@ -1,5 +1,12 @@
 {
-  "item.architect.construction_hammer": "Martello da Costruzione",
+  "item.architect.construction_hammer": "Martello Struttura",
+  "item.architect.construction_hammer.tooltip.line1": "§e[Click sinistro]§f su mob: rimuovi dalla creazione",
+  "item.architect.construction_hammer.tooltip.line2": "§e[Click destro]§f su creazione: entra in editing",
+  "item.architect.construction_hammer.tooltip.header": "Durante editing:",
+  "item.architect.construction_hammer.tooltip.line3": "§e[Click destro]§f su blocco in creazione: rimuovi",
+  "item.architect.construction_hammer.tooltip.line4": "§e[Click destro]§f su altro blocco: aggiungi",
+  "item.architect.measuring_tape": "Flessometro Struttura",
+  "item.architect.measuring_tape.tooltip.line1": "§e[Click destro]§f su blocco creazione: apri impostazioni",
 
   "key.category.architect.struttura": "Struttura",
   "key.struttura.select_pos1": "Selezione Pos1",

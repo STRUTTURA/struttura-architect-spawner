@@ -242,8 +242,10 @@ public class ConstructionHammerItem extends Item {
         super.appendHoverText(stack, context, display, tooltip, flag);
 
         tooltip.accept(Component.literal(""));
-        tooltip.accept(Component.literal("§7Durante editing:"));
-        tooltip.accept(Component.literal("§e[Click destro]§f su blocco in costruzione: rimuovi"));
-        tooltip.accept(Component.literal("§e[Click destro]§f su altro blocco: aggiungi"));
+        tooltip.accept(Component.translatable("item.architect.construction_hammer.tooltip.line1"));
+        tooltip.accept(Component.translatable("item.architect.construction_hammer.tooltip.line2"));
+        tooltip.accept(Component.translatable("item.architect.construction_hammer.tooltip.header").withStyle(style -> style.withColor(0xAAAAAA)));
+        tooltip.accept(Component.translatable("item.architect.construction_hammer.tooltip.line3"));
+        tooltip.accept(Component.translatable("item.architect.construction_hammer.tooltip.line4"));
     }
 }

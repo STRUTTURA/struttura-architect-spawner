@@ -1,5 +1,12 @@
 {
-  "item.architect.construction_hammer": "Construction Hammer",
+  "item.architect.construction_hammer": "Struttura Hammer",
+  "item.architect.construction_hammer.tooltip.line1": "§e[Left-click]§f on mob: remove from build",
+  "item.architect.construction_hammer.tooltip.line2": "§e[Right-click]§f on build: enter editing",
+  "item.architect.construction_hammer.tooltip.header": "During editing:",
+  "item.architect.construction_hammer.tooltip.line3": "§e[Right-click]§f on build block: remove",
+  "item.architect.construction_hammer.tooltip.line4": "§e[Right-click]§f on other block: add",
+  "item.architect.measuring_tape": "Struttura Tape",
+  "item.architect.measuring_tape.tooltip.line1": "§e[Right-click]§f on build block: open settings",
 
   "key.category.architect.struttura": "Struttura",
   "key.struttura.select_pos1": "Selection Pos1",

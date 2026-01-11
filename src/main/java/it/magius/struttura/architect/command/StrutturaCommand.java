@@ -1405,7 +1405,7 @@ public class StrutturaCommand {
     }
 
     /**
-     * Esegue /struttura give - da' il Martello da Costruzione al giocatore.
+     * Esegue /struttura give - gives all Struttura tools to the player.
      */
     private static int executeGive(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
@@ -1415,12 +1415,21 @@ public class StrutturaCommand {
             return 0;
         }
 
-        // Crea l'item e aggiungilo all'inventario
+        // Create items and add to inventory
         ItemStack hammerStack = new ItemStack(ModItems.CONSTRUCTION_HAMMER);
+        ItemStack tapeStack = new ItemStack(ModItems.MEASURING_TAPE);
 
-        if (player.getInventory().add(hammerStack)) {
+        boolean hammerAdded = player.getInventory().add(hammerStack);
+        boolean tapeAdded = player.getInventory().add(tapeStack);
+
+        if (hammerAdded && tapeAdded) {
             source.sendSuccess(() -> Component.literal(
                 "§a[Struttura] §f" + I18n.tr(player, "give.success")
+            ), false);
+            return 1;
+        } else if (hammerAdded || tapeAdded) {
+            source.sendSuccess(() -> Component.literal(
+                "§e[Struttura] §f" + I18n.tr(player, "give.partial")
             ), false);
             return 1;
         } else {

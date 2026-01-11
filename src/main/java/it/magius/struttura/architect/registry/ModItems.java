@@ -2,6 +2,7 @@ package it.magius.struttura.architect.registry;
 
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.item.ConstructionHammerItem;
+import it.magius.struttura.architect.item.MeasuringTapeItem;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -17,6 +18,10 @@ public class ModItems {
 
     public static final Item CONSTRUCTION_HAMMER = register("construction_hammer",
             ConstructionHammerItem::new,
+            new Item.Properties().stacksTo(1));
+
+    public static final Item MEASURING_TAPE = register("measuring_tape",
+            MeasuringTapeItem::new,
             new Item.Properties().stacksTo(1));
 
     private static Item register(String name, Function<Item.Properties, Item> factory, Item.Properties settings) {
