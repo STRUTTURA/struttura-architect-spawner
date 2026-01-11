@@ -1,6 +1,11 @@
 package it.magius.struttura.architect.item;
 
+import it.magius.struttura.architect.i18n.I18n;
+import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.session.EditingSession;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
@@ -19,6 +24,7 @@ import java.util.function.Consumer;
  * Behavior:
  * - Right-click in air: opens Keystone GUI (TODO)
  * - Right-click on block: marks/unmarks block as keystone (TODO)
+ * - Right-click on block/entity not in construction: shows error message
  */
 public class MeasuringTapeItem extends Item {
 
@@ -38,6 +44,38 @@ public class MeasuringTapeItem extends Item {
         Level level = context.getLevel();
         if (level.isClientSide()) {
             return InteractionResult.SUCCESS;
+        }
+
+        ServerPlayer player = (ServerPlayer) context.getPlayer();
+        if (player == null) {
+            return InteractionResult.PASS;
+        }
+
+        BlockPos clickedPos = context.getClickedPos();
+        EditingSession session = EditingSession.getSession(player.getUUID());
+
+        // Check if in editing mode
+        if (session == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "tape.error.not_editing")));
+            return InteractionResult.FAIL;
+        }
+
+        // Check if block is part of the current construction
+        Construction construction = session.getConstruction();
+        boolean isInConstruction;
+
+        if (session.isInRoom()) {
+            var room = session.getCurrentRoomObject();
+            isInConstruction = room != null && room.hasBlockChange(clickedPos);
+        } else {
+            isInConstruction = construction.containsBlock(clickedPos);
+        }
+
+        if (!isInConstruction) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "tape.error.not_in_construction")));
+            return InteractionResult.FAIL;
         }
 
         // TODO: Implement keystone block management

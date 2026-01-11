@@ -2,6 +2,7 @@ package it.magius.struttura.architect.mixin;
 
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.item.ConstructionHammerItem;
+import it.magius.struttura.architect.item.MeasuringTapeItem;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.Room;
@@ -78,15 +79,26 @@ public class ServerGamePacketListenerMixin {
             return;
         }
 
-        EditingSession session = EditingSession.getSession(player);
-        if (session == null) {
+        ItemStack heldItem = player.getMainHandItem();
+        boolean holdingHammer = heldItem.getItem() instanceof ConstructionHammerItem;
+        boolean holdingTape = heldItem.getItem() instanceof MeasuringTapeItem;
+
+        if (!holdingHammer && !holdingTape) {
             return;
         }
 
-        ItemStack heldItem = player.getMainHandItem();
-        boolean holdingHammer = heldItem.getItem() instanceof ConstructionHammerItem;
+        EditingSession session = EditingSession.getSession(player);
 
-        if (!holdingHammer) {
+        // For hammer, we need an editing session
+        if (holdingHammer && session == null) {
+            return;
+        }
+
+        // For tape, show error if not in editing mode
+        if (holdingTape && session == null) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "tape.error.not_editing")));
+            ci.cancel();
             return;
         }
 
@@ -146,12 +158,22 @@ public class ServerGamePacketListenerMixin {
             interactionCooldowns.entrySet().removeIf(e -> (now - e.getValue()) > 5000);
         }
 
-        if (type == INTERACTION_RIGHT_CLICK) {
-            handleHammerRightClick(targetEntity, session);
-            ci.cancel();
-        } else if (type == INTERACTION_ATTACK) {
-            handleHammerLeftClick(targetEntity, session);
-            ci.cancel();
+        if (holdingHammer) {
+            if (type == INTERACTION_RIGHT_CLICK) {
+                handleHammerRightClick(targetEntity, session);
+                ci.cancel();
+            } else if (type == INTERACTION_ATTACK) {
+                handleHammerLeftClick(targetEntity, session);
+                ci.cancel();
+            }
+        } else if (holdingTape) {
+            if (type == INTERACTION_RIGHT_CLICK) {
+                handleTapeRightClick(targetEntity, session);
+                ci.cancel();
+            } else if (type == INTERACTION_ATTACK) {
+                handleTapeLeftClick(targetEntity, session);
+                ci.cancel();
+            }
         }
     }
 
@@ -215,6 +237,52 @@ public class ServerGamePacketListenerMixin {
         // Update UI
         NetworkHandler.sendWireframeSync(player);
         NetworkHandler.sendEditingInfo(player);
+    }
+
+    /**
+     * Handles right-click with tape on an entity.
+     * Shows error if entity is not part of the construction,
+     * or info message if it is (no action yet).
+     */
+    @Unique
+    private void handleTapeRightClick(Entity entity, EditingSession session) {
+        UUID entityId = entity.getUUID();
+
+        // Check if entity is tracked (included in room/construction)
+        boolean isTracked = session.isEntityTracked(entityId);
+
+        if (!isTracked) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "tape.error.not_in_construction")));
+            return;
+        }
+
+        // Entity is in construction but tape has no action on entities yet
+        player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+                I18n.tr(player, "tape.entity.no_action")));
+    }
+
+    /**
+     * Handles left-click with tape on an entity.
+     * Shows error if entity is not part of the construction,
+     * or info message if it is (no action yet).
+     */
+    @Unique
+    private void handleTapeLeftClick(Entity entity, EditingSession session) {
+        UUID entityId = entity.getUUID();
+
+        // Check if entity is tracked (included in room/construction)
+        boolean isTracked = session.isEntityTracked(entityId);
+
+        if (!isTracked) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "tape.error.not_in_construction")));
+            return;
+        }
+
+        // Entity is in construction but tape has no action on entities yet
+        player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+                I18n.tr(player, "tape.entity.no_action")));
     }
 
     /**

@@ -4,6 +4,7 @@ import it.magius.struttura.architect.command.StrutturaCommand;
 import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.entity.EntityFreezeHandler;
 import it.magius.struttura.architect.entity.EntitySpawnHandler;
+import it.magius.struttura.architect.item.TapeAttackHandler;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
@@ -47,6 +48,9 @@ public class Architect implements ModInitializer {
 
 		// Registra l'handler per lo spawn automatico di entità
 		EntitySpawnHandler.getInstance().register();
+
+		// Registra l'handler per il left-click con il Tape sui blocchi
+		TapeAttackHandler.getInstance().register();
 
 		// Registra il comando /struttura
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
