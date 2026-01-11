@@ -118,13 +118,14 @@ public class ConstructionHammerItem extends Item {
                 currentConstruction.removeBlock(clickedPos);
             }
 
-            // Messaggio con nome edificio/room e totale
+            // Messaggio con nome edificio/room, coordinate e totale
             int totalBlocks = isInRoom && session.getCurrentRoomObject() != null
                 ? session.getCurrentRoomObject().getChangedBlockCount()
                 : currentConstruction.getBlockCount();
             String targetName = formatTargetName(session);
+            String coords = String.format("§8[%d, %d, %d]", clickedPos.getX(), clickedPos.getY(), clickedPos.getZ());
             player.sendSystemMessage(Component.literal(targetName + ": §c" +
-                    I18n.tr(player, "block.removed") + " §7(" + totalBlocks + ")"));
+                    I18n.tr(player, "block.removed") + " " + coords + " §7(" + totalBlocks + ")"));
 
             NetworkHandler.sendWireframeSync(player);
             NetworkHandler.sendEditingInfo(player);
@@ -162,13 +163,14 @@ public class ConstructionHammerItem extends Item {
                         currentConstruction.addBlock(clickedPos, clickedState);
                     }
 
-                    // Messaggio con nome edificio/room e totale
+                    // Messaggio con nome edificio/room, coordinate e totale
                     int totalBlocks = isInRoom && session.getCurrentRoomObject() != null
                         ? session.getCurrentRoomObject().getChangedBlockCount()
                         : currentConstruction.getBlockCount();
                     String targetName = formatTargetName(session);
+                    String coords = String.format("§8[%d, %d, %d]", clickedPos.getX(), clickedPos.getY(), clickedPos.getZ());
                     player.sendSystemMessage(Component.literal(targetName + ": §a" +
-                            I18n.tr(player, "block.added") + " §7(" + totalBlocks + ")"));
+                            I18n.tr(player, "block.added") + " " + coords + " §7(" + totalBlocks + ")"));
 
                     NetworkHandler.sendWireframeSync(player);
                     NetworkHandler.sendEditingInfo(player);

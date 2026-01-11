@@ -1835,14 +1835,15 @@ public class NetworkHandler {
             return;
         }
 
-        // Get player's current position (block where feet are)
-        BlockPos playerPos = player.blockPosition();
+        // Use round(player.getY()) - 1 for anchor Y
+        int playerX = player.blockPosition().getX();
+        int playerY = (int) Math.round(player.getY()) - 1;
+        int playerZ = player.blockPosition().getZ();
 
-        // Check if player is within or directly above construction bounds on X/Z
-        // Player can be 1 block above the max Y (standing on top of the construction)
-        boolean withinXZ = playerPos.getX() >= bounds.getMinX() && playerPos.getX() <= bounds.getMaxX() &&
-                          playerPos.getZ() >= bounds.getMinZ() && playerPos.getZ() <= bounds.getMaxZ();
-        boolean withinY = playerPos.getY() >= bounds.getMinY() && playerPos.getY() <= bounds.getMaxY() + 1;
+        // Check if player is within or directly above construction bounds
+        boolean withinXZ = playerX >= bounds.getMinX() && playerX <= bounds.getMaxX() &&
+                          playerZ >= bounds.getMinZ() && playerZ <= bounds.getMaxZ();
+        boolean withinY = playerY >= bounds.getMinY() && playerY <= bounds.getMaxY() + 1;
 
         if (!withinXZ || !withinY) {
             player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
@@ -1851,10 +1852,10 @@ public class NetworkHandler {
         }
 
         // Normalize coordinates (relative to bounds min corner)
-        // Note: Y can be up to sizeY (one above maxY) for standing on top of construction
-        int normalizedX = playerPos.getX() - bounds.getMinX();
-        int normalizedY = playerPos.getY() - bounds.getMinY();
-        int normalizedZ = playerPos.getZ() - bounds.getMinZ();
+        // Y is stored as floor(player.getY()) + 1 - normalized
+        int normalizedX = playerX - bounds.getMinX();
+        int normalizedY = playerY - bounds.getMinY();
+        int normalizedZ = playerZ - bounds.getMinZ();
 
         // Get player's yaw rotation
         float yaw = player.getYRot();
@@ -1866,7 +1867,7 @@ public class NetworkHandler {
         ConstructionRegistry.getInstance().register(construction);
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "entrance.set", playerPos.getX(), playerPos.getY(), playerPos.getZ())));
+                I18n.tr(player, "entrance.set", playerX, playerY, playerZ)));
 
         // Update client
         sendEditingInfo(player);
@@ -2497,219 +2498,6 @@ public class NetworkHandler {
         return spawnedCount;
     }
 
-    /**
-     * Nasconde una costruzione dal mondo rimuovendo tutti i blocchi e le entità nell'area bounds.
-     * La costruzione rimane in memoria per future operazioni SHOW.
-     *
-     * @param level Il ServerLevel
-     * @param construction La costruzione da nascondere
-     * @return Il numero di blocchi rimossi
-     */
-    public static int hideConstructionFromWorld(ServerLevel level, Construction construction) {
-        return hideConstructionFromWorld(level, construction, true);
-    }
-
-    /**
-     * Nasconde una costruzione dal mondo rimuovendo tutti i blocchi nell'area bounds.
-     * La costruzione rimane in memoria per future operazioni SHOW.
-     *
-     * @param level Il ServerLevel
-     * @param construction La costruzione da nascondere
-     * @param removeAllEntities Se true, rimuove TUTTE le entità (usato per MOVE). Se false, rimuove solo XP e items.
-     * @return Il numero di blocchi rimossi
-     */
-    public static int hideConstructionFromWorld(ServerLevel level, Construction construction, boolean removeAllEntities) {
-        if (construction == null || construction.getBlockCount() == 0) {
-            return 0;
-        }
-
-        var bounds = construction.getBounds();
-        if (!bounds.isValid()) {
-            return 0;
-        }
-
-        // 1. Svuota tutti i container prima di rimuovere i blocchi
-        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) {
-            for (int y = bounds.getMinY(); y <= bounds.getMaxY(); y++) {
-                for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(pos);
-                    if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
-                        clearable.clearContent();
-                    }
-                }
-            }
-        }
-
-        // 2. Rimuovi TUTTI i blocchi nell'area dei bounds (incluse sorgenti acqua/lava)
-        int removeFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
-        int blocksRemoved = 0;
-        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) {
-            for (int y = bounds.getMinY(); y <= bounds.getMaxY(); y++) {
-                for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    BlockState currentState = level.getBlockState(pos);
-                    if (!currentState.is(Blocks.AIR)) {
-                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), removeFlags);
-                        blocksRemoved++;
-                    }
-                }
-            }
-        }
-
-        // 3. Rimuovi le entità nell'area
-        net.minecraft.world.phys.AABB area = new net.minecraft.world.phys.AABB(
-            bounds.getMinX() - 1, bounds.getMinY() - 1, bounds.getMinZ() - 1,
-            bounds.getMaxX() + 2, bounds.getMaxY() + 2, bounds.getMaxZ() + 2
-        );
-        java.util.List<Entity> entitiesToRemove;
-        if (removeAllEntities) {
-            // Per MOVE: rimuovi tutte le entità (esclusi i giocatori)
-            entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
-                e -> !(e instanceof net.minecraft.world.entity.player.Player));
-        } else {
-            // Per HIDE: rimuovi solo XP orbs e item drops
-            entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
-                e -> e instanceof net.minecraft.world.entity.ExperienceOrb ||
-                     e instanceof net.minecraft.world.entity.item.ItemEntity);
-        }
-        for (Entity entity : entitiesToRemove) {
-            entity.discard();
-        }
-
-        Architect.LOGGER.info("Hide: removed {} blocks, {} entities from bounds area", blocksRemoved, entitiesToRemove.size());
-
-        return blocksRemoved;
-    }
-
-    /**
-     * Rimuove tutti i blocchi e le entità in un'area specificata dai bounds.
-     * Usato per MOVE quando i nuovi blocchi sono già stati piazzati nella nuova posizione.
-     *
-     * @param level Il ServerLevel
-     * @param minX, minY, minZ, maxX, maxY, maxZ I bounds dell'area da pulire
-     * @return Il numero di blocchi rimossi
-     */
-    public static int clearAreaFromWorld(ServerLevel level, int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
-        // 1. Svuota tutti i container prima di rimuovere i blocchi
-        for (int x = minX; x <= maxX; x++) {
-            for (int y = minY; y <= maxY; y++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(pos);
-                    if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
-                        clearable.clearContent();
-                    }
-                }
-            }
-        }
-
-        // 2. Rimuovi TUTTI i blocchi nell'area (incluse sorgenti acqua/lava)
-        int removeFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
-        int blocksRemoved = 0;
-        for (int x = minX; x <= maxX; x++) {
-            for (int y = minY; y <= maxY; y++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    BlockState currentState = level.getBlockState(pos);
-                    if (!currentState.is(Blocks.AIR)) {
-                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), removeFlags);
-                        blocksRemoved++;
-                    }
-                }
-            }
-        }
-
-        // 3. Rimuovi tutte le entità nell'area (esclusi i giocatori)
-        net.minecraft.world.phys.AABB area = new net.minecraft.world.phys.AABB(
-            minX - 1, minY - 1, minZ - 1,
-            maxX + 2, maxY + 2, maxZ + 2
-        );
-        java.util.List<Entity> entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
-            e -> !(e instanceof net.minecraft.world.entity.player.Player));
-        for (Entity entity : entitiesToRemove) {
-            entity.discard();
-        }
-
-        Architect.LOGGER.info("ClearArea: removed {} blocks, {} entities", blocksRemoved, entitiesToRemove.size());
-
-        return blocksRemoved;
-    }
-
-    /**
-     * Rimuove completamente una costruzione dal mondo senza causare drop di oggetti.
-     * Ordine di rimozione:
-     * 1. Svuota contenuto dei container (casse, hopper, furnace, etc.)
-     * 2. Rimuovi i blocchi della costruzione (senza drop)
-     * 3. Rimuovi tutte le entità nell'area (inclusi XP orbs e item drops generati)
-     *
-     * @param level Il ServerLevel
-     * @param construction La costruzione da rimuovere
-     * @return Il numero di blocchi rimossi
-     */
-    public static int clearConstructionFromWorld(ServerLevel level, Construction construction) {
-        if (construction == null || construction.getBlockCount() == 0) {
-            return 0;
-        }
-
-        var bounds = construction.getBounds();
-        if (!bounds.isValid()) {
-            return 0;
-        }
-
-        // 1. Svuota tutti i container prima di rimuovere i blocchi
-        int containersCleared = 0;
-        for (BlockPos pos : construction.getBlocks().keySet()) {
-            net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(pos);
-            if (blockEntity instanceof net.minecraft.world.Clearable clearable) {
-                clearable.clearContent();
-                containersCleared++;
-            }
-        }
-        if (containersCleared > 0) {
-            Architect.LOGGER.debug("Destroy: Cleared {} containers", containersCleared);
-        }
-
-        // 2. Rimuovi TUTTI i blocchi nell'area dei bounds (incluse sorgenti acqua/lava)
-        // Usa UPDATE_CLIENTS | UPDATE_KNOWN_SHAPE per:
-        // - UPDATE_CLIENTS (2): invia l'update ai client
-        // - UPDATE_KNOWN_SHAPE (64): salta la chiamata a updateShape che può causare drop
-        // NON usare UPDATE_NEIGHBORS (1) che triggera onRemove con drop
-        int removeFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
-        int blocksRemoved = 0;
-        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) {
-            for (int y = bounds.getMinY(); y <= bounds.getMaxY(); y++) {
-                for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    BlockState currentState = level.getBlockState(pos);
-                    // Rimuovi qualsiasi blocco che non sia già aria (inclusi fluidi)
-                    if (!currentState.is(Blocks.AIR)) {
-                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), removeFlags);
-                        blocksRemoved++;
-                    }
-                }
-            }
-        }
-
-        // 3. Rimuovi tutte le entità nell'area DOPO aver rimosso i blocchi
-        // Questo cattura anche XP orbs e item drops che potrebbero essere stati generati
-        net.minecraft.world.phys.AABB area = new net.minecraft.world.phys.AABB(
-            bounds.getMinX() - 1, bounds.getMinY() - 1, bounds.getMinZ() - 1,
-            bounds.getMaxX() + 2, bounds.getMaxY() + 2, bounds.getMaxZ() + 2
-        );
-        java.util.List<Entity> entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
-            e -> !(e instanceof net.minecraft.world.entity.player.Player));
-        for (Entity entity : entitiesToRemove) {
-            entity.discard();
-        }
-        Architect.LOGGER.debug("Destroy: Removed {} entities", entitiesToRemove.size());
-
-        Architect.LOGGER.info("Destroy: removed {} blocks, {} entities, {} containers cleared",
-            blocksRemoved, entitiesToRemove.size(), containersCleared);
-
-        return blocksRemoved;
-    }
-
     // ===== Centralized teleport logic =====
 
     /**
@@ -2729,9 +2517,10 @@ public class NetworkHandler {
         // Check if entrance anchor is set - use it for teleport destination
         if (construction.getAnchors().hasEntrance()) {
             // Denormalize entrance coordinates
+            // TP to anchor.Y + 1
             BlockPos entrance = construction.getAnchors().getEntrance();
             tpX = bounds.getMinX() + entrance.getX() + 0.5;
-            tpY = bounds.getMinY() + entrance.getY() + 1;  // +1 because anchor stores block pos, player stands ON TOP
+            tpY = bounds.getMinY() + entrance.getY() + 1;
             tpZ = bounds.getMinZ() + entrance.getZ() + 0.5;
 
             // Use saved yaw rotation, keep current pitch

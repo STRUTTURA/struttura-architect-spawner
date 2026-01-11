@@ -85,8 +85,14 @@ public class ConstructionOperations {
             // SHOW: use original position
             targetPos = bounds.getMin();
         } else {
-            // SPAWN/PULL/MOVE: calculate position in front of player
-            targetPos = calculatePositionInFront(player, bounds);
+            // SPAWN/PULL/MOVE: check if entrance anchor is set
+            if (construction.getAnchors().hasEntrance()) {
+                // Calculate position so player ends up at entrance
+                targetPos = calculatePositionAtEntrance(player, construction);
+            } else {
+                // No entrance: calculate position in front of player (legacy behavior)
+                targetPos = calculatePositionInFront(player, bounds);
+            }
         }
 
         return placeConstructionAt(level, construction, targetPos, updateConstructionCoords);
@@ -406,17 +412,9 @@ public class ConstructionOperations {
             bounds.getMaxX() + 2, bounds.getMaxY() + 2, bounds.getMaxZ() + 2
         );
 
-        List<Entity> entitiesToRemove;
-        if (mode == RemovalMode.HIDE) {
-            // HIDE: remove only XP orbs and item drops
-            entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
-                e -> e instanceof net.minecraft.world.entity.ExperienceOrb ||
-                     e instanceof net.minecraft.world.entity.item.ItemEntity);
-        } else {
-            // DESTROY/MOVE_CLEAR: remove all entities except players
-            entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
-                e -> !(e instanceof Player));
-        }
+        // Remove all entities except players (HIDE, DESTROY, MOVE_CLEAR all need this)
+        List<Entity> entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
+            e -> !(e instanceof Player));
 
         for (Entity entity : entitiesToRemove) {
             entity.discard();
@@ -444,6 +442,34 @@ public class ConstructionOperations {
     }
 
     // ============== HELPER METHODS ==============
+
+    /**
+     * Calculate the position so that the player ends up at the entrance anchor.
+     * The entrance anchor is stored in normalized coordinates (relative to bounds min 0,0,0).
+     * Entrance Y is stored as floor(player.getY()) + 1.
+     * We need to place the construction so that: playerY = targetY + entranceY
+     * Therefore: targetY = playerY - entranceY
+     *
+     * @param player The player
+     * @param construction The construction with entrance anchor
+     * @return The position where bounds min should be placed
+     */
+    public static BlockPos calculatePositionAtEntrance(ServerPlayer player, Construction construction) {
+        BlockPos entrance = construction.getAnchors().getEntrance(); // normalized coords
+        // Use round(player.getY()) - 1 for spawn position
+        int playerX = player.blockPosition().getX();
+        int playerY = (int) Math.round(player.getY()) - 1;
+        int playerZ = player.blockPosition().getZ();
+
+        // targetPos is where bounds min will be placed
+        // We want: playerPos = targetPos + entrance
+        // Therefore: targetPos = playerPos - entrance
+        return new BlockPos(
+            playerX - entrance.getX(),
+            playerY - entrance.getY(),
+            playerZ - entrance.getZ()
+        );
+    }
 
     /**
      * Calculate the position in front of a player for placing a construction.

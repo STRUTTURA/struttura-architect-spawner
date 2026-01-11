@@ -905,20 +905,6 @@ public class EditingPanel {
             int coordsWidth = font.width(coordsText);
             graphics.drawString(font, coordsText, coordsX, currentY + 4, pm.hasEntrance() ? 0xFFCCCCCC : 0xFF666666, false);
 
-            // Check if player is at the entrance position (only coordinates, not yaw)
-            boolean playerAtEntrance = false;
-            if (pm.hasEntrance()) {
-                var player = Minecraft.getInstance().player;
-                if (player != null) {
-                    int[] entrance = pm.getEntrance();
-                    int playerX = player.blockPosition().getX();
-                    int playerY = player.blockPosition().getY();
-                    int playerZ = player.blockPosition().getZ();
-                    // Player is at entrance if same block position
-                    playerAtEntrance = playerX == entrance[0] && playerY == entrance[1] && playerZ == entrance[2];
-                }
-            }
-
             // SET and TP buttons (right-aligned)
             int setBtnWidth = 24;
             int tpBtnWidth = 20;
@@ -926,20 +912,19 @@ public class EditingPanel {
             int tpBtnX = x + WIDTH - PADDING - tpBtnWidth;
             int setBtnX = tpBtnX - gap - setBtnWidth;
 
-            // SET button (disabled if player is already at entrance)
-            boolean setDisabled = playerAtEntrance;
-            boolean setHovered = !setDisabled && effectiveMouseX >= setBtnX && effectiveMouseX < setBtnX + setBtnWidth &&
+            // SET button (always enabled)
+            boolean setHovered = effectiveMouseX >= setBtnX && effectiveMouseX < setBtnX + setBtnWidth &&
                                 effectiveMouseY >= currentY && effectiveMouseY < currentY + BUTTON_HEIGHT;
-            int setBgColor = setDisabled ? 0xFF202020 : (setHovered ? 0xFF405040 : 0xFF304030);
-            int setTextColor = setDisabled ? 0xFF606060 : 0xFF88FF88;
-            int setBorderColor = setDisabled ? 0xFF404040 : 0xFF608060;
+            int setBgColor = setHovered ? 0xFF405040 : 0xFF304030;
+            int setTextColor = 0xFF88FF88;
+            int setBorderColor = 0xFF608060;
             graphics.fill(setBtnX, currentY, setBtnX + setBtnWidth, currentY + BUTTON_HEIGHT, setBgColor);
             graphics.renderOutline(setBtnX, currentY, setBtnWidth, BUTTON_HEIGHT, setBorderColor);
             int setTextWidth = font.width("SET");
             graphics.drawString(font, "SET", setBtnX + (setBtnWidth - setTextWidth) / 2, currentY + 4, setTextColor, false);
 
-            // TP button (disabled if no entrance or player already at entrance)
-            boolean tpDisabled = !pm.hasEntrance() || playerAtEntrance;
+            // TP button (disabled only if no entrance)
+            boolean tpDisabled = !pm.hasEntrance();
             boolean tpHovered = !tpDisabled && effectiveMouseX >= tpBtnX && effectiveMouseX < tpBtnX + tpBtnWidth &&
                                effectiveMouseY >= currentY && effectiveMouseY < currentY + BUTTON_HEIGHT;
             int tpBgColor = tpDisabled ? 0xFF202020 : (tpHovered ? 0xFF405060 : 0xFF304050);
@@ -1943,20 +1928,6 @@ public class EditingPanel {
         if (!inRoomEditing) {
             currentY += BUTTON_HEIGHT + PADDING;
 
-            // Check if player is at the entrance position (only coordinates, not yaw)
-            boolean playerAtEntrance = false;
-            if (pm.hasEntrance()) {
-                var player = Minecraft.getInstance().player;
-                if (player != null) {
-                    int[] entrance = pm.getEntrance();
-                    int playerX = player.blockPosition().getX();
-                    int playerY = player.blockPosition().getY();
-                    int playerZ = player.blockPosition().getZ();
-                    // Player is at entrance if same block position
-                    playerAtEntrance = playerX == entrance[0] && playerY == entrance[1] && playerZ == entrance[2];
-                }
-            }
-
             // SET and TP buttons (right-aligned, same layout as render)
             int setBtnWidth = 24;
             int tpBtnWidth = 20;
@@ -1964,17 +1935,16 @@ public class EditingPanel {
             int tpBtnX = x + WIDTH - PADDING - tpBtnWidth;
             int setBtnX = tpBtnX - gap - setBtnWidth;
 
-            // SET button click (disabled if player already at entrance)
-            if (!playerAtEntrance &&
-                mouseX >= setBtnX && mouseX < setBtnX + setBtnWidth &&
+            // SET button click (always enabled)
+            if (mouseX >= setBtnX && mouseX < setBtnX + setBtnWidth &&
                 mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
                 // Send action to server to set entrance at player's current position
                 ClientPlayNetworking.send(new GuiActionPacket("set_entrance", "", ""));
                 return true;
             }
 
-            // TP button click (disabled if no entrance or player already at entrance)
-            if (pm.hasEntrance() && !playerAtEntrance &&
+            // TP button click (disabled only if no entrance)
+            if (pm.hasEntrance() &&
                 mouseX >= tpBtnX && mouseX < tpBtnX + tpBtnWidth &&
                 mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
                 // Send action to server to teleport player to entrance
