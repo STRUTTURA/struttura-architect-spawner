@@ -239,6 +239,19 @@ public class ApiClient {
         }
         json.add("rooms", roomsArray);
 
+        // Anchors (entrance anchor with normalized coordinates)
+        JsonObject anchorsObj = new JsonObject();
+        if (construction.getAnchors().hasEntrance()) {
+            JsonObject entranceObj = new JsonObject();
+            BlockPos entrance = construction.getAnchors().getEntrance();
+            entranceObj.addProperty("x", entrance.getX());
+            entranceObj.addProperty("y", entrance.getY());
+            entranceObj.addProperty("z", entrance.getZ());
+            entranceObj.addProperty("yaw", construction.getAnchors().getEntranceYaw());
+            anchorsObj.add("entrance", entranceObj);
+        }
+        json.add("anchors", anchorsObj);
+
         // Versione del mod Struttura
         json.addProperty("modVersion", Architect.MOD_VERSION);
 
@@ -965,6 +978,20 @@ public class ApiClient {
 
                     Room room = new Room(roomId, roomName, roomCreatedAt);
                     construction.addRoom(room);
+                }
+            }
+
+            // Parse anchors from metadata
+            if (metadata.has("anchors") && metadata.get("anchors").isJsonObject()) {
+                JsonObject anchorsObj = metadata.getAsJsonObject("anchors");
+                if (anchorsObj.has("entrance") && anchorsObj.get("entrance").isJsonObject()) {
+                    JsonObject entranceObj = anchorsObj.getAsJsonObject("entrance");
+                    int x = entranceObj.get("x").getAsInt();
+                    int y = entranceObj.get("y").getAsInt();
+                    int z = entranceObj.get("z").getAsInt();
+                    float yaw = entranceObj.has("yaw") ? entranceObj.get("yaw").getAsFloat() : 0f;
+                    construction.getAnchors().setEntrance(new BlockPos(x, y, z), yaw);
+                    Architect.LOGGER.debug("Parsed entrance anchor from pull: [{},{},{}] yaw={}", x, y, z, yaw);
                 }
             }
 
