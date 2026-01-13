@@ -375,11 +375,15 @@ public class ConstructionOperations {
                 firstEnt.getRelativePos().x, firstEnt.getRelativePos().y, firstEnt.getRelativePos().z);
         }
 
+        // Clear any previously tracked entity UUIDs before spawning new ones
+        construction.clearSpawnedEntityUuids();
+
         int entitiesSpawned = spawnEntitiesFrozenRotated(
             construction.getEntities(),
             level,
             targetPos.getX(), targetPos.getY(), targetPos.getZ(),
-            rotationSteps, pivotX, pivotZ
+            rotationSteps, pivotX, pivotZ,
+            construction
         );
 
         if (rotationSteps != 0) {
@@ -593,17 +597,42 @@ public class ConstructionOperations {
         }
 
         // Phase 2: Remove entities BEFORE blocks (prevent death from falling)
+        // First, remove entities tracked by UUID (these can be anywhere in the world)
+        int entitiesRemoved = 0;
+        Set<UUID> trackedUuids = construction.getSpawnedEntityUuids();
+        if (!trackedUuids.isEmpty()) {
+            // Get all entities in the server and filter by UUID
+            for (UUID uuid : new HashSet<>(trackedUuids)) {
+                Entity entity = level.getServer().getPlayerList().getPlayers().stream()
+                    .filter(p -> p.getUUID().equals(uuid))
+                    .findFirst()
+                    .orElse(null);
+
+                if (entity == null) {
+                    // Search in all loaded entities using the level's entity lookup
+                    entity = level.getEntity(uuid);
+                }
+
+                if (entity != null && !(entity instanceof Player)) {
+                    entity.discard();
+                    entitiesRemoved++;
+                }
+                construction.untrackSpawnedEntity(uuid);
+            }
+        }
+
+        // Also check the bounds area for any untracked entities (legacy cleanup)
         AABB area = new AABB(
             bounds.getMinX() - 1, bounds.getMinY() - 1, bounds.getMinZ() - 1,
             bounds.getMaxX() + 2, bounds.getMaxY() + 2, bounds.getMaxZ() + 2
         );
 
-        // Remove all entities except players (HIDE, DESTROY, MOVE_CLEAR all need this)
         List<Entity> entitiesToRemove = level.getEntitiesOfClass(Entity.class, area,
             e -> !(e instanceof Player));
 
         for (Entity entity : entitiesToRemove) {
             entity.discard();
+            entitiesRemoved++;
         }
 
         // Phase 3: Remove all blocks (no drops, no physics)
@@ -622,9 +651,9 @@ public class ConstructionOperations {
         }
 
         Architect.LOGGER.info("{}: removed {} blocks, {} entities, {} containers cleared",
-            mode, blocksRemoved, entitiesToRemove.size(), containersCleared);
+            mode, blocksRemoved, entitiesRemoved, containersCleared);
 
-        return new RemovalResult(blocksRemoved, entitiesToRemove.size());
+        return new RemovalResult(blocksRemoved, entitiesRemoved);
     }
 
     // ============== HELPER METHODS ==============
@@ -1016,9 +1045,17 @@ public class ConstructionOperations {
 
                 // Copy and clean NBT
                 CompoundTag nbt = data.getNbt().copy();
-                nbt.remove("Pos");
                 nbt.remove("Motion");
                 nbt.remove("UUID");
+
+                // Set Pos in NBT BEFORE entity creation - this is CRITICAL for hanging entities
+                // Minecraft validates that block_pos and entity position are within 16 blocks
+                // If Pos is not set, the validation fails with "Block-attached entity at invalid position"
+                net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
+                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldX));
+                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldY));
+                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldZ));
+                nbt.put("Pos", posTag);
 
                 // Remove maps from item frames
                 String entityType = data.getEntityType();
@@ -1080,13 +1117,17 @@ public class ConstructionOperations {
     /**
      * Spawns entities with freeze and rotation support.
      * Rotates entity positions around pivot and adjusts entity yaw.
+     * Tracks spawned entity UUIDs in the construction for later removal.
+     *
+     * @param construction The construction to track spawned entities in (can be null to skip tracking)
      */
     private static int spawnEntitiesFrozenRotated(
         List<EntityData> entities,
         ServerLevel level,
         int targetX, int targetY, int targetZ,
         int rotationSteps,
-        int pivotX, int pivotZ
+        int pivotX, int pivotZ,
+        Construction construction
     ) {
         if (entities.isEmpty()) {
             return 0;
@@ -1119,9 +1160,17 @@ public class ConstructionOperations {
 
                 // Copy and clean NBT
                 CompoundTag nbt = data.getNbt().copy();
-                nbt.remove("Pos");
                 nbt.remove("Motion");
                 nbt.remove("UUID");
+
+                // Set Pos in NBT BEFORE entity creation - this is CRITICAL for hanging entities
+                // Minecraft validates that block_pos and entity position are within 16 blocks
+                // If Pos is not set, the validation fails with "Block-attached entity at invalid position"
+                net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
+                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldX));
+                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldY));
+                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldZ));
+                nbt.put("Pos", posTag);
 
                 // Remove maps from item frames
                 String entityType = data.getEntityType();
@@ -1206,6 +1255,11 @@ public class ConstructionOperations {
                     level.addFreshEntity(entity);
                     spawnedEntities.add(entity);
                     spawnedCount++;
+
+                    // Track entity UUID in construction for later removal
+                    if (construction != null) {
+                        construction.trackSpawnedEntity(entity.getUUID());
+                    }
                 } else {
                     Architect.LOGGER.warn("Failed to create entity of type {}", data.getEntityType());
                 }

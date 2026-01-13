@@ -10,8 +10,10 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -53,6 +55,10 @@ public class Construction {
 
     // Entities in this construction (type and position data only, no UUID in saved data)
     private final List<EntityData> entities = new ArrayList<>();
+
+    // Runtime-only: UUIDs of spawned entities in the world (not saved to file)
+    // Used to track and remove entities even if they move outside construction bounds
+    private transient final Set<UUID> spawnedEntityUuids = new HashSet<>();
 
     // Bounds calcolati dai blocchi
     private final ConstructionBounds bounds = new ConstructionBounds();
@@ -424,6 +430,49 @@ public class Construction {
             }
         }
         return count;
+    }
+
+    // ===== Spawned entity UUID tracking (runtime-only) =====
+
+    /**
+     * Tracks a spawned entity UUID. Used to find and remove entities even if they move outside bounds.
+     * This data is NOT saved to file - it's runtime-only.
+     * @param uuid The UUID of the spawned entity
+     */
+    public void trackSpawnedEntity(UUID uuid) {
+        spawnedEntityUuids.add(uuid);
+    }
+
+    /**
+     * Untracks a spawned entity UUID.
+     * @param uuid The UUID to untrack
+     */
+    public void untrackSpawnedEntity(UUID uuid) {
+        spawnedEntityUuids.remove(uuid);
+    }
+
+    /**
+     * Gets all tracked spawned entity UUIDs.
+     * @return Set of UUIDs (runtime-only, not saved)
+     */
+    public Set<UUID> getSpawnedEntityUuids() {
+        return spawnedEntityUuids;
+    }
+
+    /**
+     * Clears all tracked spawned entity UUIDs.
+     */
+    public void clearSpawnedEntityUuids() {
+        spawnedEntityUuids.clear();
+    }
+
+    /**
+     * Checks if an entity UUID is tracked as spawned by this construction.
+     * @param uuid The UUID to check
+     * @return true if tracked
+     */
+    public boolean isEntityTracked(UUID uuid) {
+        return spawnedEntityUuids.contains(uuid);
     }
 
     // ===== Total stats (base + all rooms) =====

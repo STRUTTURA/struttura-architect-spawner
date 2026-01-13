@@ -1,6 +1,7 @@
 package it.magius.struttura.architect.dev;
 
 import it.magius.struttura.architect.Architect;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -28,6 +29,7 @@ public class DevTestHandler {
 
     private static final DevTestHandler INSTANCE = new DevTestHandler();
     private static final boolean DEV_TEST_ENABLED = "true".equalsIgnoreCase(System.getProperty("struttura.devtest"));
+    private static boolean tickHandlerRegistered = false;
 
     private DevTestHandler() {}
 
@@ -56,21 +58,44 @@ public class DevTestHandler {
             return;
         }
 
+        // Register tick handler if not already registered
+        if (!tickHandlerRegistered) {
+            ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
+            tickHandlerRegistered = true;
+            Architect.LOGGER.info("DevTest: Registered tick handler");
+        }
+
         // Delay execution by 1 second (20 ticks) to ensure world is fully loaded
         final int targetTick = server.getTickCount() + 20;
-        server.execute(() -> {
-            scheduleDelayedExecution(server, targetTick, () -> runTestCommands(player));
+        scheduleDelayedExecution(server, targetTick, () -> runTestCommands(player));
+    }
+
+    // Pending delayed tasks
+    private static final java.util.Map<Integer, Runnable> pendingTasks = new java.util.concurrent.ConcurrentHashMap<>();
+    private static int nextTaskId = 0;
+
+    /**
+     * Schedules a task to run after a certain tick count.
+     * Uses Fabric's tick events to avoid stack overflow from recursive execute() calls.
+     */
+    private void scheduleDelayedExecution(MinecraftServer server, int targetTick, Runnable task) {
+        int taskId = nextTaskId++;
+        pendingTasks.put(taskId, () -> {
+            if (server.getTickCount() >= targetTick) {
+                pendingTasks.remove(taskId);
+                task.run();
+            }
         });
     }
 
     /**
-     * Schedules a task to run after a certain tick count.
+     * Called every server tick to check pending tasks.
+     * Register this with ServerTickEvents.END_SERVER_TICK.
      */
-    private void scheduleDelayedExecution(MinecraftServer server, int targetTick, Runnable task) {
-        if (server.getTickCount() >= targetTick) {
+    public void onServerTick(MinecraftServer server) {
+        // Copy to avoid ConcurrentModificationException
+        for (Runnable task : new java.util.ArrayList<>(pendingTasks.values())) {
             task.run();
-        } else {
-            server.execute(() -> scheduleDelayedExecution(server, targetTick, task));
         }
     }
 
@@ -82,7 +107,7 @@ public class DevTestHandler {
     private void runTestCommands(ServerPlayer player) {
         Architect.LOGGER.info("=== STRUTTURA DevTest: Running test commands ===");
 
-        player.sendSystemMessage(Component.literal("[DevTest] Starting rotation test sequence..."));
+        player.sendSystemMessage(Component.literal("[DevTest] Starting rotation test..."));
 
         MinecraftServer server = ((ServerLevel) player.level()).getServer();
         String constructionId = "it.magius.pip.home";
@@ -94,54 +119,39 @@ public class DevTestHandler {
 
         // Wait 1 second (20 ticks), then Step 2
         scheduleDelayedExecution(server, server.getTickCount() + 20, () -> {
-            // Step 2: Face NORTH (yaw=180) and pull
+            // Step 2: Face NORTH (yaw=180) and pull - NO rotation
             Architect.LOGGER.info("=== STEP 2: Facing NORTH and pulling ===");
             player.sendSystemMessage(Component.literal("[DevTest] Step 2: Facing NORTH (yaw=180), pulling..."));
 
-            // Rotate player to face NORTH using tp command: tp @s ~ ~ ~ <yaw> <pitch>
-            // NORTH = yaw 180
             executeCommand(player, "tp @s ~ ~ ~ 180 0");
-
-            // Pull construction
             executeCommand(player, "struttura pull " + constructionId);
 
-            // Wait 2 seconds (40 ticks) for async pull to complete, then Step 3
+            // Wait 2 seconds for pull, then Step 3
             scheduleDelayedExecution(server, server.getTickCount() + 40, () -> {
-                // Step 3: Face EAST (yaw=-90) and move
-                Architect.LOGGER.info("=== STEP 3: Facing EAST and moving ===");
+                // Step 3: Face EAST (yaw=-90) and move - 90° rotation
+                Architect.LOGGER.info("=== STEP 3: Facing EAST and moving (90° rotation) ===");
                 player.sendSystemMessage(Component.literal("[DevTest] Step 3: Facing EAST (yaw=-90), moving..."));
 
-                // Rotate player to face EAST
-                // EAST = yaw -90
                 executeCommand(player, "tp @s ~ ~ ~ -90 0");
-
-                // Move construction
                 executeCommand(player, "struttura move " + constructionId);
 
-                // Wait 1 second, then Step 4
-                scheduleDelayedExecution(server, server.getTickCount() + 20, () -> {
-                    // Step 4: Face WEST (yaw=90) and move
-                    Architect.LOGGER.info("=== STEP 4: Facing WEST and moving ===");
+                // Wait 2 seconds for move, then Step 4
+                scheduleDelayedExecution(server, server.getTickCount() + 40, () -> {
+                    // Step 4: Face WEST (yaw=90) and move - 180° rotation from EAST
+                    Architect.LOGGER.info("=== STEP 4: Facing WEST and moving (180° rotation from EAST) ===");
                     player.sendSystemMessage(Component.literal("[DevTest] Step 4: Facing WEST (yaw=90), moving..."));
 
-                    // Rotate player to face WEST
-                    // WEST = yaw 90
                     executeCommand(player, "tp @s ~ ~ ~ 90 0");
-
-                    // Move construction
                     executeCommand(player, "struttura move " + constructionId);
 
-                    // Wait 1 second, then complete
-                    scheduleDelayedExecution(server, server.getTickCount() + 20, () -> {
-                        // Step 5: Test complete
-                        Architect.LOGGER.info("=== STEP 5: Test sequence completed ===");
-                        player.sendSystemMessage(Component.literal("[DevTest] Test sequence completed! Exiting game..."));
-                        Architect.LOGGER.info("=== STRUTTURA DevTest: Test commands completed ===");
+                    // Wait 2 seconds for move, then exit
+                    scheduleDelayedExecution(server, server.getTickCount() + 40, () -> {
+                        Architect.LOGGER.info("=== STEP 5: Test completed ===");
+                        player.sendSystemMessage(Component.literal("[DevTest] Rotation test completed! Exiting..."));
 
-                        // First stop the server gracefully
+                        // Stop server
                         server.halt(false);
 
-                        // Wait 2 seconds for server shutdown, then exit JVM
                         new Thread(() -> {
                             try {
                                 Thread.sleep(2000);
