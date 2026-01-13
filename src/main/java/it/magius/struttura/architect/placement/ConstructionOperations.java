@@ -20,11 +20,13 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.TagValueInput;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
@@ -106,20 +108,44 @@ public class ConstructionOperations {
         ServerLevel level = (ServerLevel) player.level();
         ConstructionBounds bounds = construction.getBounds();
 
+        // Calculate rotation steps and pivot point
+        int rotationSteps = 0;
+        int pivotX = 0;
+        int pivotZ = 0;
+
+        if (mode != PlacementMode.SHOW) {
+            // Calculate rotation based on yaw difference
+            float entranceYaw = construction.getAnchors().hasEntrance()
+                ? construction.getAnchors().getEntranceYaw()
+                : 0f;
+            rotationSteps = calculateRotationSteps(yaw, entranceYaw);
+
+            // Pivot point: entrance anchor (normalized) or center of bounds
+            if (construction.getAnchors().hasEntrance()) {
+                BlockPos entrance = construction.getAnchors().getEntrance(); // normalized coords
+                pivotX = entrance.getX();
+                pivotZ = entrance.getZ();
+            } else {
+                // No entrance: pivot at center of bounds (normalized)
+                pivotX = bounds.getSizeX() / 2;
+                pivotZ = bounds.getSizeZ() / 2;
+            }
+        }
+
         // Calculate target position based on mode
         BlockPos targetPos;
         if (mode == PlacementMode.SHOW) {
-            // SHOW: use original position
+            // SHOW: use original position, no rotation
             targetPos = bounds.getMin();
         } else {
             // SPAWN/PULL/MOVE: check if entrance anchor is set
             if (construction.getAnchors().hasEntrance()) {
                 if (spawnPoint != null) {
                     // Use provided spawn point directly (for natural spawning)
-                    targetPos = calculatePositionAtEntrance(spawnPoint, construction);
+                    targetPos = calculatePositionAtEntranceRotated(spawnPoint, construction, rotationSteps, pivotX, pivotZ);
                 } else {
                     // Calculate position from player (uses round(Y) - 1)
-                    targetPos = calculatePositionAtEntrance(player, construction);
+                    targetPos = calculatePositionAtEntranceRotated(player, construction, rotationSteps, pivotX, pivotZ);
                 }
             } else {
                 // No entrance: calculate position in front of player (legacy behavior)
@@ -127,12 +153,66 @@ public class ConstructionOperations {
             }
         }
 
-        return placeConstructionAt(level, construction, targetPos, updateConstructionCoords);
+        // Debug log for placement
+        Architect.LOGGER.info("========== MOVE/PULL DEBUG START ==========");
+        if (construction.getAnchors().hasEntrance()) {
+            BlockPos entrance = construction.getAnchors().getEntrance();
+            int playerX = player.blockPosition().getX();
+            int playerY = (int) Math.round(player.getY()) - 1;
+            int playerZ = player.blockPosition().getZ();
+
+            // Log player yaw and rotation calculation
+            float playerYaw = player.getYRot();
+            float entranceYaw = construction.getAnchors().getEntranceYaw();
+            String playerDir = getDirectionName(playerYaw);
+            String entranceDir = getDirectionName(entranceYaw);
+            Architect.LOGGER.info("ROTATION DEBUG: playerYaw={} ({}), entranceYaw={} ({}), rotSteps={}",
+                playerYaw, playerDir, entranceYaw, entranceDir, rotationSteps);
+
+            // Calculate where the entrance will end up after rotation
+            int[] rotatedEntrance = rotateXZ(entrance.getX(), entrance.getZ(), pivotX, pivotZ, rotationSteps);
+            int finalEntranceX = targetPos.getX() + rotatedEntrance[0];
+            int finalEntranceY = targetPos.getY() + entrance.getY();
+            int finalEntranceZ = targetPos.getZ() + rotatedEntrance[1];
+
+            Architect.LOGGER.info("PLACEMENT DEBUG: mode={}, playerBlockPos=[{},{},{}]",
+                mode, playerX, playerY, playerZ);
+            Architect.LOGGER.info("  entrance=[{},{},{}], pivot=[{},{}], rotSteps={}",
+                entrance.getX(), entrance.getY(), entrance.getZ(), pivotX, pivotZ, rotationSteps);
+            Architect.LOGGER.info("  rotatedEntrance=[{},{}], targetPos={}",
+                rotatedEntrance[0], rotatedEntrance[1], targetPos);
+            Architect.LOGGER.info("  FINAL entrance world pos=[{},{},{}] (should match playerBlockPos)",
+                finalEntranceX, finalEntranceY, finalEntranceZ);
+            Architect.LOGGER.info("  bounds: min=[{},{},{}], size=[{},{},{}]",
+                bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
+                bounds.getSizeX(), bounds.getSizeY(), bounds.getSizeZ());
+        }
+
+        // Log entity positions BEFORE placement
+        if (!construction.getEntities().isEmpty()) {
+            Architect.LOGGER.info("ENTITIES BEFORE placement ({} total):", construction.getEntities().size());
+            int i = 0;
+            for (EntityData ent : construction.getEntities()) {
+                if (i < 3) { // Log first 3 entities
+                    Architect.LOGGER.info("  Entity[{}]: type={}, relPos=[{:.2f},{:.2f},{:.2f}], yaw={:.1f}",
+                        i, ent.getEntityType(),
+                        ent.getRelativePos().x, ent.getRelativePos().y, ent.getRelativePos().z,
+                        ent.getYaw());
+                }
+                i++;
+            }
+            if (construction.getEntities().size() > 3) {
+                Architect.LOGGER.info("  ... and {} more entities", construction.getEntities().size() - 3);
+            }
+        }
+
+        return placeConstructionAt(level, construction, targetPos, updateConstructionCoords, rotationSteps, pivotX, pivotZ);
     }
 
     /**
      * Places a construction at a specific target position without triggering physics.
      * The target position is where the construction's min corner will be placed.
+     * No rotation is applied.
      *
      * @param level The ServerLevel
      * @param construction The construction to place
@@ -146,6 +226,32 @@ public class ConstructionOperations {
         BlockPos targetPos,
         boolean updateConstructionCoords
     ) {
+        return placeConstructionAt(level, construction, targetPos, updateConstructionCoords, 0, 0, 0);
+    }
+
+    /**
+     * Places a construction at a specific target position without triggering physics.
+     * The target position is where the construction's min corner will be placed.
+     * Applies rotation around the specified pivot point.
+     *
+     * @param level The ServerLevel
+     * @param construction The construction to place
+     * @param targetPos The target position for the rotated construction's min corner
+     * @param updateConstructionCoords If true, updates the construction's stored coordinates
+     * @param rotationSteps Number of 90-degree clockwise rotations (0-3)
+     * @param pivotX Pivot X coordinate for rotation (normalized)
+     * @param pivotZ Pivot Z coordinate for rotation (normalized)
+     * @return PlacementResult with counts and new origin position
+     */
+    public static PlacementResult placeConstructionAt(
+        ServerLevel level,
+        Construction construction,
+        BlockPos targetPos,
+        boolean updateConstructionCoords,
+        int rotationSteps,
+        int pivotX,
+        int pivotZ
+    ) {
         if (construction.getBlockCount() == 0) {
             return new PlacementResult(0, 0, BlockPos.ZERO);
         }
@@ -155,12 +261,11 @@ public class ConstructionOperations {
         int originalMinY = bounds.getMinY();
         int originalMinZ = bounds.getMinZ();
 
-        int offsetX = targetPos.getX() - originalMinX;
-        int offsetY = targetPos.getY() - originalMinY;
-        int offsetZ = targetPos.getZ() - originalMinZ;
+        Rotation rotation = stepsToRotation(rotationSteps);
 
-        // Phase 1: Place all blocks WITHOUT any updates
+        // Phase 1: Place all blocks WITH rotation
         Map<BlockPos, BlockState> newBlocks = new HashMap<>();
+        Map<BlockPos, BlockPos> originalPosMap = new HashMap<>(); // newPos -> originalPos for NBT lookup
         int placedCount = 0;
 
         // Sort blocks by Y ascending (support blocks first)
@@ -170,23 +275,44 @@ public class ConstructionOperations {
         for (Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
             BlockPos originalPos = entry.getKey();
             BlockState state = entry.getValue();
-            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
-            newBlocks.put(newPos, state);
 
-            if (!state.isAir()) {
-                level.setBlock(newPos, state, SILENT_PLACE_FLAGS);
+            // Normalize position (relative to bounds min)
+            int normX = originalPos.getX() - originalMinX;
+            int normY = originalPos.getY() - originalMinY;
+            int normZ = originalPos.getZ() - originalMinZ;
+
+            // Rotate normalized position around pivot
+            int[] rotatedXZ = rotateXZ(normX, normZ, pivotX, pivotZ, rotationSteps);
+            int rotatedNormX = rotatedXZ[0];
+            int rotatedNormZ = rotatedXZ[1];
+
+            // Calculate final world position
+            BlockPos newPos = new BlockPos(
+                targetPos.getX() + rotatedNormX,
+                targetPos.getY() + normY,
+                targetPos.getZ() + rotatedNormZ
+            );
+
+            // Rotate the block state
+            BlockState rotatedState = state.rotate(rotation);
+
+            newBlocks.put(newPos, rotatedState);
+            originalPosMap.put(newPos, originalPos);
+
+            if (!rotatedState.isAir()) {
+                level.setBlock(newPos, rotatedState, SILENT_PLACE_FLAGS);
                 placedCount++;
             }
         }
 
         // Phase 2: Apply block entity NBT after ALL blocks are placed
         int blockEntityCount = 0;
-        for (Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
-            BlockPos originalPos = entry.getKey();
+        for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
+            BlockPos newPos = entry.getKey();
             BlockState state = entry.getValue();
             if (state.isAir()) continue;
 
-            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
+            BlockPos originalPos = originalPosMap.get(newPos);
             CompoundTag blockNbt = construction.getBlockEntityNbt(originalPos);
 
             if (blockNbt != null) {
@@ -222,20 +348,48 @@ public class ConstructionOperations {
         }
 
         // Phase 4: Update construction coordinates if requested
-        if (updateConstructionCoords && (offsetX != 0 || offsetY != 0 || offsetZ != 0)) {
-            updateConstructionCoordinates(construction, offsetX, offsetY, offsetZ, newBlocks);
+        if (updateConstructionCoords) {
+            if (rotationSteps == 0) {
+                // No rotation: simple offset update
+                int offsetX = targetPos.getX() - originalMinX;
+                int offsetY = targetPos.getY() - originalMinY;
+                int offsetZ = targetPos.getZ() - originalMinZ;
+                if (offsetX != 0 || offsetY != 0 || offsetZ != 0) {
+                    updateConstructionCoordinates(construction, offsetX, offsetY, offsetZ, newBlocks);
+                }
+            } else {
+                // With rotation: rebuild construction with new rotated positions and states
+                // Entities ARE rotated here, so spawnEntitiesFrozenRotated will use rotationSteps=0
+                updateConstructionCoordinatesRotated(construction, newBlocks, originalPosMap, targetPos.getY() - originalMinY,
+                    rotationSteps, pivotX, pivotZ, bounds.getSizeX(), bounds.getSizeZ());
+            }
         }
 
-        // Phase 5: Spawn entities with freeze
-        int originX = offsetX + originalMinX;
-        int originY = offsetY + originalMinY;
-        int originZ = offsetZ + originalMinZ;
-        int entitiesSpawned = spawnEntitiesFrozen(construction.getEntities(), level, originX, originY, originZ);
+        // Phase 5: Spawn entities with freeze and rotation
+        // Entities are always rotated at spawn time based on rotationSteps
+        Architect.LOGGER.info("SPAWN DEBUG: targetPos={}, rotationSteps={}, pivot=[{},{}]",
+            targetPos, rotationSteps, pivotX, pivotZ);
+        if (!construction.getEntities().isEmpty()) {
+            EntityData firstEnt = construction.getEntities().get(0);
+            Architect.LOGGER.info("  First entity relPos=[{},{},{}]",
+                firstEnt.getRelativePos().x, firstEnt.getRelativePos().y, firstEnt.getRelativePos().z);
+        }
 
-        BlockPos newOrigin = new BlockPos(originX, originY, originZ);
-        Architect.LOGGER.info("Placed {} blocks, {} entities at {}", placedCount, entitiesSpawned, newOrigin);
+        int entitiesSpawned = spawnEntitiesFrozenRotated(
+            construction.getEntities(),
+            level,
+            targetPos.getX(), targetPos.getY(), targetPos.getZ(),
+            rotationSteps, pivotX, pivotZ
+        );
 
-        return new PlacementResult(placedCount, entitiesSpawned, newOrigin);
+        if (rotationSteps != 0) {
+            Architect.LOGGER.info("Placed {} blocks, {} entities at {} (rotated {}° around pivot [{},{}])",
+                placedCount, entitiesSpawned, targetPos, rotationSteps * 90, pivotX, pivotZ);
+        } else {
+            Architect.LOGGER.info("Placed {} blocks, {} entities at {}", placedCount, entitiesSpawned, targetPos);
+        }
+
+        return new PlacementResult(placedCount, entitiesSpawned, targetPos);
     }
 
     /**
@@ -513,6 +667,74 @@ public class ConstructionOperations {
     }
 
     /**
+     * Calculate the position so that the entrance anchor (after rotation) ends up at the given spawn point.
+     * Takes into account that the entrance anchor position changes after rotation.
+     *
+     * In placeConstructionAt, blocks are placed at:
+     *   worldPos = targetPos + rotatedNormalizedPos
+     *
+     * So for the entrance to end up at spawnPoint:
+     *   spawnPoint = targetPos + rotatedEntranceNormalized
+     *   targetPos = spawnPoint - rotatedEntranceNormalized
+     *
+     * @param spawnPoint The world position where the entrance anchor should be placed
+     * @param construction The construction with entrance anchor
+     * @param rotationSteps Number of 90-degree clockwise rotations (0-3)
+     * @param pivotX Pivot X coordinate (normalized)
+     * @param pivotZ Pivot Z coordinate (normalized)
+     * @return The target position to pass to placeConstructionAt
+     */
+    public static BlockPos calculatePositionAtEntranceRotated(
+        BlockPos spawnPoint,
+        Construction construction,
+        int rotationSteps,
+        int pivotX,
+        int pivotZ
+    ) {
+        BlockPos entrance = construction.getAnchors().getEntrance(); // normalized coords
+
+        // Rotate the entrance position around the pivot (same rotation applied in placeConstructionAt)
+        int[] rotatedEntrance = rotateXZ(entrance.getX(), entrance.getZ(), pivotX, pivotZ, rotationSteps);
+
+        // targetPos = spawnPoint - rotatedEntrance
+        return new BlockPos(
+            spawnPoint.getX() - rotatedEntrance[0],
+            spawnPoint.getY() - entrance.getY(), // Y doesn't change with rotation
+            spawnPoint.getZ() - rotatedEntrance[1]
+        );
+    }
+
+    /**
+     * Calculate the position so that the player ends up at the entrance anchor (with rotation).
+     * Uses round(player.getY()) - 1 as the spawn Y coordinate.
+     *
+     * @param player The player
+     * @param construction The construction with entrance anchor
+     * @param rotationSteps Number of 90-degree clockwise rotations (0-3)
+     * @param pivotX Pivot X coordinate (normalized)
+     * @param pivotZ Pivot Z coordinate (normalized)
+     * @return The position where the rotated bounds min should be placed
+     */
+    public static BlockPos calculatePositionAtEntranceRotated(
+        ServerPlayer player,
+        Construction construction,
+        int rotationSteps,
+        int pivotX,
+        int pivotZ
+    ) {
+        int spawnX = player.blockPosition().getX();
+        int spawnY = (int) Math.round(player.getY()) - 1;
+        int spawnZ = player.blockPosition().getZ();
+        return calculatePositionAtEntranceRotated(
+            new BlockPos(spawnX, spawnY, spawnZ),
+            construction,
+            rotationSteps,
+            pivotX,
+            pivotZ
+        );
+    }
+
+    /**
      * Calculate the position in front of a player for placing a construction.
      * The nearest edge of the construction will be SPAWN_DISTANCE blocks away from the player.
      * The construction spawns at the same Y level as the player.
@@ -616,6 +838,161 @@ public class ConstructionOperations {
     }
 
     /**
+     * Updates construction coordinates after placement with rotation.
+     * Rebuilds the block map with rotated positions and states.
+     *
+     * @param construction The construction to update
+     * @param newBlocks Map of new world positions to rotated block states
+     * @param originalPosMap Map from new position to original position (for NBT lookup)
+     * @param offsetY Y offset applied during placement
+     * @param rotationSteps Number of 90-degree rotations (0-3)
+     * @param pivotX Pivot X coordinate for rotation (normalized)
+     * @param pivotZ Pivot Z coordinate for rotation (normalized)
+     * @param originalSizeX Original construction width (X)
+     * @param originalSizeZ Original construction depth (Z)
+     */
+    private static void updateConstructionCoordinatesRotated(
+        Construction construction,
+        Map<BlockPos, BlockState> newBlocks,
+        Map<BlockPos, BlockPos> originalPosMap,
+        int offsetY,
+        int rotationSteps,
+        int pivotX,
+        int pivotZ,
+        int originalSizeX,
+        int originalSizeZ
+    ) {
+        // Build new block entity NBT map with updated coordinates
+        Map<BlockPos, CompoundTag> newBlockEntityNbt = new HashMap<>();
+        for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
+            BlockPos newPos = entry.getKey();
+            BlockPos originalPos = originalPosMap.get(newPos);
+            if (originalPos != null) {
+                CompoundTag nbt = construction.getBlockEntityNbt(originalPos);
+                if (nbt != null) {
+                    CompoundTag nbtCopy = nbt.copy();
+                    nbtCopy.putInt("x", newPos.getX());
+                    nbtCopy.putInt("y", newPos.getY());
+                    nbtCopy.putInt("z", newPos.getZ());
+                    newBlockEntityNbt.put(newPos, nbtCopy);
+                }
+            }
+        }
+
+        // Update blocks with new rotated positions and states
+        construction.getBlocks().clear();
+        construction.getBounds().reset();
+        for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
+            construction.addBlock(entry.getKey(), entry.getValue());
+        }
+
+        // Update block entity NBT
+        construction.getBlockEntityNbtMap().clear();
+        construction.getBlockEntityNbtMap().putAll(newBlockEntityNbt);
+
+        // Clear rooms when rotating - room positions become invalid
+        // TODO: In future, could transform room positions too
+        if (!construction.getRooms().isEmpty()) {
+            Architect.LOGGER.warn("Rooms cleared due to construction rotation - room positions are now invalid");
+            construction.getRooms().clear();
+        }
+
+        // Update anchor position AND yaw after rotation.
+        // Both must be rotated to keep the anchor consistent with the rotated entity positions.
+        // This ensures that subsequent rotations use the correct pivot point.
+        if (rotationSteps != 0 && construction.getAnchors().hasEntrance()) {
+            BlockPos oldEntrancePos = construction.getAnchors().getEntrance();
+            float oldYaw = construction.getAnchors().getEntranceYaw();
+
+            // Rotate entrance position around pivot (same as entities)
+            int[] rotatedPos = rotateXZ(oldEntrancePos.getX(), oldEntrancePos.getZ(), pivotX, pivotZ, rotationSteps);
+            BlockPos newEntrancePos = new BlockPos(rotatedPos[0], oldEntrancePos.getY(), rotatedPos[1]);
+
+            // Rotate yaw: coordinates rotate counter-clockwise, so yaw must increase
+            float newYaw = oldYaw + (rotationSteps * 90f);
+            // Normalize to -180 to 180 range
+            newYaw = ((newYaw + 180f) % 360f) - 180f;
+            if (newYaw < -180f) newYaw += 360f;
+
+            construction.getAnchors().setEntrance(newEntrancePos, newYaw);
+            Architect.LOGGER.info("Updated anchor after rotation: pos [{},{},{}] -> [{},{},{}], yaw {} -> {} (steps={})",
+                oldEntrancePos.getX(), oldEntrancePos.getY(), oldEntrancePos.getZ(),
+                newEntrancePos.getX(), newEntrancePos.getY(), newEntrancePos.getZ(),
+                oldYaw, newYaw, rotationSteps);
+        }
+
+        // NOTE: Entities are NOT modified here.
+        // All entity rotation (position, yaw, NBT) is done at spawn time in spawnEntitiesFrozenRotated.
+        // The anchor yaw IS updated above so that subsequent rotations calculate correctly.
+        // The rotationSteps is calculated as the difference between player yaw and entrance yaw,
+        // which gives the absolute rotation from the original construction orientation.
+        Architect.LOGGER.info("========== MOVE/PULL DEBUG END ==========");
+    }
+
+    /**
+     * Rotates entity NBT data: block_pos, sleeping_pos, Facing, and Rotation tags.
+     * Used when updating construction coordinates after a rotated placement.
+     * Does NOT re-normalize coordinates - keeps them relative to the rotated pivot.
+     */
+    private static void rotateEntityNbt(CompoundTag nbt, int rotationSteps, int pivotX, int pivotZ) {
+        if (rotationSteps == 0) return;
+
+        // Rotate block_pos for hanging entities
+        if (nbt.contains("block_pos")) {
+            Tag rawTag = nbt.get("block_pos");
+            if (rawTag instanceof IntArrayTag intArrayTag) {
+                int[] coords = intArrayTag.getAsIntArray();
+                if (coords.length >= 3) {
+                    int[] rotated = rotateXZ(coords[0], coords[2], pivotX, pivotZ, rotationSteps);
+                    nbt.putIntArray("block_pos", new int[]{rotated[0], coords[1], rotated[1]});
+                }
+            }
+        } else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+            int relX = nbt.getIntOr("TileX", 0);
+            int relZ = nbt.getIntOr("TileZ", 0);
+            int[] rotated = rotateXZ(relX, relZ, pivotX, pivotZ, rotationSteps);
+            nbt.putInt("TileX", rotated[0]);
+            nbt.putInt("TileZ", rotated[1]);
+        }
+
+        // Rotate sleeping_pos for villagers
+        if (nbt.contains("sleeping_pos")) {
+            Tag sleepingTag = nbt.get("sleeping_pos");
+            if (sleepingTag instanceof IntArrayTag sleepingIntArray) {
+                int[] coords = sleepingIntArray.getAsIntArray();
+                if (coords.length >= 3) {
+                    int[] rotated = rotateXZ(coords[0], coords[2], pivotX, pivotZ, rotationSteps);
+                    nbt.putIntArray("sleeping_pos", new int[]{rotated[0], coords[1], rotated[1]});
+                }
+            }
+        }
+
+        // Rotate Facing for hanging entities (item frames, paintings)
+        if (nbt.contains("Facing")) {
+            int facing = nbt.getByteOr("Facing", (byte) 0);
+            if (facing >= 2 && facing <= 5) {
+                int newFacing = rotateFacing(facing, rotationSteps);
+                nbt.putByte("Facing", (byte) newFacing);
+            }
+        }
+
+        // Rotate yaw in Rotation tag for mobs
+        if (nbt.contains("Rotation")) {
+            Tag rotationTag = nbt.get("Rotation");
+            if (rotationTag instanceof net.minecraft.nbt.ListTag rotationList && rotationList.size() >= 2) {
+                float originalYaw = rotationList.getFloatOr(0, 0f);
+                float pitch = rotationList.getFloatOr(1, 0f);
+                float rotatedYaw = originalYaw + (rotationSteps * 90f);
+
+                net.minecraft.nbt.ListTag newRotation = new net.minecraft.nbt.ListTag();
+                newRotation.add(net.minecraft.nbt.FloatTag.valueOf(rotatedYaw));
+                newRotation.add(net.minecraft.nbt.FloatTag.valueOf(pitch));
+                nbt.put("Rotation", newRotation);
+            }
+        }
+    }
+
+    /**
      * Spawns entities with freeze (NoGravity during spawn, mobs with NoAI permanently).
      */
     private static int spawnEntitiesFrozen(
@@ -701,6 +1078,154 @@ public class ConstructionOperations {
     }
 
     /**
+     * Spawns entities with freeze and rotation support.
+     * Rotates entity positions around pivot and adjusts entity yaw.
+     */
+    private static int spawnEntitiesFrozenRotated(
+        List<EntityData> entities,
+        ServerLevel level,
+        int targetX, int targetY, int targetZ,
+        int rotationSteps,
+        int pivotX, int pivotZ
+    ) {
+        if (entities.isEmpty()) {
+            return 0;
+        }
+
+        List<Entity> spawnedEntities = new ArrayList<>();
+        int spawnedCount = 0;
+
+        // For entities, pivot should be at center of the pivot block (add 0.5)
+        // This ensures entities rotate around the same center as blocks
+        double pivotCenterX = pivotX + 0.5;
+        double pivotCenterZ = pivotZ + 0.5;
+
+        for (EntityData data : entities) {
+            try {
+                // Get relative position and rotate it around pivot center
+                double relX = data.getRelativePos().x;
+                double relY = data.getRelativePos().y;
+                double relZ = data.getRelativePos().z;
+
+                // Rotate the relative position around pivot center
+                double[] rotatedXZ = rotateXZDouble(relX, relZ, pivotCenterX, pivotCenterZ, rotationSteps);
+                double rotatedRelX = rotatedXZ[0];
+                double rotatedRelZ = rotatedXZ[1];
+
+                // Calculate world position
+                double worldX = targetX + rotatedRelX;
+                double worldY = targetY + relY;
+                double worldZ = targetZ + rotatedRelZ;
+
+                // Copy and clean NBT
+                CompoundTag nbt = data.getNbt().copy();
+                nbt.remove("Pos");
+                nbt.remove("Motion");
+                nbt.remove("UUID");
+
+                // Remove maps from item frames
+                String entityType = data.getEntityType();
+                if (entityType.equals("minecraft:item_frame") || entityType.equals("minecraft:glow_item_frame")) {
+                    EntityData.removeMapFromItemFrameNbt(nbt);
+                }
+
+                // Ensure id tag exists
+                if (!nbt.contains("id")) {
+                    nbt.putString("id", data.getEntityType());
+                }
+
+                // Update block_pos for hanging entities (item frames, paintings)
+                // Read relative block_pos from NBT, rotate around pivot, add target offset
+                // This must be done BEFORE entity creation since Minecraft validates block_pos
+                updateHangingEntityCoordsRotated(nbt, targetX, targetY, targetZ, rotationSteps, pivotX, pivotZ);
+
+                // Update sleeping_pos for villagers (with rotation)
+                updateSleepingPosRotated(nbt, targetX, targetY, targetZ, rotationSteps, pivotX, pivotZ);
+
+                // Rotate facing for ALL entities that have it (item frames, paintings, etc.)
+                // MC 1.21.11 uses "Facing" (capital F), not "facing"
+                if (nbt.contains("Facing") && rotationSteps != 0) {
+                    int facing = nbt.getByteOr("Facing", (byte) 0);
+                    // Only rotate horizontal facings (2-5): down=0, up=1, north=2, south=3, west=4, east=5
+                    if (facing >= 2 && facing <= 5) {
+                        int newFacing = rotateFacing(facing, rotationSteps);
+                        nbt.putByte("Facing", (byte) newFacing);
+                        Architect.LOGGER.debug("Rotated entity Facing from {} to {} (steps={})", facing, newFacing, rotationSteps);
+                    }
+                }
+
+                // Rotate yaw in NBT for non-hanging entities (mobs, armor stands, etc.)
+                // Must be done BEFORE creating the entity, as setYRot() after creation may be ignored
+                boolean isHangingEntity = entityType.equals("minecraft:item_frame") ||
+                                          entityType.equals("minecraft:glow_item_frame") ||
+                                          entityType.equals("minecraft:painting");
+                if (!isHangingEntity && rotationSteps != 0 && nbt.contains("Rotation")) {
+                    // Rotation tag is a list of 2 floats: [yaw, pitch]
+                    net.minecraft.nbt.Tag rotationTag = nbt.get("Rotation");
+                    if (rotationTag instanceof net.minecraft.nbt.ListTag rotationList && rotationList.size() >= 2) {
+                        float originalYaw = rotationList.getFloatOr(0, 0f);
+                        float pitch = rotationList.getFloatOr(1, 0f);
+                        // Coordinates rotate COUNTER-CLOCKWISE, yaw must match
+                        // MC yaw increases clockwise (0=south, 90=west, 180=north, 270=east)
+                        // So to rotate entity view counter-clockwise, we ADD degrees
+                        float rotatedYaw = originalYaw + (rotationSteps * 90f);
+
+                        net.minecraft.nbt.ListTag newRotation = new net.minecraft.nbt.ListTag();
+                        newRotation.add(net.minecraft.nbt.FloatTag.valueOf(rotatedYaw));
+                        newRotation.add(net.minecraft.nbt.FloatTag.valueOf(pitch));
+                        nbt.put("Rotation", newRotation);
+
+                        Architect.LOGGER.debug("Rotated entity yaw in NBT from {} to {} (steps={})", originalYaw, rotatedYaw, rotationSteps);
+                    }
+                }
+
+                // Debug logging for hanging entities is at DEBUG level
+                // Enable with -Dlog4j.logger.it.magius.struttura.architect=DEBUG
+
+                // Create entity from NBT
+                Entity entity = EntityType.loadEntityRecursive(nbt, level, EntitySpawnReason.LOAD, e -> e);
+
+                if (entity != null) {
+                    // Disable gravity during spawn
+                    entity.setNoGravity(true);
+
+                    // Set position
+                    entity.setPos(worldX, worldY, worldZ);
+
+                    // Rotation is already set in NBT before entity creation (for mobs)
+                    // and via Facing tag (for hanging entities like item frames)
+                    // Just set pitch here as a safety measure
+                    entity.setXRot(data.getPitch());
+                    entity.setUUID(UUID.randomUUID());
+
+                    // Disable AI for mobs (permanent freeze)
+                    if (entity instanceof Mob mob) {
+                        mob.setNoAi(true);
+                    }
+
+                    level.addFreshEntity(entity);
+                    spawnedEntities.add(entity);
+                    spawnedCount++;
+                } else {
+                    Architect.LOGGER.warn("Failed to create entity of type {}", data.getEntityType());
+                }
+            } catch (Exception e) {
+                Architect.LOGGER.error("Failed to spawn entity of type {}: {}",
+                    data.getEntityType(), e.getMessage());
+            }
+        }
+
+        // Re-enable gravity for non-mob entities after all are spawned
+        for (Entity entity : spawnedEntities) {
+            if (!(entity instanceof Mob)) {
+                entity.setNoGravity(false);
+            }
+        }
+
+        return spawnedCount;
+    }
+
+    /**
      * Updates block_pos or TileX/Y/Z for hanging entities (item frames, paintings).
      */
     private static void updateHangingEntityCoords(CompoundTag nbt, int originX, int originY, int originZ) {
@@ -744,5 +1269,250 @@ public class ConstructionOperations {
                 }
             }
         }
+    }
+
+    /**
+     * Updates block_pos or TileX/Y/Z for hanging entities using the calculated world position.
+     * This replaces the old rotation-based approach which had coordinate system issues.
+     */
+    private static void updateHangingEntityCoordsFromWorldPos(CompoundTag nbt, int worldX, int worldY, int worldZ) {
+        if (nbt.contains("block_pos")) {
+            nbt.putIntArray("block_pos", new int[]{worldX, worldY, worldZ});
+        } else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+            nbt.putInt("TileX", worldX);
+            nbt.putInt("TileY", worldY);
+            nbt.putInt("TileZ", worldZ);
+        }
+    }
+
+    /**
+     * Rotates a horizontal facing direction by the specified number of 90-degree steps.
+     * Facing values: 2=north(-Z), 3=south(+Z), 4=west(-X), 5=east(+X)
+     *
+     * Must match stepsToRotation which uses CLOCKWISE rotation for blocks.
+     * Clockwise: north -> east -> south -> west -> north
+     */
+    private static int rotateFacing(int facing, int steps) {
+        if (steps == 0 || facing < 2 || facing > 5) return facing;
+
+        // Map facing to clockwise index: north=0, east=1, south=2, west=3
+        int cwIndex;
+        switch (facing) {
+            case 2: cwIndex = 0; break; // north
+            case 5: cwIndex = 1; break; // east
+            case 3: cwIndex = 2; break; // south
+            case 4: cwIndex = 3; break; // west
+            default: return facing;
+        }
+
+        // Rotate clockwise
+        int rotatedIndex = (cwIndex + steps) % 4;
+
+        // Map back to facing value
+        switch (rotatedIndex) {
+            case 0: return 2; // north
+            case 1: return 5; // east
+            case 2: return 3; // south
+            case 3: return 4; // west
+            default: return facing;
+        }
+    }
+
+    /**
+     * Updates block_pos or TileX/Y/Z for hanging entities (item frames, paintings) with rotation.
+     * Reads the relative block_pos from NBT, rotates it around the pivot, and adds the target offset.
+     */
+    private static void updateHangingEntityCoordsRotated(
+        CompoundTag nbt,
+        int targetX, int targetY, int targetZ,
+        int rotationSteps, int pivotX, int pivotZ
+    ) {
+        if (nbt.contains("block_pos")) {
+            Tag rawTag = nbt.get("block_pos");
+            if (rawTag instanceof IntArrayTag intArrayTag) {
+                int[] coords = intArrayTag.getAsIntArray();
+                if (coords.length >= 3) {
+                    // Rotate the relative block position around the pivot
+                    int[] rotated = rotateXZ(coords[0], coords[2], pivotX, pivotZ, rotationSteps);
+                    int newX = targetX + rotated[0];
+                    int newY = targetY + coords[1];
+                    int newZ = targetZ + rotated[1];
+                    nbt.putIntArray("block_pos", new int[]{newX, newY, newZ});
+                }
+            }
+        } else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+            // Fallback for old format
+            int relX = nbt.getIntOr("TileX", 0);
+            int relY = nbt.getIntOr("TileY", 0);
+            int relZ = nbt.getIntOr("TileZ", 0);
+            int[] rotated = rotateXZ(relX, relZ, pivotX, pivotZ, rotationSteps);
+            nbt.putInt("TileX", targetX + rotated[0]);
+            nbt.putInt("TileY", targetY + relY);
+            nbt.putInt("TileZ", targetZ + rotated[1]);
+        }
+    }
+
+    /**
+     * Updates sleeping_pos for sleeping villagers with rotation support.
+     */
+    private static void updateSleepingPosRotated(
+        CompoundTag nbt,
+        int targetX, int targetY, int targetZ,
+        int rotationSteps, int pivotX, int pivotZ
+    ) {
+        if (nbt.contains("sleeping_pos")) {
+            Tag sleepingTag = nbt.get("sleeping_pos");
+            if (sleepingTag instanceof IntArrayTag sleepingIntArray) {
+                int[] coords = sleepingIntArray.getAsIntArray();
+                if (coords.length >= 3) {
+                    int[] rotated = rotateXZ(coords[0], coords[2], pivotX, pivotZ, rotationSteps);
+                    int newX = targetX + rotated[0];
+                    int newY = targetY + coords[1];
+                    int newZ = targetZ + rotated[1];
+                    nbt.putIntArray("sleeping_pos", new int[]{newX, newY, newZ});
+                }
+            }
+        }
+    }
+
+    // ============== ROTATION HELPER METHODS ==============
+
+    /**
+     * Calculates the number of 90-degree rotation steps needed to align the construction
+     * with the target yaw.
+     *
+     * @param targetYaw The target yaw (typically player's yaw)
+     * @param entranceYaw The yaw stored in the entrance anchor (0 if no anchor)
+     * @return Number of 90-degree clockwise rotation steps (0-3)
+     */
+    public static int calculateRotationSteps(float targetYaw, float entranceYaw) {
+        float deltaYaw = targetYaw - entranceYaw;
+        // Normalize to 0-360
+        deltaYaw = ((deltaYaw % 360) + 360) % 360;
+        // Convert to steps (0, 1, 2, 3)
+        int steps = Math.round(deltaYaw / 90f) % 4;
+        return steps;
+    }
+
+    /**
+     * Converts rotation steps to Minecraft Rotation enum.
+     *
+     * @param steps Number of 90-degree rotations (0-3)
+     * @return The corresponding Rotation enum value
+     */
+    private static Rotation stepsToRotation(int steps) {
+        // Minecraft's Rotation enum uses clockwise naming
+        // We need blocks to rotate in the same direction as coordinates
+        return switch (steps) {
+            case 1 -> Rotation.CLOCKWISE_90;
+            case 2 -> Rotation.CLOCKWISE_180;
+            case 3 -> Rotation.COUNTERCLOCKWISE_90;
+            default -> Rotation.NONE;
+        };
+    }
+
+    /**
+     * Rotates X and Z coordinates around a pivot point by the specified number of 90-degree steps.
+     *
+     * @param x The X coordinate to rotate
+     * @param z The Z coordinate to rotate
+     * @param pivotX The pivot X coordinate
+     * @param pivotZ The pivot Z coordinate
+     * @param steps Number of 90-degree counter-clockwise rotations (0-3)
+     * @return Array with [newX, newZ]
+     */
+    private static int[] rotateXZ(int x, int z, int pivotX, int pivotZ, int steps) {
+        if (steps == 0) return new int[]{x, z};
+
+        int relX = x - pivotX;
+        int relZ = z - pivotZ;
+        int newRelX, newRelZ;
+
+        // COUNTER-CLOCKWISE rotation
+        // Looking from above (Y+), counter-clockwise means: +X -> -Z -> -X -> +Z -> +X
+        switch (steps) {
+            case 1: // 90° counter-clockwise: (x,z) -> (-z,x)
+                newRelX = -relZ;
+                newRelZ = relX;
+                break;
+            case 2: // 180°: (x,z) -> (-x,-z)
+                newRelX = -relX;
+                newRelZ = -relZ;
+                break;
+            case 3: // 270° counter-clockwise (= 90° clockwise): (x,z) -> (z,-x)
+                newRelX = relZ;
+                newRelZ = -relX;
+                break;
+            default:
+                return new int[]{x, z};
+        }
+
+        return new int[]{pivotX + newRelX, pivotZ + newRelZ};
+    }
+
+    /**
+     * Rotates a BlockPos around a pivot point.
+     *
+     * @param pos The position to rotate
+     * @param pivotX The pivot X coordinate
+     * @param pivotZ The pivot Z coordinate
+     * @param steps Number of 90-degree clockwise rotations (0-3)
+     * @return The rotated position
+     */
+    private static BlockPos rotateBlockPos(BlockPos pos, int pivotX, int pivotZ, int steps) {
+        if (steps == 0) return pos;
+        int[] rotated = rotateXZ(pos.getX(), pos.getZ(), pivotX, pivotZ, steps);
+        return new BlockPos(rotated[0], pos.getY(), rotated[1]);
+    }
+
+    /**
+     * Rotates a double coordinate pair around a pivot point.
+     *
+     * @param x The X coordinate to rotate
+     * @param z The Z coordinate to rotate
+     * @param pivotX The pivot X coordinate
+     * @param pivotZ The pivot Z coordinate
+     * @param steps Number of 90-degree counter-clockwise rotations (0-3)
+     * @return Array with [newX, newZ]
+     */
+    private static double[] rotateXZDouble(double x, double z, double pivotX, double pivotZ, int steps) {
+        if (steps == 0) return new double[]{x, z};
+
+        double relX = x - pivotX;
+        double relZ = z - pivotZ;
+        double newRelX, newRelZ;
+
+        // COUNTER-CLOCKWISE rotation (matching rotateXZ)
+        // Looking from above (Y+), counter-clockwise means: +X -> -Z -> -X -> +Z -> +X
+        switch (steps) {
+            case 1: // 90° counter-clockwise: (x,z) -> (-z,x)
+                newRelX = -relZ;
+                newRelZ = relX;
+                break;
+            case 2: // 180°: (x,z) -> (-x,-z)
+                newRelX = -relX;
+                newRelZ = -relZ;
+                break;
+            case 3: // 270° counter-clockwise (= 90° clockwise): (x,z) -> (z,-x)
+                newRelX = relZ;
+                newRelZ = -relX;
+                break;
+            default:
+                return new double[]{x, z};
+        }
+
+        return new double[]{pivotX + newRelX, pivotZ + newRelZ};
+    }
+
+    /**
+     * Gets the cardinal direction name for a yaw angle.
+     */
+    private static String getDirectionName(float yaw) {
+        // Normalize yaw to 0-360
+        yaw = ((yaw % 360) + 360) % 360;
+        if (yaw >= 315 || yaw < 45) return "SOUTH";
+        if (yaw >= 45 && yaw < 135) return "WEST";
+        if (yaw >= 135 && yaw < 225) return "NORTH";
+        return "EAST";
     }
 }

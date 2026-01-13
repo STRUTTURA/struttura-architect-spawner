@@ -30,6 +30,12 @@ loom {
 		}
 	}
 
+	// Pass struttura.devtest system property to the client if set
+	runs {
+		client {
+			vmArg "-Dstruttura.devtest=${System.getProperty('struttura.devtest', 'false')}"
+		}
+	}
 }
 
 dependencies {

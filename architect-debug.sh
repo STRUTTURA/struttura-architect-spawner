@@ -18,4 +18,11 @@ for url in "${MODS[@]}"; do
     fi
 done
 
-./gradlew runClient -Dorg.gradle.jvmargs="-Xmx4G -Xms4G"
+# Check for devtest parameter
+DEVTEST_ARG=""
+if [ "$1" = "devtest" ]; then
+    DEVTEST_ARG="-Dstruttura.devtest=true"
+    echo "DevTest mode enabled - will auto-load 'Struttura Develop' world"
+fi
+
+./gradlew runClient -Dorg.gradle.jvmargs="-Xmx4G -Xms4G" $DEVTEST_ARG

@@ -1,19 +1,36 @@
 package it.magius.struttura.architect.mixin.client;
 
+import it.magius.struttura.architect.Architect;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
+import net.minecraft.client.gui.screens.worldselection.WorldOpenFlows;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.level.storage.LevelStorageSource;
+import net.minecraft.world.level.storage.LevelSummary;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.util.List;
 
 /**
  * Mixin to replace Minecraft's title screen background with Struttura's custom image.
+ * Also handles auto-loading a dev world when -Dstruttura.devtest=true is set.
  */
 @Mixin(TitleScreen.class)
 public abstract class TitleScreenMixin extends Screen {
+
+    @Unique
+    private static final String DEV_WORLD_NAME = "Struttura Develop";
+
+    @Unique
+    private static boolean architect$autoLoadAttempted = false;
 
     @Unique
     private static final Identifier STRUTTURA_BACKGROUND = Identifier.fromNamespaceAndPath(
@@ -37,6 +54,59 @@ public abstract class TitleScreenMixin extends Screen {
 
     protected TitleScreenMixin(Component title) {
         super(title);
+    }
+
+    /**
+     * Injects at the end of TitleScreen.init() to auto-load the dev world
+     * when -Dstruttura.devtest=true system property is set.
+     */
+    @Inject(method = "init", at = @At("RETURN"))
+    private void architect$onInit(CallbackInfo ci) {
+        if (architect$autoLoadAttempted) {
+            return;
+        }
+
+        String devTestProp = System.getProperty("struttura.devtest");
+        if (!"true".equalsIgnoreCase(devTestProp)) {
+            return;
+        }
+
+        architect$autoLoadAttempted = true;
+        architect$tryAutoLoadWorld();
+    }
+
+    @Unique
+    private void architect$tryAutoLoadWorld() {
+        Minecraft minecraft = Minecraft.getInstance();
+        LevelStorageSource levelSource = minecraft.getLevelSource();
+
+        try {
+            // Find all available worlds asynchronously
+            LevelStorageSource.LevelCandidates candidates = levelSource.findLevelCandidates();
+            levelSource.loadLevelSummaries(candidates).thenAcceptAsync(levels -> {
+                // Find the world with matching name
+                LevelSummary targetWorld = levels.stream()
+                        .filter(summary -> DEV_WORLD_NAME.equals(summary.getLevelName()))
+                        .findFirst()
+                        .orElse(null);
+
+                if (targetWorld != null) {
+                    Architect.LOGGER.info("STRUTTURA DevTest: Auto-loading world '{}'", DEV_WORLD_NAME);
+                    String levelId = targetWorld.getLevelId();
+                    WorldOpenFlows worldOpenFlows = minecraft.createWorldOpenFlows();
+                    worldOpenFlows.openWorld(levelId, () -> {
+                        // On cancel, just return to title screen
+                        Architect.LOGGER.info("STRUTTURA DevTest: World load cancelled");
+                    });
+                } else {
+                    Architect.LOGGER.warn("STRUTTURA DevTest: World '{}' not found. Available worlds: {}",
+                            DEV_WORLD_NAME,
+                            levels.stream().map(LevelSummary::getLevelName).toList());
+                }
+            }, minecraft);
+        } catch (Exception e) {
+            Architect.LOGGER.error("STRUTTURA DevTest: Failed to auto-load world", e);
+        }
     }
 
     @Override

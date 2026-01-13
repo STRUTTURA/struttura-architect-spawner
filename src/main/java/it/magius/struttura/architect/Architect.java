@@ -2,6 +2,7 @@ package it.magius.struttura.architect;
 
 import it.magius.struttura.architect.command.StrutturaCommand;
 import it.magius.struttura.architect.config.ArchitectConfig;
+import it.magius.struttura.architect.dev.DevTestHandler;
 import it.magius.struttura.architect.entity.EntityFreezeHandler;
 import it.magius.struttura.architect.entity.EntitySpawnHandler;
 import it.magius.struttura.architect.item.TapeAttackHandler;
@@ -91,6 +92,11 @@ public class Architect implements ModInitializer {
 				// Il giocatore aveva una sessione attiva, ri-sincronizza il wireframe
 				LOGGER.info("Player {} rejoined with active editing session, syncing wireframe", player.getName().getString());
 				NetworkHandler.sendWireframeSync(player);
+			}
+
+			// DevTest: execute test commands if enabled
+			if (DevTestHandler.isEnabled()) {
+				DevTestHandler.getInstance().onPlayerJoinWorld(player);
 			}
 		});
 
