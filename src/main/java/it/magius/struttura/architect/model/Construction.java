@@ -56,9 +56,9 @@ public class Construction {
     // Entities in this construction (type and position data only, no UUID in saved data)
     private final List<EntityData> entities = new ArrayList<>();
 
-    // Runtime-only: UUIDs of spawned entities in the world (not saved to file)
+    // UUIDs of spawned entities in the world (saved to file for entity removal after restart)
     // Used to track and remove entities even if they move outside construction bounds
-    private transient final Set<UUID> spawnedEntityUuids = new HashSet<>();
+    private final Set<UUID> spawnedEntityUuids = new HashSet<>();
 
     // Bounds calcolati dai blocchi
     private final ConstructionBounds bounds = new ConstructionBounds();

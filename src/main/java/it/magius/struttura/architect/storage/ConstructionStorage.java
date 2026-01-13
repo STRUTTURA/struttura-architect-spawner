@@ -349,6 +349,16 @@ public class ConstructionStorage {
             json.add("anchors", anchorsObj);
         }
 
+        // Spawned entity UUIDs (runtime tracking for entity removal)
+        Set<UUID> spawnedUuids = construction.getSpawnedEntityUuids();
+        if (!spawnedUuids.isEmpty()) {
+            com.google.gson.JsonArray uuidsArray = new com.google.gson.JsonArray();
+            for (UUID uuid : spawnedUuids) {
+                uuidsArray.add(uuid.toString());
+            }
+            json.add("spawnedEntityUuids", uuidsArray);
+        }
+
         // Versione del mod Struttura
         json.addProperty("modVersion", Architect.MOD_VERSION);
 
@@ -484,6 +494,19 @@ public class ConstructionStorage {
                     int z = entranceObj.get("z").getAsInt();
                     float yaw = entranceObj.has("yaw") ? entranceObj.get("yaw").getAsFloat() : 0f;
                     construction.getAnchors().setEntrance(new BlockPos(x, y, z), yaw);
+                }
+            }
+
+            // Load spawned entity UUIDs
+            if (json.has("spawnedEntityUuids") && json.get("spawnedEntityUuids").isJsonArray()) {
+                com.google.gson.JsonArray uuidsArray = json.getAsJsonArray("spawnedEntityUuids");
+                for (JsonElement element : uuidsArray) {
+                    try {
+                        UUID uuid = UUID.fromString(element.getAsString());
+                        construction.trackSpawnedEntity(uuid);
+                    } catch (IllegalArgumentException e) {
+                        Architect.LOGGER.warn("Invalid UUID in spawnedEntityUuids: {}", element.getAsString());
+                    }
                 }
             }
 

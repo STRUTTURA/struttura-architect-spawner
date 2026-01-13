@@ -198,6 +198,143 @@ public class EntityData {
         return true;
     }
 
+    /**
+     * Creates a new EntityData with rotated position and yaw.
+     * Used when updating construction coordinates after a rotated placement.
+     *
+     * @param rotationSteps Number of 90-degree clockwise rotations (0-3)
+     * @param pivotX Pivot X coordinate for rotation
+     * @param pivotZ Pivot Z coordinate for rotation
+     * @return New EntityData with rotated position, yaw, and NBT
+     */
+    public EntityData withRotation(int rotationSteps, double pivotX, double pivotZ) {
+        if (rotationSteps == 0) {
+            return this;
+        }
+
+        // Rotate position around pivot
+        double relX = relativePos.x;
+        double relZ = relativePos.z;
+        double dx = relX - pivotX;
+        double dz = relZ - pivotZ;
+
+        double newDx = dx;
+        double newDz = dz;
+        for (int i = 0; i < rotationSteps; i++) {
+            double temp = newDx;
+            newDx = -newDz;
+            newDz = temp;
+        }
+
+        double newX = pivotX + newDx;
+        double newZ = pivotZ + newDz;
+        Vec3 newRelativePos = new Vec3(newX, relativePos.y, newZ);
+
+        // Rotate yaw
+        float newYaw = yaw + (rotationSteps * 90f);
+        // Normalize to -180 to 180 range
+        newYaw = ((newYaw + 180f) % 360f) - 180f;
+        if (newYaw < -180f) newYaw += 360f;
+
+        // Copy and rotate NBT (block_pos, sleeping_pos, Facing, Rotation)
+        CompoundTag newNbt = rotateNbt(nbt.copy(), rotationSteps, (int) pivotX, (int) pivotZ);
+
+        return new EntityData(entityType, newRelativePos, newYaw, pitch, newNbt);
+    }
+
+    /**
+     * Rotates NBT data for hanging entities and mobs.
+     */
+    private static CompoundTag rotateNbt(CompoundTag nbt, int rotationSteps, int pivotX, int pivotZ) {
+        // Rotate block_pos for hanging entities
+        if (nbt.contains("block_pos")) {
+            net.minecraft.nbt.Tag rawTag = nbt.get("block_pos");
+            if (rawTag instanceof net.minecraft.nbt.IntArrayTag intArrayTag) {
+                int[] coords = intArrayTag.getAsIntArray();
+                if (coords.length >= 3) {
+                    int[] rotated = rotateXZ(coords[0], coords[2], pivotX, pivotZ, rotationSteps);
+                    nbt.putIntArray("block_pos", new int[]{rotated[0], coords[1], rotated[1]});
+                }
+            }
+        } else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+            int relX = nbt.getIntOr("TileX", 0);
+            int relZ = nbt.getIntOr("TileZ", 0);
+            int[] rotated = rotateXZ(relX, relZ, pivotX, pivotZ, rotationSteps);
+            nbt.putInt("TileX", rotated[0]);
+            nbt.putInt("TileZ", rotated[1]);
+        }
+
+        // Rotate sleeping_pos for villagers
+        if (nbt.contains("sleeping_pos")) {
+            net.minecraft.nbt.Tag sleepingTag = nbt.get("sleeping_pos");
+            if (sleepingTag instanceof net.minecraft.nbt.IntArrayTag sleepingIntArray) {
+                int[] coords = sleepingIntArray.getAsIntArray();
+                if (coords.length >= 3) {
+                    int[] rotated = rotateXZ(coords[0], coords[2], pivotX, pivotZ, rotationSteps);
+                    nbt.putIntArray("sleeping_pos", new int[]{rotated[0], coords[1], rotated[1]});
+                }
+            }
+        }
+
+        // Rotate Facing for hanging entities (item frames, paintings)
+        if (nbt.contains("Facing")) {
+            int facing = nbt.getByteOr("Facing", (byte) 0);
+            if (facing >= 2 && facing <= 5) {
+                int newFacing = rotateFacing(facing, rotationSteps);
+                nbt.putByte("Facing", (byte) newFacing);
+            }
+        }
+
+        // Rotate yaw in Rotation tag for mobs
+        if (nbt.contains("Rotation")) {
+            net.minecraft.nbt.Tag rotationTag = nbt.get("Rotation");
+            if (rotationTag instanceof net.minecraft.nbt.ListTag rotationList && rotationList.size() >= 2) {
+                float originalYaw = rotationList.getFloatOr(0, 0f);
+                float pitch = rotationList.getFloatOr(1, 0f);
+                float rotatedYaw = originalYaw + (rotationSteps * 90f);
+
+                net.minecraft.nbt.ListTag newRotation = new net.minecraft.nbt.ListTag();
+                newRotation.add(net.minecraft.nbt.FloatTag.valueOf(rotatedYaw));
+                newRotation.add(net.minecraft.nbt.FloatTag.valueOf(pitch));
+                nbt.put("Rotation", newRotation);
+            }
+        }
+
+        return nbt;
+    }
+
+    /**
+     * Rotates XZ coordinates around pivot by rotationSteps (90-degree increments).
+     */
+    private static int[] rotateXZ(int x, int z, int pivotX, int pivotZ, int rotationSteps) {
+        int dx = x - pivotX;
+        int dz = z - pivotZ;
+
+        for (int i = 0; i < rotationSteps; i++) {
+            int temp = dx;
+            dx = -dz;
+            dz = temp;
+        }
+
+        return new int[]{pivotX + dx, pivotZ + dz};
+    }
+
+    /**
+     * Rotates horizontal facing values (2-5) by rotationSteps.
+     * 2=north, 3=south, 4=west, 5=east
+     */
+    private static int rotateFacing(int facing, int rotationSteps) {
+        // Map facing to direction index: N=0, E=1, S=2, W=3
+        int[] facingToDir = {-1, -1, 0, 2, 3, 1}; // facing 2,3,4,5 -> 0,2,3,1
+        int[] dirToFacing = {2, 5, 3, 4}; // dir 0,1,2,3 -> 2,5,3,4
+
+        if (facing < 2 || facing > 5) return facing;
+
+        int dir = facingToDir[facing];
+        int newDir = (dir + rotationSteps) % 4;
+        return dirToFacing[newDir];
+    }
+
     // Getters
     public String getEntityType() {
         return entityType;

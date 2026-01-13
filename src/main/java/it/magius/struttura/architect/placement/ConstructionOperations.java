@@ -153,59 +153,6 @@ public class ConstructionOperations {
             }
         }
 
-        // Debug log for placement
-        Architect.LOGGER.info("========== MOVE/PULL DEBUG START ==========");
-        if (construction.getAnchors().hasEntrance()) {
-            BlockPos entrance = construction.getAnchors().getEntrance();
-            int playerX = player.blockPosition().getX();
-            int playerY = (int) Math.round(player.getY()) - 1;
-            int playerZ = player.blockPosition().getZ();
-
-            // Log player yaw and rotation calculation
-            float playerYaw = player.getYRot();
-            float entranceYaw = construction.getAnchors().getEntranceYaw();
-            String playerDir = getDirectionName(playerYaw);
-            String entranceDir = getDirectionName(entranceYaw);
-            Architect.LOGGER.info("ROTATION DEBUG: playerYaw={} ({}), entranceYaw={} ({}), rotSteps={}",
-                playerYaw, playerDir, entranceYaw, entranceDir, rotationSteps);
-
-            // Calculate where the entrance will end up after rotation
-            int[] rotatedEntrance = rotateXZ(entrance.getX(), entrance.getZ(), pivotX, pivotZ, rotationSteps);
-            int finalEntranceX = targetPos.getX() + rotatedEntrance[0];
-            int finalEntranceY = targetPos.getY() + entrance.getY();
-            int finalEntranceZ = targetPos.getZ() + rotatedEntrance[1];
-
-            Architect.LOGGER.info("PLACEMENT DEBUG: mode={}, playerBlockPos=[{},{},{}]",
-                mode, playerX, playerY, playerZ);
-            Architect.LOGGER.info("  entrance=[{},{},{}], pivot=[{},{}], rotSteps={}",
-                entrance.getX(), entrance.getY(), entrance.getZ(), pivotX, pivotZ, rotationSteps);
-            Architect.LOGGER.info("  rotatedEntrance=[{},{}], targetPos={}",
-                rotatedEntrance[0], rotatedEntrance[1], targetPos);
-            Architect.LOGGER.info("  FINAL entrance world pos=[{},{},{}] (should match playerBlockPos)",
-                finalEntranceX, finalEntranceY, finalEntranceZ);
-            Architect.LOGGER.info("  bounds: min=[{},{},{}], size=[{},{},{}]",
-                bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
-                bounds.getSizeX(), bounds.getSizeY(), bounds.getSizeZ());
-        }
-
-        // Log entity positions BEFORE placement
-        if (!construction.getEntities().isEmpty()) {
-            Architect.LOGGER.info("ENTITIES BEFORE placement ({} total):", construction.getEntities().size());
-            int i = 0;
-            for (EntityData ent : construction.getEntities()) {
-                if (i < 3) { // Log first 3 entities
-                    Architect.LOGGER.info("  Entity[{}]: type={}, relPos=[{:.2f},{:.2f},{:.2f}], yaw={:.1f}",
-                        i, ent.getEntityType(),
-                        ent.getRelativePos().x, ent.getRelativePos().y, ent.getRelativePos().z,
-                        ent.getYaw());
-                }
-                i++;
-            }
-            if (construction.getEntities().size() > 3) {
-                Architect.LOGGER.info("  ... and {} more entities", construction.getEntities().size() - 3);
-            }
-        }
-
         return placeConstructionAt(level, construction, targetPos, updateConstructionCoords, rotationSteps, pivotX, pivotZ);
     }
 
@@ -365,33 +312,24 @@ public class ConstructionOperations {
             }
         }
 
-        // Phase 5: Spawn entities with freeze and rotation
-        // Entities are always rotated at spawn time based on rotationSteps
-        Architect.LOGGER.info("SPAWN DEBUG: targetPos={}, rotationSteps={}, pivot=[{},{}]",
-            targetPos, rotationSteps, pivotX, pivotZ);
-        if (!construction.getEntities().isEmpty()) {
-            EntityData firstEnt = construction.getEntities().get(0);
-            Architect.LOGGER.info("  First entity relPos=[{},{},{}]",
-                firstEnt.getRelativePos().x, firstEnt.getRelativePos().y, firstEnt.getRelativePos().z);
-        }
-
+        // Phase 5: Spawn entities with freeze
         // Clear any previously tracked entity UUIDs before spawning new ones
         construction.clearSpawnedEntityUuids();
+
+        // If updateConstructionCoords is true and rotationSteps != 0, entities were already rotated
+        // in updateConstructionCoordinatesRotated, so we spawn with rotationSteps=0.
+        // If updateConstructionCoords is false (SHOW mode), we apply the rotation during spawn.
+        int entityRotationSteps = (updateConstructionCoords && rotationSteps != 0) ? 0 : rotationSteps;
 
         int entitiesSpawned = spawnEntitiesFrozenRotated(
             construction.getEntities(),
             level,
             targetPos.getX(), targetPos.getY(), targetPos.getZ(),
-            rotationSteps, pivotX, pivotZ,
+            entityRotationSteps, pivotX, pivotZ,
             construction
         );
 
-        if (rotationSteps != 0) {
-            Architect.LOGGER.info("Placed {} blocks, {} entities at {} (rotated {}° around pivot [{},{}])",
-                placedCount, entitiesSpawned, targetPos, rotationSteps * 90, pivotX, pivotZ);
-        } else {
-            Architect.LOGGER.info("Placed {} blocks, {} entities at {}", placedCount, entitiesSpawned, targetPos);
-        }
+        Architect.LOGGER.info("Placed {} blocks, {} entities at {}", placedCount, entitiesSpawned, targetPos);
 
         return new PlacementResult(placedCount, entitiesSpawned, targetPos);
     }
@@ -926,6 +864,23 @@ public class ConstructionOperations {
             construction.getRooms().clear();
         }
 
+        // Update entity positions and yaw after rotation.
+        // This ensures that subsequent moves use the correct (rotated) entity positions.
+        if (rotationSteps != 0 && !construction.getEntities().isEmpty()) {
+            // Use center of pivot for entity rotation (same as blocks)
+            double pivotCenterX = pivotX + 0.5;
+            double pivotCenterZ = pivotZ + 0.5;
+
+            List<EntityData> rotatedEntities = new ArrayList<>();
+            for (EntityData entity : construction.getEntities()) {
+                rotatedEntities.add(entity.withRotation(rotationSteps, pivotCenterX, pivotCenterZ));
+            }
+            construction.clearEntities();
+            for (EntityData entity : rotatedEntities) {
+                construction.addEntity(entity);
+            }
+        }
+
         // Update anchor position AND yaw after rotation.
         // Both must be rotated to keep the anchor consistent with the rotated entity positions.
         // This ensures that subsequent rotations use the correct pivot point.
@@ -944,18 +899,7 @@ public class ConstructionOperations {
             if (newYaw < -180f) newYaw += 360f;
 
             construction.getAnchors().setEntrance(newEntrancePos, newYaw);
-            Architect.LOGGER.info("Updated anchor after rotation: pos [{},{},{}] -> [{},{},{}], yaw {} -> {} (steps={})",
-                oldEntrancePos.getX(), oldEntrancePos.getY(), oldEntrancePos.getZ(),
-                newEntrancePos.getX(), newEntrancePos.getY(), newEntrancePos.getZ(),
-                oldYaw, newYaw, rotationSteps);
         }
-
-        // NOTE: Entities are NOT modified here.
-        // All entity rotation (position, yaw, NBT) is done at spawn time in spawnEntitiesFrozenRotated.
-        // The anchor yaw IS updated above so that subsequent rotations calculate correctly.
-        // The rotationSteps is calculated as the difference between player yaw and entrance yaw,
-        // which gives the absolute rotation from the original construction orientation.
-        Architect.LOGGER.info("========== MOVE/PULL DEBUG END ==========");
     }
 
     /**
