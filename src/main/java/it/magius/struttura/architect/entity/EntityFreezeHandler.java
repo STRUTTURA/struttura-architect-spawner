@@ -8,7 +8,6 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
@@ -111,7 +110,7 @@ public class EntityFreezeHandler {
     }
 
     /**
-     * Blocca tutte le entità viventi nei bounds specificati.
+     * Blocca tutte le entità nei bounds specificati.
      * Aggiunge gli UUID al set per tracking.
      */
     private void freezeEntitiesInBounds(ServerLevel level, ConstructionBounds bounds, Set<UUID> entitiesInBounds) {
@@ -121,12 +120,12 @@ public class EntityFreezeHandler {
             bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
         );
 
-        // Ottieni tutte le entità viventi nell'area (escludi player e proiettili)
+        // Get all entities in area (exclude players and projectiles)
+        // Accepts all entity types: mobs, item frames, armor stands, paintings, etc.
         List<Entity> entities = level.getEntities(
             (Entity) null,
             area,
-            entity -> entity instanceof LivingEntity &&
-                      !(entity instanceof Player) &&
+            entity -> !(entity instanceof Player) &&
                       !(entity instanceof Projectile)
         );
 

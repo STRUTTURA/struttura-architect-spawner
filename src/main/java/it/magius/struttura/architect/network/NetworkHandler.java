@@ -993,6 +993,13 @@ public class NetworkHandler {
             return;
         }
 
+        // Refresh entities from world before push to capture any modifications
+        ServerLevel level = (ServerLevel) player.level();
+        int refreshed = construction.refreshEntitiesFromWorld(level, level.registryAccess());
+        if (refreshed > 0) {
+            Architect.LOGGER.info("Refreshed {} entities from world before push", refreshed);
+        }
+
         // Messaggio di invio
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "push.sending", id, construction.getBlockCount())));
@@ -1001,7 +1008,7 @@ public class NetworkHandler {
             player.getName().getString(), id, construction.getBlockCount());
 
         // Cattura il server per il callback sul main thread
-        var server = ((ServerLevel) player.level()).getServer();
+        var server = level.getServer();
 
         // Esegui push asincrono
         boolean started = ApiClient.pushConstruction(construction, response -> {

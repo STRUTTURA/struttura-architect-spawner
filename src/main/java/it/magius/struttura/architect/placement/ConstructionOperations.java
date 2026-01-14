@@ -1390,9 +1390,6 @@ public class ConstructionOperations {
                     }
                 }
 
-                // Debug logging for hanging entities is at DEBUG level
-                // Enable with -Dlog4j.logger.it.magius.struttura.architect=DEBUG
-
                 // Create entity from NBT
                 Entity entity = EntityType.loadEntityRecursive(nbt, level, EntitySpawnReason.LOAD, e -> e);
 

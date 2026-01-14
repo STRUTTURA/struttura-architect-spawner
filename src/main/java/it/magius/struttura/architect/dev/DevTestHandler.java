@@ -117,88 +117,74 @@ public class DevTestHandler {
     private void runTestCommands(ServerPlayer player) {
         Architect.LOGGER.info("=== STRUTTURA DevTest: Running test commands ===");
 
-        player.sendSystemMessage(Component.literal("[DevTest] Starting entity rotation test..."));
+        player.sendSystemMessage(Component.literal("[DevTest] Starting ItemFrame rotation test..."));
 
         MinecraftServer server = ((ServerLevel) player.level()).getServer();
         ServerLevel level = (ServerLevel) player.level();
         String constructionId = "it.magius.test2";
 
-        // Step 1: Delete construction if exists and clear any entities
-        Architect.LOGGER.info("=== STEP 1: Deleting construction and clearing area ===");
-        player.sendSystemMessage(Component.literal("[DevTest] Step 1: Deleting construction..."));
+        // Step 1: Delete construction if exists
+        Architect.LOGGER.info("=== STEP 1: Deleting construction ===");
         executeCommand(player, "struttura destroy " + constructionId);
 
         // Wait 1 second (20 ticks), then Step 2
         scheduleDelayedExecution(server, server.getTickCount() + 20, () -> {
-            // Step 2: Face SOUTH (yaw=0) and pull - should align with entrance yaw (~0)
-            Architect.LOGGER.info("=== STEP 2: Facing SOUTH (yaw=0) and pulling ===");
-            player.sendSystemMessage(Component.literal("[DevTest] Step 2: Facing SOUTH (yaw=0), pulling..."));
-
-            // Teleport to a clean position
+            // Step 2: Pull construction and check item frame NBT
+            Architect.LOGGER.info("=== STEP 2: Pulling construction ===");
             executeCommand(player, "tp @s 0 100 0 0 0");
             executeCommand(player, "struttura pull " + constructionId);
 
-            // Wait 2 seconds for pull, then log and do Step 3
+            // Wait 2 seconds for pull
             scheduleDelayedExecution(server, server.getTickCount() + 40, () -> {
-                Architect.LOGGER.info("=== AFTER PULL (SOUTH) ===");
-                logConstructionAndWorldState(constructionId, level, "AFTER_PULL_SOUTH");
+                Architect.LOGGER.info("=== AFTER PULL: Checking item frames in world ===");
 
-                // Step 3: Face EAST (yaw=-90) and move - 90° rotation
-                Architect.LOGGER.info("=== STEP 3: Facing EAST (yaw=-90) and moving (90° rotation) ===");
-                player.sendSystemMessage(Component.literal("[DevTest] Step 3: Facing EAST (yaw=-90), moving..."));
-
-                executeCommand(player, "tp @s 20 100 0 -90 0");
-                executeCommand(player, "struttura move " + constructionId);
-
-                // Wait 2 seconds for move, then log and do Step 4
-                scheduleDelayedExecution(server, server.getTickCount() + 40, () -> {
-                    Architect.LOGGER.info("=== AFTER MOVE TO EAST ===");
-                    logConstructionAndWorldState(constructionId, level, "AFTER_MOVE_EAST");
-
-                    // Step 4: Face NORTH (yaw=180) and move - another 90° rotation
-                    Architect.LOGGER.info("=== STEP 4: Facing NORTH (yaw=180) and moving (another 90° rotation) ===");
-                    player.sendSystemMessage(Component.literal("[DevTest] Step 4: Facing NORTH (yaw=180), moving..."));
-
-                    executeCommand(player, "tp @s 40 100 0 180 0");
-                    executeCommand(player, "struttura move " + constructionId);
-
-                    // Wait 2 seconds for move, then log and do Step 5
-                    scheduleDelayedExecution(server, server.getTickCount() + 40, () -> {
-                        Architect.LOGGER.info("=== AFTER MOVE TO NORTH ===");
-                        logConstructionAndWorldState(constructionId, level, "AFTER_MOVE_NORTH");
-
-                        // Step 5: Face WEST (yaw=90) and move - another 90° rotation
-                        Architect.LOGGER.info("=== STEP 5: Facing WEST (yaw=90) and moving (another 90° rotation) ===");
-                        player.sendSystemMessage(Component.literal("[DevTest] Step 5: Facing WEST (yaw=90), moving..."));
-
-                        executeCommand(player, "tp @s 60 100 0 90 0");
-                        executeCommand(player, "struttura move " + constructionId);
-
-                        // Wait 2 seconds for move, then log and finish
-                        scheduleDelayedExecution(server, server.getTickCount() + 40, () -> {
-                            Architect.LOGGER.info("=== AFTER MOVE TO WEST (full 360°) ===");
-                            logConstructionAndWorldState(constructionId, level, "AFTER_MOVE_WEST");
-
-                            Architect.LOGGER.info("=== STEP 6: Test completed ===");
-                            player.sendSystemMessage(Component.literal("[DevTest] Entity rotation test completed! Exiting..."));
-
-                            Architect.LOGGER.info("=== STRUTTURA DevTest: Test commands completed ===");
-
-                            // Stop server
-                            server.halt(false);
-
-                            new Thread(() -> {
-                                try {
-                                    Thread.sleep(2000);
-                                } catch (InterruptedException e) {
-                                    // Ignore
+                // Log stored entity data
+                var registry = ConstructionRegistry.getInstance();
+                Construction construction = registry.get(constructionId);
+                if (construction != null) {
+                    for (EntityData ed : construction.getEntities()) {
+                        if (ed.getEntityType().contains("item_frame")) {
+                            var nbt = ed.getNbt();
+                            int itemRotation = nbt.getByteOr("ItemRotation", (byte) -1);
+                            boolean hasItem = nbt.contains("Item");
+                            String itemId = "";
+                            if (hasItem) {
+                                var itemTag = nbt.get("Item");
+                                if (itemTag instanceof net.minecraft.nbt.CompoundTag itemCompound) {
+                                    itemId = itemCompound.getStringOr("id", "unknown");
                                 }
-                                Architect.LOGGER.info("=== STRUTTURA DevTest: Exiting JVM ===");
-                                System.exit(0);
-                            }).start();
-                        });
-                    });
-                });
+                            }
+                            Architect.LOGGER.info("STORED ItemFrame: hasItem={}, itemId={}, ItemRotation={}",
+                                hasItem, itemId, itemRotation);
+                        }
+                    }
+                }
+
+                // Check world item frames
+                var bounds = construction.getBounds();
+                AABB area = new AABB(
+                    bounds.getMinX() - 2, bounds.getMinY() - 2, bounds.getMinZ() - 2,
+                    bounds.getMaxX() + 2, bounds.getMaxY() + 2, bounds.getMaxZ() + 2
+                );
+                for (Entity e : level.getEntities((Entity) null, area,
+                        ent -> ent.getType().toString().contains("item_frame"))) {
+                    if (e instanceof net.minecraft.world.entity.decoration.ItemFrame itemFrame) {
+                        var heldItem = itemFrame.getItem();
+                        int rotation = itemFrame.getRotation();
+                        Architect.LOGGER.info("WORLD ItemFrame: item={}, rotation={}",
+                            heldItem.isEmpty() ? "EMPTY" : heldItem.getItem().toString(), rotation);
+                    }
+                }
+
+                player.sendSystemMessage(Component.literal("[DevTest] Test completed! Check logs. Exiting..."));
+                Architect.LOGGER.info("=== STRUTTURA DevTest: Test commands completed ===");
+
+                // Stop server
+                server.halt(false);
+                new Thread(() -> {
+                    try { Thread.sleep(2000); } catch (InterruptedException e) {}
+                    System.exit(0);
+                }).start();
             });
         });
     }

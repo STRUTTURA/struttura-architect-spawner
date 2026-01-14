@@ -1,5 +1,6 @@
 package it.magius.struttura.architect.model;
 
+import it.magius.struttura.architect.Architect;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
@@ -115,8 +116,8 @@ public class EntityData {
         // Il villager ricreerà questi riferimenti automaticamente quando interagirà con il mondo
         nbt.remove("Brain");
 
-        // Rimuovi le mappe scritte (filled_map) dagli item frame durante il push
-        // Le mappe scritte hanno un map_id specifico del mondo e non possono essere trasferite
+        // Remove filled maps from item frames during push
+        // Filled maps have a world-specific map_id and cannot be transferred
         if (entityType.equals("minecraft:item_frame") || entityType.equals("minecraft:glow_item_frame")) {
             removeFilledMapFromItemFrame(nbt);
         }

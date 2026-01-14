@@ -404,6 +404,39 @@ public class Construction {
     }
 
     /**
+     * Refreshes all entities from the world.
+     * This re-serializes each tracked entity to capture any modifications
+     * made in the world (like item rotation in item frames).
+     *
+     * @param level The ServerLevel to read entities from
+     * @param registries The registry access for proper NBT serialization
+     * @return Number of entities refreshed
+     */
+    public int refreshEntitiesFromWorld(net.minecraft.server.level.ServerLevel level, net.minecraft.core.HolderLookup.Provider registries) {
+        if (spawnedEntityUuids.isEmpty() || !bounds.isValid()) {
+            return 0;
+        }
+
+        int refreshed = 0;
+        List<EntityData> newEntities = new ArrayList<>();
+
+        for (UUID uuid : spawnedEntityUuids) {
+            net.minecraft.world.entity.Entity worldEntity = level.getEntity(uuid);
+            if (worldEntity != null && EntityData.shouldSaveEntity(worldEntity)) {
+                EntityData newData = EntityData.fromEntity(worldEntity, bounds, registries);
+                newEntities.add(newData);
+                refreshed++;
+            }
+        }
+
+        // Replace entities list with refreshed data
+        entities.clear();
+        entities.addAll(newEntities);
+
+        return refreshed;
+    }
+
+    /**
      * Gets all entities in this construction.
      * @return The list of entities
      */

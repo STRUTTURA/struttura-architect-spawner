@@ -12,7 +12,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
 
@@ -83,10 +82,8 @@ public class EntitySpawnHandler {
             return;
         }
 
-        // Solo entità viventi (mob)
-        if (!(entity instanceof LivingEntity)) {
-            return;
-        }
+        // Accept all entity types (mobs, item frames, armor stands, paintings, etc.)
+        // The previous LivingEntity filter was too restrictive
 
         UUID entityId = entity.getUUID();
 
