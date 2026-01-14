@@ -83,11 +83,37 @@ public class ServerGamePacketListenerMixin {
         boolean holdingHammer = heldItem.getItem() instanceof ConstructionHammerItem;
         boolean holdingTape = heldItem.getItem() instanceof MeasuringTapeItem;
 
+        EditingSession session = EditingSession.getSession(player);
+
+        // If not holding hammer or tape, we only care about protecting tracked entities from attacks
         if (!holdingHammer && !holdingTape) {
+            // Only protect if player is in editing mode
+            if (session == null) {
+                return;
+            }
+            // Check if this is an attack on a tracked entity
+            if (session.isEntityTracked(targetEntity.getUUID())) {
+                // Determine if this is an attack interaction
+                AtomicBoolean isAttack = new AtomicBoolean(false);
+                packet.dispatch(new ServerboundInteractPacket.Handler() {
+                    @Override
+                    public void onInteraction(InteractionHand hand) {}
+                    @Override
+                    public void onInteraction(InteractionHand hand, net.minecraft.world.phys.Vec3 pos) {}
+                    @Override
+                    public void onAttack() {
+                        isAttack.set(true);
+                    }
+                });
+                if (isAttack.get()) {
+                    // Block the attack - entity is protected
+                    player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+                            I18n.tr(player, "entity.protected")));
+                    ci.cancel();
+                }
+            }
             return;
         }
-
-        EditingSession session = EditingSession.getSession(player);
 
         // For hammer, we need an editing session
         if (holdingHammer && session == null) {

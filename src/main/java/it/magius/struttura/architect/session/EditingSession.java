@@ -357,8 +357,9 @@ public class EditingSession {
             // Cattura gli NBT dei block entity della room
             captureRoomBlockEntityNbt(world, room);
 
-            // NOTA: Non catturiamo più le entità automaticamente
-            // Le entità devono essere aggiunte manualmente con il martello
+            // Refresh entity NBT data from world (e.g., item frame contents)
+            // This captures changes made to entities while editing the room
+            refreshRoomEntitiesFromWorld(world, room);
 
             // Rimuovi le entità spawnate dalla room
             removeSpawnedRoomEntities(world);
@@ -413,6 +414,43 @@ public class EditingSession {
         }
 
         Architect.LOGGER.debug("Captured {} block entity NBTs for room '{}'", capturedCount, room.getId());
+    }
+
+    /**
+     * Refreshes room entity data from the world.
+     * This updates the NBT of tracked entities (e.g., item frame contents) before saving.
+     * Uses activeEntityToIndex to map world entities to their room entity list indices.
+     */
+    private void refreshRoomEntitiesFromWorld(ServerLevel world, Room room) {
+        if (activeEntityToIndex.isEmpty()) {
+            return;
+        }
+
+        var bounds = construction.getBounds();
+        if (!bounds.isValid()) {
+            return;
+        }
+
+        int refreshed = 0;
+
+        for (Map.Entry<UUID, Integer> entry : activeEntityToIndex.entrySet()) {
+            UUID entityUuid = entry.getKey();
+            int listIndex = entry.getValue();
+
+            Entity worldEntity = world.getEntity(entityUuid);
+            if (worldEntity != null && EntityData.shouldSaveEntity(worldEntity)) {
+                // Create fresh EntityData from the world entity
+                EntityData newData = EntityData.fromEntity(worldEntity, bounds, world.registryAccess());
+
+                // Update the room's entity list at the correct index
+                if (listIndex >= 0 && listIndex < room.getEntityCount()) {
+                    room.updateEntity(listIndex, newData);
+                    refreshed++;
+                }
+            }
+        }
+
+        Architect.LOGGER.debug("Refreshed {} room entities from world for room '{}'", refreshed, room.getId());
     }
 
     /**
@@ -574,6 +612,9 @@ public class EditingSession {
 
         hiddenBaseEntities.clear();
         Architect.LOGGER.debug("Respawned {} hidden base entities", respawnedCount);
+
+        // Re-track the respawned entities so they are recognized as part of the construction
+        trackExistingEntitiesInWorld();
     }
 
     /**

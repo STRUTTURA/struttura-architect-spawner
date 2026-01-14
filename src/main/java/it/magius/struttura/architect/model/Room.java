@@ -248,6 +248,21 @@ public class Room {
     }
 
     /**
+     * Updates an entity at the specified index with new data.
+     * Used to refresh entity NBT from the world (e.g., item frame contents).
+     * @param index The index of the entity to update
+     * @param newData The new entity data
+     * @return true if updated successfully, false if index is invalid
+     */
+    public boolean updateEntity(int index, EntityData newData) {
+        if (index >= 0 && index < entities.size()) {
+            entities.set(index, newData);
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Gets all entities in this room.
      * @return Unmodifiable list of entities
      */

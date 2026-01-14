@@ -29,7 +29,8 @@ public class DevTestRunner {
 
     // All available tests - add new tests here
     private static final List<DevTest> AVAILABLE_TESTS = List.of(
-        new TestRoomsAfterPull4Dir()
+        new TestRoomsAfterPull4Dir(),
+        new TestRoomsAfterPullMove4Dir()
         // Add more tests here as they are created
     );
 
