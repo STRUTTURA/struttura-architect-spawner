@@ -139,6 +139,7 @@ public class TestRoomsAfterPull4Dir implements DevTest {
                         }
 
                         // Log room blocks vs world
+                        var updatedBounds = updatedConstruction.getBounds();
                         for (var room : updatedConstruction.getRooms().values()) {
                             for (var blockEntry : room.getBlockChanges().entrySet()) {
                                 BlockPos pos = blockEntry.getKey();
@@ -147,6 +148,17 @@ public class TestRoomsAfterPull4Dir implements DevTest {
                                     getId(), dirName,
                                     pos.getX(), pos.getY(), pos.getZ(),
                                     blockEntry.getValue(), worldBlock);
+                            }
+                            // Log room entities vs world
+                            for (var entityData : room.getEntities()) {
+                                double expectedX = updatedBounds.getMinX() + entityData.getRelativePos().x;
+                                double expectedY = updatedBounds.getMinY() + entityData.getRelativePos().y;
+                                double expectedZ = updatedBounds.getMinZ() + entityData.getRelativePos().z;
+                                Architect.LOGGER.info("[{}] [{}] Room entity: type={}, expectedPos=({},{},{}), relPos=({},{},{})",
+                                    getId(), dirName,
+                                    entityData.getEntityType(),
+                                    expectedX, expectedY, expectedZ,
+                                    entityData.getRelativePos().x, entityData.getRelativePos().y, entityData.getRelativePos().z);
                             }
                         }
 

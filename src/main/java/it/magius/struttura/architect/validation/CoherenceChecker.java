@@ -20,7 +20,7 @@ import java.util.Map;
  */
 public class CoherenceChecker {
 
-    private static final double ENTITY_POSITION_TOLERANCE = 1.5;
+    private static final double ENTITY_POSITION_TOLERANCE = 0.5;
 
     /**
      * Checks coherence of a single block in a construction.
@@ -422,7 +422,11 @@ public class CoherenceChecker {
 
         // When checking base blocks in world, skip positions overridden by active room
         boolean blocksOk = validateAllBlocks(level, construction, checkInWorld, activeRoom);
-        boolean entitiesOk = validateAllEntities(level, construction, checkInWorld);
+
+        // When a room is active, base entities are NOT in the world (room entities replace them)
+        // So we only check base entities in world if NO room is active
+        boolean checkBaseEntitiesInWorld = checkInWorld && activeRoom == null;
+        boolean entitiesOk = validateAllEntities(level, construction, checkBaseEntitiesInWorld);
 
         // Validate all rooms
         boolean roomsOk = true;

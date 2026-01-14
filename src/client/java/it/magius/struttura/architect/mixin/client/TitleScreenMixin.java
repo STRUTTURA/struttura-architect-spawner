@@ -67,7 +67,8 @@ public abstract class TitleScreenMixin extends Screen {
         }
 
         String devTestProp = System.getProperty("struttura.devtest");
-        if (!"true".equalsIgnoreCase(devTestProp)) {
+        // Accept any non-null value: "true" for all tests, or specific test IDs like "roomsAfterPull4Dir"
+        if (devTestProp == null || devTestProp.isEmpty()) {
             return;
         }
 

@@ -1024,6 +1024,84 @@ public class ConstructionOperations {
             }
         }
 
+        // Step 2.6: Update room entity positions after rotation.
+        // Room entities use the same relative position system as base entities.
+        // We need to rotate them around the same pivot and apply the same normalization offset.
+        if (rotationSteps != 0 && !construction.getRooms().isEmpty()) {
+            // Pivot in normalized coordinates (same as base entities)
+            double pivotCenterX = pivotX + 0.5;
+            double pivotCenterZ = pivotZ + 0.5;
+
+            // Calculate the normalization offset (same as base entities)
+            int[][] oldCorners = {
+                {0, 0},
+                {originalSizeX - 1, 0},
+                {0, originalSizeZ - 1},
+                {originalSizeX - 1, originalSizeZ - 1}
+            };
+            int minRotatedX = Integer.MAX_VALUE;
+            int minRotatedZ = Integer.MAX_VALUE;
+            for (int[] corner : oldCorners) {
+                int[] rotated = rotateXZ(corner[0], corner[1], pivotX, pivotZ, rotationSteps);
+                minRotatedX = Math.min(minRotatedX, rotated[0]);
+                minRotatedZ = Math.min(minRotatedZ, rotated[1]);
+            }
+            int normOffsetX = -minRotatedX;
+            int normOffsetZ = -minRotatedZ;
+
+            for (Room room : construction.getRooms().values()) {
+                if (room.getEntityCount() == 0) continue;
+
+                List<EntityData> oldEntities = new ArrayList<>(room.getEntities());
+                room.clearEntities();
+
+                for (EntityData entity : oldEntities) {
+                    // Entity relativePos is in normalized coords (same as base entities)
+                    double relX = entity.getRelativePos().x;
+                    double relY = entity.getRelativePos().y;
+                    double relZ = entity.getRelativePos().z;
+
+                    // Rotate around pivot (in normalized coordinate space)
+                    double dx = relX - pivotCenterX;
+                    double dz = relZ - pivotCenterZ;
+
+                    double newDx = dx;
+                    double newDz = dz;
+                    for (int i = 0; i < rotationSteps; i++) {
+                        double temp = newDx;
+                        newDx = -newDz;  // 90° counter-clockwise
+                        newDz = temp;
+                    }
+
+                    double rotatedX = pivotCenterX + newDx;
+                    double rotatedZ = pivotCenterZ + newDz;
+
+                    // Apply normalization offset so relPos is relative to new normalized (0,0,0)
+                    double newRelX = rotatedX + normOffsetX;
+                    double newRelZ = rotatedZ + normOffsetZ;
+
+                    Vec3 newRelativePos = new Vec3(newRelX, relY, newRelZ);
+
+                    // Rotate yaw
+                    float newYaw = entity.getYaw() + (rotationSteps * 90f);
+
+                    // Rotate entity NBT data
+                    CompoundTag newNbt = entity.getNbt().copy();
+                    rotateEntityNbtNormalized(newNbt, rotationSteps, pivotX, pivotZ, normOffsetX, normOffsetZ);
+
+                    room.addEntity(new EntityData(
+                        entity.getEntityType(),
+                        newRelativePos,
+                        newYaw,
+                        entity.getPitch(),
+                        newNbt
+                    ));
+                }
+
+                Architect.LOGGER.debug("Room '{}': rotated {} entities", room.getId(), room.getEntityCount());
+            }
+        }
+
         // Step 3: Update entity positions after rotation.
         // Entity positions are stored RELATIVE to bounds.min (which is now in world coords).
         // worldEntityPos = bounds.min + entityRelPos

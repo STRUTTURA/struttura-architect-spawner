@@ -33,8 +33,10 @@ loom {
 	// Pass struttura.devtest system property to the client if set
 	runs {
 		client {
-			if (System.getProperty('struttura.devtest') != null) {
-				vmArg "-Dstruttura.devtest=${System.getProperty('struttura.devtest')}"
+			def devtest = System.getProperty('struttura.devtest')
+			if (devtest != null) {
+				println "DevTest: Passing -Dstruttura.devtest=${devtest} to client"
+				vmArg "-Dstruttura.devtest=${devtest}"
 			}
 		}
 	}
