@@ -631,6 +631,11 @@ public class NetworkHandler {
             player, construction, ConstructionOperations.PlacementMode.SHOW, false
         );
 
+        // Validate coherence after show
+        ServerLevel level = (ServerLevel) player.level();
+        it.magius.struttura.architect.validation.CoherenceChecker.validateConstruction(
+            level, construction, true);
+
         VISIBLE_CONSTRUCTIONS.add(id);
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
@@ -665,6 +670,10 @@ public class NetworkHandler {
         var result = ConstructionOperations.removeConstruction(
             level, construction, ConstructionOperations.RemovalMode.HIDE, null
         );
+
+        // Validate registry coherence after hide (blocks no longer in world)
+        it.magius.struttura.architect.validation.CoherenceChecker.validateConstruction(
+            level, construction, false);
 
         VISIBLE_CONSTRUCTIONS.remove(id);
 
@@ -1099,6 +1108,11 @@ public class NetworkHandler {
                             null, player.getYRot(), false
                         );
 
+                        // Validate coherence after pull (blocks should be in world now)
+                        ServerLevel level = (ServerLevel) player.level();
+                        it.magius.struttura.architect.validation.CoherenceChecker.validateConstruction(
+                            level, construction, true);
+
                         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                             I18n.tr(player, "pull.success", id, placementResult.blocksPlaced())
                         ));
@@ -1446,7 +1460,7 @@ public class NetworkHandler {
 
     /**
      * Gestisce l'azione remove_block via GUI.
-     * Rimuove tutti i blocchi di un tipo specifico dalla costruzione.
+     * Rimuove tutti i blocchi di un tipo specifico dalla costruzione o dalla room corrente.
      */
     private static void handleGuiRemoveBlock(ServerPlayer player, String blockId) {
         if (!EditingSession.hasSession(player)) {
@@ -1457,30 +1471,82 @@ public class NetworkHandler {
 
         EditingSession session = EditingSession.getSession(player);
         Construction construction = session.getConstruction();
+        boolean inRoom = session.isInRoom();
+        it.magius.struttura.architect.model.Room room = inRoom ? session.getCurrentRoomObject() : null;
 
         // Conta e rimuovi i blocchi del tipo specificato
         int removedCount = 0;
         java.util.List<BlockPos> toRemove = new java.util.ArrayList<>();
 
-        for (java.util.Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
-            String entryBlockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
-                .getKey(entry.getValue().getBlock())
-                .toString();
+        if (inRoom && room != null) {
+            // Remove from room's block changes
+            for (java.util.Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
+                String entryBlockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                    .getKey(entry.getValue().getBlock())
+                    .toString();
 
-            if (entryBlockId.equals(blockId)) {
-                toRemove.add(entry.getKey());
+                if (entryBlockId.equals(blockId)) {
+                    toRemove.add(entry.getKey());
+                }
             }
-        }
 
-        for (BlockPos pos : toRemove) {
-            construction.removeBlock(pos);
-            removedCount++;
+            // Remove from room data
+            for (BlockPos pos : toRemove) {
+                room.removeBlockChange(pos);
+                removedCount++;
+            }
+
+            // Restore base blocks in world using centralized method
+            ServerLevel world = (ServerLevel) player.level();
+            ConstructionOperations.restoreBaseBlocksAt(world, toRemove, construction);
+        } else {
+            // Remove from construction base
+            for (java.util.Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+                String entryBlockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                    .getKey(entry.getValue().getBlock())
+                    .toString();
+
+                if (entryBlockId.equals(blockId)) {
+                    toRemove.add(entry.getKey());
+                }
+            }
+
+            // Remove from construction data and place air in world
+            ServerLevel world = (ServerLevel) player.level();
+            for (BlockPos pos : toRemove) {
+                // Clear container contents first
+                net.minecraft.world.level.block.entity.BlockEntity be = world.getBlockEntity(pos);
+                if (be instanceof net.minecraft.world.Clearable clearable) {
+                    clearable.clearContent();
+                }
+
+                // Remove from construction data
+                construction.removeBlock(pos);
+
+                // Place air in world
+                world.setBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+
+                removedCount++;
+            }
+
+            // Update shape connections for neighbors
+            for (BlockPos pos : toRemove) {
+                // Update neighbors of removed blocks
+                for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                    BlockPos neighborPos = pos.relative(dir);
+                    BlockState neighborState = world.getBlockState(neighborPos);
+                    if (!neighborState.isAir()) {
+                        neighborState.updateNeighbourShapes(world, neighborPos, net.minecraft.world.level.block.Block.UPDATE_CLIENTS, 0);
+                    }
+                }
+            }
         }
 
         if (removedCount > 0) {
             // Aggiorna il client
             sendWireframeSync(player);
             sendEditingInfo(player);
+            sendBlockList(player);
 
             String displayName = blockId;
             net.minecraft.resources.Identifier loc = net.minecraft.resources.Identifier.tryParse(blockId);
@@ -1967,10 +2033,14 @@ public class NetworkHandler {
             null, player.getYRot(), false
         );
 
-        // 4. Save the updated construction
+        // 4. Validate coherence after move
+        it.magius.struttura.architect.validation.CoherenceChecker.validateConstruction(
+            level, construction, true);
+
+        // 5. Save the updated construction
         ConstructionRegistry.getInstance().register(construction);
 
-        // 5. Update visibility state
+        // 6. Update visibility state
         VISIBLE_CONSTRUCTIONS.add(id);
 
         Architect.LOGGER.info("Player {} moved construction {} via GUI to new position ({} blocks, {} entities)",
@@ -2196,7 +2266,18 @@ public class NetworkHandler {
         it.magius.struttura.architect.model.Room room = inRoom ? session.getCurrentRoomObject() : null;
 
         // --- Build block list ---
-        java.util.Map<String, Integer> blockCounts = construction.getBlockCounts();
+        // Use room blocks if editing a room, otherwise use construction blocks
+        java.util.Map<String, Integer> blockCounts;
+        if (inRoom && room != null) {
+            // Count blocks in the room's changes
+            blockCounts = new java.util.HashMap<>();
+            for (BlockState state : room.getBlockChanges().values()) {
+                String blockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                blockCounts.merge(blockId, 1, Integer::sum);
+            }
+        } else {
+            blockCounts = construction.getBlockCounts();
+        }
 
         List<BlockListPacket.BlockInfo> blocks = new ArrayList<>();
         for (java.util.Map.Entry<String, Integer> entry : blockCounts.entrySet()) {

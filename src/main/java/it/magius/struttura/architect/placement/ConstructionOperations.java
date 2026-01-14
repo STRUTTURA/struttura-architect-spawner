@@ -310,7 +310,8 @@ public class ConstructionOperations {
             } else {
                 // With rotation: rebuild construction with new rotated positions and states
                 // Entities ARE rotated here, so spawnEntitiesFrozenRotated will use rotationSteps=0
-                updateConstructionCoordinatesRotated(construction, newBlocks, originalPosMap, targetPos.getY() - originalMinY,
+                updateConstructionCoordinatesRotated(construction, newBlocks, originalPosMap,
+                    originalMinX, originalMinY, originalMinZ, targetPos,
                     rotationSteps, pivotX, pivotZ, originalSizeX, originalSizeZ);
             }
         }
@@ -498,6 +499,84 @@ public class ConstructionOperations {
         }
 
         Architect.LOGGER.debug("Room: restored {} base blocks", restoredCount);
+        return restoredCount;
+    }
+
+    /**
+     * Restores specific base construction blocks at given positions.
+     * Used when removing specific blocks from a room.
+     * @param level The server level
+     * @param positions The specific positions to restore
+     * @param baseConstruction The base construction with original blocks
+     * @return Number of blocks restored
+     */
+    public static int restoreBaseBlocksAt(ServerLevel level, Collection<BlockPos> positions, Construction baseConstruction) {
+        if (positions.isEmpty()) {
+            return 0;
+        }
+
+        // Phase 1: Clear containers
+        for (BlockPos pos : positions) {
+            BlockEntity blockEntity = level.getBlockEntity(pos);
+            if (blockEntity instanceof Clearable clearable) {
+                clearable.clearContent();
+            }
+        }
+
+        // Phase 2: Build list of base blocks to restore
+        List<Map.Entry<BlockPos, BlockState>> blocksToRestore = new ArrayList<>();
+        for (BlockPos pos : positions) {
+            BlockState baseState = baseConstruction.getBlocks().get(pos);
+            if (baseState != null) {
+                blocksToRestore.add(Map.entry(pos, baseState));
+            } else {
+                // No base block = restore to air
+                blocksToRestore.add(Map.entry(pos, Blocks.AIR.defaultBlockState()));
+            }
+        }
+
+        // Sort by Y ascending
+        blocksToRestore.sort(Comparator.comparingInt(e -> e.getKey().getY()));
+
+        // Phase 3: Place base blocks
+        int restoredCount = 0;
+        for (Map.Entry<BlockPos, BlockState> entry : blocksToRestore) {
+            BlockPos pos = entry.getKey();
+            BlockState state = entry.getValue();
+            level.setBlock(pos, state, SILENT_PLACE_FLAGS);
+            restoredCount++;
+        }
+
+        // Phase 4: Apply base block entity NBT
+        for (Map.Entry<BlockPos, BlockState> entry : blocksToRestore) {
+            BlockPos pos = entry.getKey();
+            BlockState state = entry.getValue();
+            if (state.isAir()) continue;
+
+            CompoundTag blockNbt = baseConstruction.getBlockEntityNbt(pos);
+            if (blockNbt != null) {
+                BlockEntity blockEntity = level.getBlockEntity(pos);
+                if (blockEntity != null) {
+                    ValueInput input = TagValueInput.create(
+                        ProblemReporter.DISCARDING,
+                        level.registryAccess(),
+                        blockNbt
+                    );
+                    blockEntity.loadCustomOnly(input);
+                    blockEntity.setChanged();
+                }
+            }
+        }
+
+        // Phase 5: Update shape connections
+        for (BlockPos pos : positions) {
+            BlockState state = level.getBlockState(pos);
+            if (!state.isAir()) {
+                state.updateNeighbourShapes(level, pos, Block.UPDATE_CLIENTS, 0);
+            }
+        }
+
+        Architect.LOGGER.debug("Restored {} base blocks at specific positions", restoredCount);
         return restoredCount;
     }
 
@@ -844,7 +923,10 @@ public class ConstructionOperations {
         Construction construction,
         Map<BlockPos, BlockState> newBlocks,
         Map<BlockPos, BlockPos> originalPosMap,
-        int offsetY,
+        int originalMinX,
+        int originalMinY,
+        int originalMinZ,
+        BlockPos targetPos,
         int rotationSteps,
         int pivotX,
         int pivotZ,
@@ -884,13 +966,62 @@ public class ConstructionOperations {
         construction.getBlockEntityNbtMap().clear();
         construction.getBlockEntityNbtMap().putAll(newBlockEntityNbt);
 
-        // NOTE: Rooms are preserved even when rotating.
-        // Room block changes use relative coordinates that are applied during room switching,
-        // so they remain valid after construction rotation.
-        // The room's block deltas will be applied relative to the rotated construction bounds.
+        // Step 2.5: Update room block positions after rotation.
+        // Room blocks are stored with absolute world coordinates (applied from bounds during deserialization).
+        // We need to transform them the same way as base blocks.
+        Rotation rotation = stepsToRotation(rotationSteps);
         if (rotationSteps != 0 && !construction.getRooms().isEmpty()) {
-            Architect.LOGGER.info("Construction rotated {} steps with {} rooms - rooms preserved with relative coordinates",
-                rotationSteps, construction.getRooms().size());
+            Architect.LOGGER.info("Rotating {} rooms by {} steps", construction.getRooms().size(), rotationSteps);
+
+            for (Room room : construction.getRooms().values()) {
+                if (room.getChangedBlockCount() == 0) continue;
+
+                // Collect current room blocks (with old world coordinates)
+                Map<BlockPos, BlockState> oldRoomBlocks = new HashMap<>(room.getBlockChanges());
+                Map<BlockPos, CompoundTag> oldRoomNbt = new HashMap<>(room.getBlockEntityNbtMap());
+
+                // Clear and rebuild with new coordinates
+                room.clearBlockChanges();
+
+                for (Map.Entry<BlockPos, BlockState> entry : oldRoomBlocks.entrySet()) {
+                    BlockPos oldPos = entry.getKey();
+                    BlockState state = entry.getValue();
+
+                    // Convert to normalized coordinates (relative to original bounds)
+                    int normX = oldPos.getX() - originalMinX;
+                    int normY = oldPos.getY() - originalMinY;
+                    int normZ = oldPos.getZ() - originalMinZ;
+
+                    // Rotate normalized position around pivot
+                    int[] rotatedXZ = rotateXZ(normX, normZ, pivotX, pivotZ, rotationSteps);
+                    int rotatedNormX = rotatedXZ[0];
+                    int rotatedNormZ = rotatedXZ[1];
+
+                    // Calculate final world position (same formula as base blocks)
+                    BlockPos newPos = new BlockPos(
+                        targetPos.getX() + rotatedNormX,
+                        targetPos.getY() + normY,
+                        targetPos.getZ() + rotatedNormZ
+                    );
+
+                    // Rotate the block state
+                    BlockState rotatedState = state.rotate(rotation);
+
+                    // Get NBT if present
+                    CompoundTag nbt = oldRoomNbt.get(oldPos);
+                    if (nbt != null) {
+                        CompoundTag nbtCopy = nbt.copy();
+                        nbtCopy.putInt("x", newPos.getX());
+                        nbtCopy.putInt("y", newPos.getY());
+                        nbtCopy.putInt("z", newPos.getZ());
+                        room.setBlockChange(newPos, rotatedState, nbtCopy);
+                    } else {
+                        room.setBlockChange(newPos, rotatedState);
+                    }
+                }
+
+                Architect.LOGGER.debug("Room '{}': rotated {} blocks", room.getId(), room.getChangedBlockCount());
+            }
         }
 
         // Step 3: Update entity positions after rotation.

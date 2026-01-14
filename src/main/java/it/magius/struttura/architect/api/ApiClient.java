@@ -264,7 +264,17 @@ public class ApiClient {
             nbtBytes.length, blocksBase64.length());
 
         // Entità in formato NBT compresso e codificato base64 (se presenti)
-        if (!construction.getEntities().isEmpty()) {
+        // Check both base entities and room entities
+        boolean hasEntities = !construction.getEntities().isEmpty();
+        if (!hasEntities) {
+            for (Room room : construction.getRooms().values()) {
+                if (!room.getEntities().isEmpty()) {
+                    hasEntities = true;
+                    break;
+                }
+            }
+        }
+        if (hasEntities) {
             byte[] entitiesNbtBytes = serializeEntitiesToNbt(construction);
             String entitiesBase64 = Base64.getEncoder().encodeToString(entitiesNbtBytes);
             json.addProperty("entities", entitiesBase64);
