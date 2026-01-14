@@ -90,6 +90,11 @@ public class StrutturaScreen extends Screen {
         PanelManager pm = PanelManager.getInstance();
         boolean isEditing = pm.isEditing();
 
+        // Handle new room modal clicks (captures all clicks when open)
+        if (isEditing && editingPanel.isNewRoomModalOpen()) {
+            return editingPanel.mouseClicked(mouseX, mouseY, button);
+        }
+
         // Handle short desc modal clicks (captures all clicks when open)
         if (isEditing && editingPanel.isShortDescModalOpen()) {
             return editingPanel.mouseClicked(mouseX, mouseY, button);
@@ -214,6 +219,11 @@ public class StrutturaScreen extends Screen {
 
         PanelManager pm = PanelManager.getInstance();
 
+        // Handle new room modal keys first (modal captures all keys when open)
+        if (pm.isEditing() && editingPanel.isNewRoomModalOpen()) {
+            return editingPanel.keyPressed(keyCode, scanCode, modifiers);
+        }
+
         // Handle short desc modal keys first (modal captures all keys when open)
         if (pm.isEditing() && editingPanel.isShortDescModalOpen()) {
             return editingPanel.keyPressed(keyCode, scanCode, modifiers);
@@ -243,6 +253,11 @@ public class StrutturaScreen extends Screen {
         int modifiers = event.modifiers();
 
         PanelManager pm = PanelManager.getInstance();
+
+        // Handle new room modal chars first (modal captures all chars when open)
+        if (pm.isEditing() && editingPanel.isNewRoomModalOpen()) {
+            return editingPanel.charTyped(chr, modifiers);
+        }
 
         // Handle short desc modal chars first (modal captures all chars when open)
         if (pm.isEditing() && editingPanel.isShortDescModalOpen()) {
