@@ -207,6 +207,9 @@ public class ConstructionOperations {
         int originalMinX = bounds.getMinX();
         int originalMinY = bounds.getMinY();
         int originalMinZ = bounds.getMinZ();
+        // Save sizes BEFORE bounds get reset in updateConstructionCoordinatesRotated
+        int originalSizeX = bounds.getSizeX();
+        int originalSizeZ = bounds.getSizeZ();
 
         Rotation rotation = stepsToRotation(rotationSteps);
 
@@ -308,7 +311,7 @@ public class ConstructionOperations {
                 // With rotation: rebuild construction with new rotated positions and states
                 // Entities ARE rotated here, so spawnEntitiesFrozenRotated will use rotationSteps=0
                 updateConstructionCoordinatesRotated(construction, newBlocks, originalPosMap, targetPos.getY() - originalMinY,
-                    rotationSteps, pivotX, pivotZ, bounds.getSizeX(), bounds.getSizeZ());
+                    rotationSteps, pivotX, pivotZ, originalSizeX, originalSizeZ);
             }
         }
 
@@ -321,10 +324,23 @@ public class ConstructionOperations {
         // If updateConstructionCoords is false (SHOW mode), we apply the rotation during spawn.
         int entityRotationSteps = (updateConstructionCoords && rotationSteps != 0) ? 0 : rotationSteps;
 
+        // When entities were pre-rotated (entityRotationSteps == 0 but original rotationSteps != 0),
+        // their relativePos is stored relative to newBounds.min (updated in updateConstructionCoordinatesRotated).
+        // So we must spawn using bounds.min, not targetPos.
+        // When NOT pre-rotated (SHOW mode), relativePos is relative to the original bounds, so use targetPos.
+        BlockPos entitySpawnBase;
+        if (entityRotationSteps == 0 && rotationSteps != 0) {
+            // Pre-rotated: use updated bounds.min
+            entitySpawnBase = construction.getBounds().getMin();
+        } else {
+            // Not pre-rotated (SHOW mode or no rotation): use targetPos
+            entitySpawnBase = targetPos;
+        }
+
         int entitiesSpawned = spawnEntitiesFrozenRotated(
             construction.getEntities(),
             level,
-            targetPos.getX(), targetPos.getY(), targetPos.getZ(),
+            entitySpawnBase.getX(), entitySpawnBase.getY(), entitySpawnBase.getZ(),
             entityRotationSteps, pivotX, pivotZ,
             construction
         );
@@ -777,6 +793,12 @@ public class ConstructionOperations {
         construction.getBlockEntityNbtMap().clear();
         construction.getBlockEntityNbtMap().putAll(newBlockEntityNbt);
 
+        // NOTE: Entity positions are stored relative to bounds.min.
+        // Since we're updating blocks to world coordinates (bounds.min changes),
+        // but entities are spawned using: worldPos = bounds.min + relativePos,
+        // the relativePos doesn't need to change - it stays relative to bounds.
+        // Same for anchor - it stays relative to bounds.
+
         // Update room coordinates (translate together with construction)
         for (Room room : construction.getRooms().values()) {
             Map<BlockPos, BlockState> newRoomBlocks = new HashMap<>();
@@ -829,7 +851,12 @@ public class ConstructionOperations {
         int originalSizeX,
         int originalSizeZ
     ) {
-        // Build new block entity NBT map with updated coordinates
+        // newBlocks contains world coordinates after rotation.
+        // All coordinates (blocks, entities, anchor) will be updated to world coordinates.
+        // The key insight: entities and anchor must be rotated around the SAME pivot
+        // used for blocks (which is the entrance anchor position in the original coordinate system).
+
+        // Step 1: Build new block entity NBT map with world coordinates
         Map<BlockPos, CompoundTag> newBlockEntityNbt = new HashMap<>();
         for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
             BlockPos newPos = entry.getKey();
@@ -846,7 +873,7 @@ public class ConstructionOperations {
             }
         }
 
-        // Update blocks with new rotated positions and states
+        // Step 2: Update blocks with world positions
         construction.getBlocks().clear();
         construction.getBounds().reset();
         for (Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
@@ -864,16 +891,123 @@ public class ConstructionOperations {
             construction.getRooms().clear();
         }
 
-        // Update entity positions and yaw after rotation.
-        // This ensures that subsequent moves use the correct (rotated) entity positions.
+        // Step 3: Update entity positions after rotation.
+        // Entity positions are stored RELATIVE to bounds.min (which is now in world coords).
+        // worldEntityPos = bounds.min + entityRelPos
+        // After rotation, we need to compute new relative positions based on the NEW bounds.
+        //
+        // The key insight: the blocks in the construction are now world coordinates.
+        // The new bounds.min is the minimum of those world coordinates.
+        // Entity positions should be stored as (entityWorldPos - newBounds.min).
         if (rotationSteps != 0 && !construction.getEntities().isEmpty()) {
-            // Use center of pivot for entity rotation (same as blocks)
+            // Get the OLD bounds (before we updated them above)
+            // We need to recalculate since bounds were already updated
+            // The old bounds can be derived: old normalized entity pos + old bounds.min = old world pos
+            // But old bounds.min was the previous construction's world position.
+            //
+            // Actually, we need to think about this differently.
+            // Before this function:
+            // - Blocks are at world coords: oldBoundsMin + normalizedBlockPos
+            // - Entities have relPos relative to oldBoundsMin
+            //
+            // After placement:
+            // - newBlocks contains new world coordinates
+            // - newBounds.min is the min of newBlocks (new world position)
+            //
+            // The entity's OLD world position was: oldBoundsMin + oldRelPos
+            // We need to rotate this around the WORLD pivot and compute new relPos.
+            //
+            // World pivot = oldBoundsMin + normalizedPivot (pivotX, pivotZ)
+            // But we don't have oldBoundsMin here anymore...
+            //
+            // Different approach: entity relPos is in normalized coords (relative to construction's 0,0,0).
+            // The normalized pivot is (pivotX, pivotZ).
+            // Rotate entity around this pivot in normalized space.
+            // Then the new world position = newBoundsMin + newRelPos (where newRelPos is from the rotated normalized space).
+            //
+            // But wait - newBoundsMin might not align with the rotated normalized (0,0,0)!
+            // After rotation, the normalized (0,0,0) moves to a different position.
+            //
+            // Let's think step by step:
+            // 1. Original normalized block at (nx, ny, nz) -> world pos = targetPos + rotatedNormPos
+            // 2. The new construction.bounds are set from these world positions
+            // 3. newBounds.min = min(worldPos for all blocks)
+            //
+            // For blocks: worldPos = targetPos + rotatedNormPos
+            // newBounds.min = targetPos + min(rotatedNormPos)
+            //
+            // For entities: entityWorldPos = targetPos + rotatedNormEntityPos
+            // newRelPos = entityWorldPos - newBounds.min = rotatedNormEntityPos - min(rotatedNormPos)
+            //
+            // This is exactly: newRelPos = rotatedNormEntityPos + normOffset
+            // where normOffset = -min(rotatedNormPos)
+            //
+            // So the original code was correct! The issue is elsewhere.
+
+            // Pivot in normalized coordinates
             double pivotCenterX = pivotX + 0.5;
             double pivotCenterZ = pivotZ + 0.5;
 
+            // Calculate the normalization offset
+            int[][] oldCorners = {
+                {0, 0},
+                {originalSizeX - 1, 0},
+                {0, originalSizeZ - 1},
+                {originalSizeX - 1, originalSizeZ - 1}
+            };
+            int minRotatedX = Integer.MAX_VALUE;
+            int minRotatedZ = Integer.MAX_VALUE;
+            for (int[] corner : oldCorners) {
+                int[] rotated = rotateXZ(corner[0], corner[1], pivotX, pivotZ, rotationSteps);
+                minRotatedX = Math.min(minRotatedX, rotated[0]);
+                minRotatedZ = Math.min(minRotatedZ, rotated[1]);
+            }
+            int normOffsetX = -minRotatedX;
+            int normOffsetZ = -minRotatedZ;
+
             List<EntityData> rotatedEntities = new ArrayList<>();
             for (EntityData entity : construction.getEntities()) {
-                rotatedEntities.add(entity.withRotation(rotationSteps, pivotCenterX, pivotCenterZ));
+                // Entity relativePos is in normalized coords
+                double relX = entity.getRelativePos().x;
+                double relY = entity.getRelativePos().y;
+                double relZ = entity.getRelativePos().z;
+
+                // Rotate around pivot (in normalized coordinate space)
+                double dx = relX - pivotCenterX;
+                double dz = relZ - pivotCenterZ;
+
+                double newDx = dx;
+                double newDz = dz;
+                for (int i = 0; i < rotationSteps; i++) {
+                    double temp = newDx;
+                    newDx = -newDz;  // 90° counter-clockwise
+                    newDz = temp;
+                }
+
+                double rotatedX = pivotCenterX + newDx;
+                double rotatedZ = pivotCenterZ + newDz;
+
+                // Apply normalization offset so relPos is relative to new normalized (0,0,0)
+                // which corresponds to newBounds.min in world space
+                double newRelX = rotatedX + normOffsetX;
+                double newRelZ = rotatedZ + normOffsetZ;
+
+                Vec3 newRelativePos = new Vec3(newRelX, relY, newRelZ);
+
+                // Rotate yaw
+                float newYaw = entity.getYaw() + (rotationSteps * 90f);
+
+                // Rotate entity NBT data
+                CompoundTag newNbt = entity.getNbt().copy();
+                rotateEntityNbtNormalized(newNbt, rotationSteps, pivotX, pivotZ, normOffsetX, normOffsetZ);
+
+                rotatedEntities.add(new EntityData(
+                    entity.getEntityType(),
+                    newRelativePos,
+                    newYaw,
+                    entity.getPitch(),
+                    newNbt
+                ));
             }
             construction.clearEntities();
             for (EntityData entity : rotatedEntities) {
@@ -881,24 +1015,108 @@ public class ConstructionOperations {
             }
         }
 
-        // Update anchor position AND yaw after rotation.
-        // Both must be rotated to keep the anchor consistent with the rotated entity positions.
-        // This ensures that subsequent rotations use the correct pivot point.
+        // Step 4: Update anchor position AND yaw after rotation.
+        // Anchor is stored in normalized coordinates (relative to bounds.min).
         if (rotationSteps != 0 && construction.getAnchors().hasEntrance()) {
             BlockPos oldEntrancePos = construction.getAnchors().getEntrance();
             float oldYaw = construction.getAnchors().getEntranceYaw();
 
-            // Rotate entrance position around pivot (same as entities)
-            int[] rotatedPos = rotateXZ(oldEntrancePos.getX(), oldEntrancePos.getZ(), pivotX, pivotZ, rotationSteps);
-            BlockPos newEntrancePos = new BlockPos(rotatedPos[0], oldEntrancePos.getY(), rotatedPos[1]);
+            // Calculate normalization offset (same as for entities)
+            int[][] oldCorners = {
+                {0, 0},
+                {originalSizeX - 1, 0},
+                {0, originalSizeZ - 1},
+                {originalSizeX - 1, originalSizeZ - 1}
+            };
+            int minRotatedX = Integer.MAX_VALUE;
+            int minRotatedZ = Integer.MAX_VALUE;
+            for (int[] corner : oldCorners) {
+                int[] rotated = rotateXZ(corner[0], corner[1], pivotX, pivotZ, rotationSteps);
+                minRotatedX = Math.min(minRotatedX, rotated[0]);
+                minRotatedZ = Math.min(minRotatedZ, rotated[1]);
+            }
+            int normOffsetX = -minRotatedX;
+            int normOffsetZ = -minRotatedZ;
 
-            // Rotate yaw: coordinates rotate counter-clockwise, so yaw must increase
+            // Rotate entrance position around pivot (in normalized space)
+            int[] rotatedPos = rotateXZ(oldEntrancePos.getX(), oldEntrancePos.getZ(), pivotX, pivotZ, rotationSteps);
+
+            // Apply normalization offset
+            BlockPos newEntrancePos = new BlockPos(
+                rotatedPos[0] + normOffsetX,
+                oldEntrancePos.getY(),
+                rotatedPos[1] + normOffsetZ
+            );
+
+            // Rotate yaw
             float newYaw = oldYaw + (rotationSteps * 90f);
             // Normalize to -180 to 180 range
             newYaw = ((newYaw + 180f) % 360f) - 180f;
             if (newYaw < -180f) newYaw += 360f;
 
             construction.getAnchors().setEntrance(newEntrancePos, newYaw);
+        }
+    }
+
+    /**
+     * Rotates entity NBT data with normalization.
+     * Used for entities in construction storage (normalized coordinates).
+     */
+    private static void rotateEntityNbtNormalized(CompoundTag nbt, int rotationSteps, int pivotX, int pivotZ, int normOffsetX, int normOffsetZ) {
+        if (rotationSteps == 0) return;
+
+        // Rotate block_pos for hanging entities
+        if (nbt.contains("block_pos")) {
+            Tag rawTag = nbt.get("block_pos");
+            if (rawTag instanceof IntArrayTag intArrayTag) {
+                int[] coords = intArrayTag.getAsIntArray();
+                if (coords.length >= 3) {
+                    int[] rotated = rotateXZ(coords[0], coords[2], pivotX, pivotZ, rotationSteps);
+                    nbt.putIntArray("block_pos", new int[]{rotated[0] + normOffsetX, coords[1], rotated[1] + normOffsetZ});
+                }
+            }
+        } else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+            int relX = nbt.getIntOr("TileX", 0);
+            int relZ = nbt.getIntOr("TileZ", 0);
+            int[] rotated = rotateXZ(relX, relZ, pivotX, pivotZ, rotationSteps);
+            nbt.putInt("TileX", rotated[0] + normOffsetX);
+            nbt.putInt("TileZ", rotated[1] + normOffsetZ);
+        }
+
+        // Rotate sleeping_pos for villagers
+        if (nbt.contains("sleeping_pos")) {
+            Tag sleepingTag = nbt.get("sleeping_pos");
+            if (sleepingTag instanceof IntArrayTag sleepingIntArray) {
+                int[] coords = sleepingIntArray.getAsIntArray();
+                if (coords.length >= 3) {
+                    int[] rotated = rotateXZ(coords[0], coords[2], pivotX, pivotZ, rotationSteps);
+                    nbt.putIntArray("sleeping_pos", new int[]{rotated[0] + normOffsetX, coords[1], rotated[1] + normOffsetZ});
+                }
+            }
+        }
+
+        // Rotate Facing for hanging entities
+        if (nbt.contains("Facing")) {
+            int facing = nbt.getByteOr("Facing", (byte) 0);
+            if (facing >= 2 && facing <= 5) {
+                int newFacing = rotateFacing(facing, rotationSteps);
+                nbt.putByte("Facing", (byte) newFacing);
+            }
+        }
+
+        // Rotate yaw in Rotation tag for mobs
+        if (nbt.contains("Rotation")) {
+            Tag rotationTag = nbt.get("Rotation");
+            if (rotationTag instanceof net.minecraft.nbt.ListTag rotationList && rotationList.size() >= 2) {
+                float originalYaw = rotationList.getFloatOr(0, 0f);
+                float pitch = rotationList.getFloatOr(1, 0f);
+                float rotatedYaw = originalYaw + (rotationSteps * 90f);
+
+                net.minecraft.nbt.ListTag newRotation = new net.minecraft.nbt.ListTag();
+                newRotation.add(net.minecraft.nbt.FloatTag.valueOf(rotatedYaw));
+                newRotation.add(net.minecraft.nbt.FloatTag.valueOf(pitch));
+                nbt.put("Rotation", newRotation);
+            }
         }
     }
 
