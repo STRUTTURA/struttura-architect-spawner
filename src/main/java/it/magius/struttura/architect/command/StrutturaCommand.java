@@ -1,6 +1,7 @@
 package it.magius.struttura.architect.command;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
@@ -113,7 +114,14 @@ public class StrutturaCommand {
                 .then(Commands.literal("spawn")
                     .then(Commands.argument("id", StringArgumentType.string())
                         .suggests(CONSTRUCTION_ID_SUGGESTIONS)
-                        .executes(StrutturaCommand::executeSpawn)
+                        .executes(ctx -> executeSpawn(ctx, false, null))  // Default: InGameSpawn
+                        .then(Commands.argument("architectMode", BoolArgumentType.bool())
+                            .executes(ctx -> executeSpawn(ctx, BoolArgumentType.getBool(ctx, "architectMode"), null))
+                            .then(Commands.argument("rooms", StringArgumentType.greedyString())
+                                .executes(ctx -> executeSpawn(ctx, BoolArgumentType.getBool(ctx, "architectMode"),
+                                    StringArgumentType.getString(ctx, "rooms")))
+                            )
+                        )
                     )
                 )
                 .then(Commands.literal("show")
@@ -692,7 +700,7 @@ public class StrutturaCommand {
         return 1;
     }
 
-    private static int executeSpawn(CommandContext<CommandSourceStack> ctx) {
+    private static int executeSpawn(CommandContext<CommandSourceStack> ctx, boolean architectMode, String roomsParam) {
         CommandSourceStack source = ctx.getSource();
 
         if (!(source.getEntity() instanceof ServerPlayer player)) {
@@ -702,7 +710,7 @@ public class StrutturaCommand {
 
         String id = StringArgumentType.getString(ctx, "id");
 
-        // Verifica che la costruzione esista (incluse quelle in editing)
+        // Verify construction exists (including those being edited)
         if (!constructionExistsIncludingEditing(id)) {
             source.sendFailure(Component.literal(I18n.tr(player, "spawn.not_found", id)));
             return 0;
@@ -714,8 +722,64 @@ public class StrutturaCommand {
             return 0;
         }
 
-        // Use centralized placement function
-        // updateConstructionCoords=false: don't modify the construction coordinates in registry
+        // Parse forced rooms list (only valid for architectMode)
+        java.util.List<String> forcedRoomIds = null;
+        if (roomsParam != null && !roomsParam.isEmpty()) {
+            if (!architectMode) {
+                source.sendFailure(Component.literal(I18n.tr(player, "spawn.rooms_requires_architect")));
+                return 0;
+            }
+            // Parse comma-separated room IDs
+            forcedRoomIds = java.util.Arrays.stream(roomsParam.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+        }
+
+        if (architectMode) {
+            return executeArchitectSpawn(player, construction, source, forcedRoomIds);
+        } else {
+            return executeInGameSpawn(player, construction, source);
+        }
+    }
+
+    /**
+     * ArchitectSpawn: Spawns construction with random room selection for testing.
+     * Used in architect mode to test room variations.
+     *
+     * @param forcedRoomIds Optional list of room IDs to force spawn (100% probability).
+     *                      Rooms still won't spawn if they overlap with each other.
+     */
+    private static int executeArchitectSpawn(ServerPlayer player, Construction construction,
+                                              CommandSourceStack source, java.util.List<String> forcedRoomIds) {
+        // Delegate to ConstructionOperations.architectSpawn
+        var result = ConstructionOperations.architectSpawn(
+            player, construction, player.getYRot(), forcedRoomIds
+        );
+
+        if (result.blocksPlaced() > 0) {
+            Architect.LOGGER.info("Player {} architect-spawned {} ({} blocks, {} entities, {} rooms)",
+                player.getName().getString(), construction.getId(),
+                result.blocksPlaced(), result.entitiesSpawned(), result.roomsSpawned());
+
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "spawn.architect_success",
+                    construction.getId(), result.blocksPlaced(), result.roomsSpawned())
+            ), true);
+            return 1;
+        } else {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawn.failed", construction.getId())));
+            return 0;
+        }
+    }
+
+    /**
+     * InGameSpawn: Reserved for future natural world spawning.
+     * Currently shows a TODO message.
+     */
+    private static int executeInGameSpawn(ServerPlayer player, Construction construction, CommandSourceStack source) {
+        // For now, fallback to regular spawn behavior
+        // In the future, this will be used by the spawning engine with world-specific criteria
         var result = ConstructionOperations.placeConstruction(
             player, construction, ConstructionOperations.PlacementMode.SPAWN, false,
             null, player.getYRot(), false
@@ -723,17 +787,16 @@ public class StrutturaCommand {
 
         if (result.blocksPlaced() > 0) {
             Architect.LOGGER.info("Player {} spawned construction {} ({} blocks, {} entities)",
-                player.getName().getString(), id, result.blocksPlaced(), result.entitiesSpawned());
+                player.getName().getString(), construction.getId(), result.blocksPlaced(), result.entitiesSpawned());
 
             source.sendSuccess(() -> Component.literal(
-                I18n.tr(player, "spawn.success_simple", id, result.blocksPlaced())
+                I18n.tr(player, "spawn.success_simple", construction.getId(), result.blocksPlaced())
             ), true);
+            return 1;
         } else {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawn.failed", id)));
+            source.sendFailure(Component.literal(I18n.tr(player, "spawn.failed", construction.getId())));
             return 0;
         }
-
-        return 1;
     }
 
     private static int executeShow(CommandContext<CommandSourceStack> ctx) {

@@ -1939,4 +1939,792 @@ public class ConstructionOperations {
         if (yaw >= 135 && yaw < 225) return "NORTH";
         return "EAST";
     }
+
+    // ============== ARCHITECT SPAWN ==============
+
+    /**
+     * Result of an ArchitectSpawn operation.
+     */
+    public record ArchitectSpawnResult(
+        int blocksPlaced,
+        int entitiesSpawned,
+        int roomsSpawned,
+        BlockPos origin
+    ) {}
+
+    /**
+     * Spawns a construction in Architect mode with random room selection.
+     * <p>
+     * Process:
+     * 1. Extract all rooms that pass spawn criteria (in ArchitectSpawn mode: all rooms)
+     * 2. Randomly select rooms based on world seed + player position
+     * 3. Filter rooms with non-overlapping bounds
+     * 4. Place base construction blocks (no entities, no command blocks)
+     * 5. Place selected room blocks (overwrite base where applicable)
+     * 6. Spawn all entities (base + selected rooms) - frozen
+     * 7. Place command blocks (base + selected rooms)
+     * 8. Unfreeze all spawned entities
+     * <p>
+     * Note: Construction is NOT registered in the registry.
+     *
+     * @param player The player executing the spawn
+     * @param construction The construction to spawn
+     * @param yaw The rotation angle for the construction
+     * @return ArchitectSpawnResult with counts and origin position
+     */
+    public static ArchitectSpawnResult architectSpawn(
+        ServerPlayer player,
+        Construction construction,
+        float yaw
+    ) {
+        return architectSpawn(player, construction, yaw, null);
+    }
+
+    /**
+     * Spawns a construction in Architect mode with random room selection.
+     * <p>
+     * Process:
+     * 1. Extract all rooms that pass spawn criteria (in ArchitectSpawn mode: all rooms)
+     * 2. Randomly select rooms based on world seed + player position
+     * 3. Filter rooms with non-overlapping bounds
+     * 4. Place base construction blocks (no entities, no command blocks)
+     * 5. Place selected room blocks (overwrite base where applicable)
+     * 6. Spawn all entities (base + selected rooms) - frozen
+     * 7. Place command blocks (base + selected rooms)
+     * 8. Unfreeze all spawned entities
+     * <p>
+     * Note: Construction is NOT registered in the registry.
+     *
+     * @param player The player executing the spawn
+     * @param construction The construction to spawn
+     * @param yaw The rotation angle for the construction
+     * @param forcedRoomIds Optional list of room IDs to force spawn (100% probability).
+     *                      Rooms still won't spawn if they overlap with each other.
+     * @return ArchitectSpawnResult with counts and origin position
+     */
+    public static ArchitectSpawnResult architectSpawn(
+        ServerPlayer player,
+        Construction construction,
+        float yaw,
+        @Nullable List<String> forcedRoomIds
+    ) {
+        if (construction.getBlockCount() == 0) {
+            return new ArchitectSpawnResult(0, 0, 0, BlockPos.ZERO);
+        }
+
+        ServerLevel level = (ServerLevel) player.level();
+        ConstructionBounds bounds = construction.getBounds();
+
+        // Step 1: Extract eligible rooms (all rooms in ArchitectSpawn mode)
+        List<Room> eligibleRooms = extractEligibleRooms(construction);
+
+        // Step 2: Select rooms to spawn (random, non-overlapping, with forced rooms support)
+        List<Room> roomsToSpawn = selectRoomsToSpawn(eligibleRooms, player, construction, forcedRoomIds);
+
+        // Step 3: Calculate position and rotation (same as pull/move)
+        int rotationSteps = 0;
+        int pivotX = 0;
+        int pivotZ = 0;
+
+        float entranceYaw = construction.getAnchors().hasEntrance()
+            ? construction.getAnchors().getEntranceYaw()
+            : 0f;
+        rotationSteps = calculateRotationSteps(yaw, entranceYaw);
+
+        if (construction.getAnchors().hasEntrance()) {
+            BlockPos entrance = construction.getAnchors().getEntrance();
+            pivotX = entrance.getX();
+            pivotZ = entrance.getZ();
+        } else {
+            pivotX = bounds.getSizeX() / 2;
+            pivotZ = bounds.getSizeZ() / 2;
+        }
+
+        BlockPos targetPos;
+        if (construction.getAnchors().hasEntrance()) {
+            targetPos = calculatePositionAtEntranceRotated(player, construction, rotationSteps, pivotX, pivotZ);
+        } else {
+            targetPos = calculatePositionInFront(player, bounds);
+        }
+
+        // Step 4: Place base construction blocks (skip entities and command blocks)
+        int blocksPlaced = placeBlocksForArchitectSpawn(
+            level, construction, targetPos, rotationSteps, pivotX, pivotZ
+        );
+
+        // Step 5: Place selected room blocks (overwrite base where applicable)
+        for (Room room : roomsToSpawn) {
+            blocksPlaced += placeRoomBlocksRotated(
+                level, construction, room, targetPos, rotationSteps, pivotX, pivotZ
+            );
+        }
+
+        // Step 6: Spawn all entities (base + selected rooms) - frozen
+        List<Entity> spawnedEntities = spawnEntitiesForArchitectSpawn(
+            level, construction, roomsToSpawn, targetPos, rotationSteps, pivotX, pivotZ
+        );
+
+        // Step 7: Command blocks are already placed in step 4 and 5
+        // (They are not separated in this implementation since we don't need special handling)
+
+        // Step 8: Unfreeze all spawned entities
+        unfreezeSpawnedEntities(level, spawnedEntities);
+
+        Architect.LOGGER.info("ArchitectSpawn: {} blocks, {} entities, {} rooms at ({},{},{})",
+            blocksPlaced, spawnedEntities.size(), roomsToSpawn.size(),
+            targetPos.getX(), targetPos.getY(), targetPos.getZ());
+
+        return new ArchitectSpawnResult(blocksPlaced, spawnedEntities.size(), roomsToSpawn.size(), targetPos);
+    }
+
+    /**
+     * Extracts rooms that pass the spawn criteria.
+     * In ArchitectSpawn mode, ALL rooms are eligible.
+     *
+     * @param construction The construction containing rooms
+     * @return List of rooms that can potentially be spawned
+     */
+    private static List<Room> extractEligibleRooms(Construction construction) {
+        return new ArrayList<>(construction.getRooms().values());
+    }
+
+    /**
+     * Selects rooms to spawn using randomization.
+     *
+     * @param eligibleRooms Rooms that passed spawn criteria
+     * @param player Player for position-based seed
+     * @param construction Construction for bounds calculation
+     * @param forcedRoomIds Optional list of room IDs to force spawn (100% probability)
+     * @return List of non-overlapping rooms to spawn
+     */
+    private static List<Room> selectRoomsToSpawn(
+        List<Room> eligibleRooms,
+        ServerPlayer player,
+        Construction construction,
+        @Nullable List<String> forcedRoomIds
+    ) {
+        if (eligibleRooms.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Room> roomsToSpawn = new ArrayList<>();
+
+        // Convert forced room IDs to a set for O(1) lookup
+        Set<String> forcedRoomSet = forcedRoomIds != null
+            ? new HashSet<>(forcedRoomIds)
+            : Collections.emptySet();
+
+        // Step 1: First, add all forced rooms (in order, checking for overlaps)
+        if (!forcedRoomSet.isEmpty()) {
+            for (Room room : eligibleRooms) {
+                if (forcedRoomSet.contains(room.getId())) {
+                    // Forced room: always try to spawn (100% probability)
+                    // But still check for overlaps with already selected rooms
+                    if (!hasOverlappingBounds(room, roomsToSpawn, construction)) {
+                        roomsToSpawn.add(room);
+                        Architect.LOGGER.debug("Forced room '{}' added to spawn list", room.getId());
+                    } else {
+                        Architect.LOGGER.debug("Forced room '{}' skipped due to overlap", room.getId());
+                    }
+                }
+            }
+        }
+
+        // Step 2: Then, randomly select from remaining rooms (not in forced list)
+        List<Room> nonForcedRooms = eligibleRooms.stream()
+            .filter(r -> !forcedRoomSet.contains(r.getId()))
+            .toList();
+
+        if (!nonForcedRooms.isEmpty()) {
+            // Calculate spawn probability: 1/(N+1) where N = number of non-forced eligible rooms
+            // The +1 accounts for the "no room spawns" option
+            double spawnProbability = 1.0 / (nonForcedRooms.size() + 1);
+
+            // Create seeded random based on world seed + player position
+            long seed = player.level().getSeed()
+                ^ (long)(player.getX() * 1000)
+                ^ (long)(player.getZ() * 1000);
+            Random random = new Random(seed);
+
+            for (Room room : nonForcedRooms) {
+                // Roll for this room
+                if (random.nextDouble() < spawnProbability) {
+                    // Check bounds overlap with already selected rooms (including forced ones)
+                    if (!hasOverlappingBounds(room, roomsToSpawn, construction)) {
+                        roomsToSpawn.add(room);
+                    }
+                }
+            }
+        }
+
+        return roomsToSpawn;
+    }
+
+    /**
+     * Checks if a room's bounds overlap with any room in the list.
+     */
+    private static boolean hasOverlappingBounds(
+        Room candidate,
+        List<Room> existingRooms,
+        Construction construction
+    ) {
+        if (existingRooms.isEmpty()) {
+            return false;
+        }
+
+        // Calculate candidate bounds from its block positions
+        AABB candidateBounds = calculateRoomBounds(candidate, construction);
+        if (candidateBounds == null) {
+            return false; // Room has no blocks
+        }
+
+        for (Room existing : existingRooms) {
+            AABB existingBounds = calculateRoomBounds(existing, construction);
+            if (existingBounds != null && candidateBounds.intersects(existingBounds)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Calculates the AABB bounds of a room based on its block changes.
+     * Returns null if the room has no blocks.
+     */
+    @Nullable
+    private static AABB calculateRoomBounds(Room room, Construction construction) {
+        if (room.getBlockChanges().isEmpty() && room.getEntities().isEmpty()) {
+            return null;
+        }
+
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+
+        // Process block positions
+        for (BlockPos pos : room.getBlockChanges().keySet()) {
+            minX = Math.min(minX, pos.getX());
+            minY = Math.min(minY, pos.getY());
+            minZ = Math.min(minZ, pos.getZ());
+            maxX = Math.max(maxX, pos.getX());
+            maxY = Math.max(maxY, pos.getY());
+            maxZ = Math.max(maxZ, pos.getZ());
+        }
+
+        // Include room entities in bounds calculation
+        ConstructionBounds constrBounds = construction.getBounds();
+        for (EntityData entity : room.getEntities()) {
+            int ex = constrBounds.getMinX() + (int) entity.getRelativePos().x;
+            int ey = constrBounds.getMinY() + (int) entity.getRelativePos().y;
+            int ez = constrBounds.getMinZ() + (int) entity.getRelativePos().z;
+            minX = Math.min(minX, ex);
+            minY = Math.min(minY, ey);
+            minZ = Math.min(minZ, ez);
+            maxX = Math.max(maxX, ex);
+            maxY = Math.max(maxY, ey);
+            maxZ = Math.max(maxZ, ez);
+        }
+
+        if (minX == Integer.MAX_VALUE) {
+            return null; // No blocks or entities
+        }
+
+        return new AABB(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
+    }
+
+    /**
+     * Places construction blocks for ArchitectSpawn without spawning entities.
+     * Uses the same logic as placeConstructionAt but doesn't update coordinates
+     * and doesn't spawn entities (they are handled separately).
+     *
+     * @return Number of blocks placed
+     */
+    private static int placeBlocksForArchitectSpawn(
+        ServerLevel level,
+        Construction construction,
+        BlockPos targetPos,
+        int rotationSteps,
+        int pivotX,
+        int pivotZ
+    ) {
+        ConstructionBounds bounds = construction.getBounds();
+        int originalMinX = bounds.getMinX();
+        int originalMinY = bounds.getMinY();
+        int originalMinZ = bounds.getMinZ();
+
+        Rotation rotation = stepsToRotation(rotationSteps);
+
+        // Sort blocks by Y ascending (support blocks first)
+        List<Map.Entry<BlockPos, BlockState>> sortedBlocks = new ArrayList<>(construction.getBlocks().entrySet());
+        sortedBlocks.sort(Comparator.comparingInt(e -> e.getKey().getY()));
+
+        Map<BlockPos, BlockPos> originalPosMap = new HashMap<>(); // newPos -> originalPos for NBT lookup
+        int placedCount = 0;
+
+        for (Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
+            BlockPos originalPos = entry.getKey();
+            BlockState state = entry.getValue();
+
+            // Normalize position (relative to bounds min)
+            int normX = originalPos.getX() - originalMinX;
+            int normY = originalPos.getY() - originalMinY;
+            int normZ = originalPos.getZ() - originalMinZ;
+
+            // Rotate normalized position around pivot
+            int[] rotatedXZ = rotateXZ(normX, normZ, pivotX, pivotZ, rotationSteps);
+            int rotatedNormX = rotatedXZ[0];
+            int rotatedNormZ = rotatedXZ[1];
+
+            // Calculate final world position
+            BlockPos newPos = new BlockPos(
+                targetPos.getX() + rotatedNormX,
+                targetPos.getY() + normY,
+                targetPos.getZ() + rotatedNormZ
+            );
+
+            // Rotate the block state
+            BlockState rotatedState = state.rotate(rotation);
+
+            originalPosMap.put(newPos, originalPos);
+
+            if (!rotatedState.isAir()) {
+                level.setBlock(newPos, rotatedState, SILENT_PLACE_FLAGS);
+                placedCount++;
+            }
+        }
+
+        // Apply block entity NBT after ALL blocks are placed
+        for (Map.Entry<BlockPos, BlockPos> entry : originalPosMap.entrySet()) {
+            BlockPos newPos = entry.getKey();
+            BlockPos originalPos = entry.getValue();
+
+            BlockState state = level.getBlockState(newPos);
+            if (state.isAir()) continue;
+
+            CompoundTag blockNbt = construction.getBlockEntityNbt(originalPos);
+            if (blockNbt != null) {
+                BlockEntity blockEntity = level.getBlockEntity(newPos);
+                if (blockEntity != null) {
+                    CompoundTag nbtCopy = blockNbt.copy();
+                    nbtCopy.putInt("x", newPos.getX());
+                    nbtCopy.putInt("y", newPos.getY());
+                    nbtCopy.putInt("z", newPos.getZ());
+
+                    net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
+                        ProblemReporter.DISCARDING,
+                        level.registryAccess(),
+                        nbtCopy
+                    );
+                    blockEntity.loadCustomOnly(input);
+                    blockEntity.setChanged();
+                }
+            }
+        }
+
+        // Update shape connections (fences, walls, etc.) WITHOUT physics
+        for (BlockPos newPos : originalPosMap.keySet()) {
+            BlockState state = level.getBlockState(newPos);
+            if (!state.isAir()) {
+                state.updateNeighbourShapes(level, newPos, Block.UPDATE_CLIENTS, 0);
+            }
+        }
+
+        return placedCount;
+    }
+
+    /**
+     * Places room delta blocks with rotation support.
+     * Overwrites base construction blocks where applicable.
+     *
+     * @return Number of blocks placed
+     */
+    private static int placeRoomBlocksRotated(
+        ServerLevel level,
+        Construction construction,
+        Room room,
+        BlockPos targetPos,
+        int rotationSteps,
+        int pivotX,
+        int pivotZ
+    ) {
+        if (room.getBlockChanges().isEmpty()) {
+            return 0;
+        }
+
+        ConstructionBounds bounds = construction.getBounds();
+        int originalMinX = bounds.getMinX();
+        int originalMinY = bounds.getMinY();
+        int originalMinZ = bounds.getMinZ();
+
+        Rotation rotation = stepsToRotation(rotationSteps);
+
+        // Sort blocks by Y ascending
+        List<Map.Entry<BlockPos, BlockState>> sortedBlocks = new ArrayList<>(room.getBlockChanges().entrySet());
+        sortedBlocks.sort(Comparator.comparingInt(e -> e.getKey().getY()));
+
+        Map<BlockPos, BlockPos> posMap = new HashMap<>(); // newPos -> originalPos
+        int placedCount = 0;
+
+        for (Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
+            BlockPos originalPos = entry.getKey();
+            BlockState state = entry.getValue();
+
+            // Room blocks are stored in world coordinates, convert to normalized
+            int normX = originalPos.getX() - originalMinX;
+            int normY = originalPos.getY() - originalMinY;
+            int normZ = originalPos.getZ() - originalMinZ;
+
+            // Rotate normalized position around pivot
+            int[] rotatedXZ = rotateXZ(normX, normZ, pivotX, pivotZ, rotationSteps);
+            int rotatedNormX = rotatedXZ[0];
+            int rotatedNormZ = rotatedXZ[1];
+
+            // Calculate final world position
+            BlockPos newPos = new BlockPos(
+                targetPos.getX() + rotatedNormX,
+                targetPos.getY() + normY,
+                targetPos.getZ() + rotatedNormZ
+            );
+
+            // Rotate the block state
+            BlockState rotatedState = state.rotate(rotation);
+
+            posMap.put(newPos, originalPos);
+            level.setBlock(newPos, rotatedState, SILENT_PLACE_FLAGS);
+            placedCount++;
+        }
+
+        // Apply block entity NBT
+        for (Map.Entry<BlockPos, BlockPos> entry : posMap.entrySet()) {
+            BlockPos newPos = entry.getKey();
+            BlockPos originalPos = entry.getValue();
+
+            BlockState state = level.getBlockState(newPos);
+            if (state.isAir()) continue;
+
+            CompoundTag blockNbt = room.getBlockEntityNbt(originalPos);
+            if (blockNbt != null) {
+                BlockEntity blockEntity = level.getBlockEntity(newPos);
+                if (blockEntity != null) {
+                    CompoundTag nbtCopy = blockNbt.copy();
+                    nbtCopy.putInt("x", newPos.getX());
+                    nbtCopy.putInt("y", newPos.getY());
+                    nbtCopy.putInt("z", newPos.getZ());
+
+                    net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
+                        ProblemReporter.DISCARDING,
+                        level.registryAccess(),
+                        nbtCopy
+                    );
+                    blockEntity.loadCustomOnly(input);
+                    blockEntity.setChanged();
+                }
+            }
+        }
+
+        // Update shape connections
+        for (BlockPos newPos : posMap.keySet()) {
+            BlockState state = level.getBlockState(newPos);
+            if (!state.isAir()) {
+                state.updateNeighbourShapes(level, newPos, Block.UPDATE_CLIENTS, 0);
+            }
+        }
+
+        Architect.LOGGER.debug("Room '{}': placed {} rotated blocks", room.getId(), placedCount);
+        return placedCount;
+    }
+
+    /**
+     * Spawns entities for ArchitectSpawn (base + selected rooms).
+     * Entities are spawned frozen and will be unfrozen later.
+     * Base entities are filtered to exclude those at positions where room entities will spawn.
+     *
+     * @return List of spawned entities (for later unfreezing)
+     */
+    private static List<Entity> spawnEntitiesForArchitectSpawn(
+        ServerLevel level,
+        Construction construction,
+        List<Room> roomsToSpawn,
+        BlockPos targetPos,
+        int rotationSteps,
+        int pivotX,
+        int pivotZ
+    ) {
+        List<Entity> spawnedEntities = new ArrayList<>();
+
+        // Collect all room entity positions (to filter out overlapping base entities)
+        Set<String> roomEntityPositions = collectRoomEntityPositions(roomsToSpawn);
+
+        // Spawn base entities (excluding those at room entity positions)
+        List<EntityData> filteredBaseEntities = filterBaseEntities(
+            construction.getEntities(), roomEntityPositions
+        );
+        spawnedEntities.addAll(spawnEntitiesListForArchitectSpawn(
+            level, filteredBaseEntities, targetPos,
+            rotationSteps, pivotX, pivotZ
+        ));
+
+        // Spawn room entities (only from selected rooms)
+        for (Room room : roomsToSpawn) {
+            spawnedEntities.addAll(spawnEntitiesListForArchitectSpawn(
+                level, room.getEntities(), targetPos,
+                rotationSteps, pivotX, pivotZ
+            ));
+        }
+
+        return spawnedEntities;
+    }
+
+    /**
+     * Collects all entity positions from rooms that will be spawned.
+     * Positions are stored as strings "x,y,z" (rounded to block coordinates).
+     */
+    private static Set<String> collectRoomEntityPositions(List<Room> roomsToSpawn) {
+        Set<String> positions = new HashSet<>();
+        for (Room room : roomsToSpawn) {
+            for (EntityData entity : room.getEntities()) {
+                Vec3 pos = entity.getRelativePos();
+                // Round to block position for comparison
+                String posKey = String.format("%d,%d,%d",
+                    (int) Math.floor(pos.x),
+                    (int) Math.floor(pos.y),
+                    (int) Math.floor(pos.z));
+                positions.add(posKey);
+            }
+        }
+        return positions;
+    }
+
+    /**
+     * Filters base entities to exclude those at positions where room entities will spawn.
+     */
+    private static List<EntityData> filterBaseEntities(
+        List<EntityData> baseEntities,
+        Set<String> roomEntityPositions
+    ) {
+        if (roomEntityPositions.isEmpty()) {
+            return baseEntities; // No filtering needed
+        }
+
+        List<EntityData> filtered = new ArrayList<>();
+        for (EntityData entity : baseEntities) {
+            Vec3 pos = entity.getRelativePos();
+            String posKey = String.format("%d,%d,%d",
+                (int) Math.floor(pos.x),
+                (int) Math.floor(pos.y),
+                (int) Math.floor(pos.z));
+
+            if (!roomEntityPositions.contains(posKey)) {
+                filtered.add(entity);
+            } else {
+                Architect.LOGGER.debug("Skipping base entity {} at {} (room entity at same position)",
+                    entity.getEntityType(), posKey);
+            }
+        }
+        return filtered;
+    }
+
+    /**
+     * Spawns a list of entities for ArchitectSpawn with rotation support.
+     * Entities are spawned with NoAI enabled for mobs.
+     */
+    private static List<Entity> spawnEntitiesListForArchitectSpawn(
+        ServerLevel level,
+        List<EntityData> entities,
+        BlockPos targetPos,
+        int rotationSteps,
+        int pivotX,
+        int pivotZ
+    ) {
+        List<Entity> spawnedEntities = new ArrayList<>();
+        if (entities.isEmpty()) {
+            return spawnedEntities;
+        }
+
+        // Pivot for entity rotation (center of block)
+        double pivotCenterX = pivotX + 0.5;
+        double pivotCenterZ = pivotZ + 0.5;
+
+        for (EntityData data : entities) {
+            try {
+                // Get relative position and rotate it around pivot center
+                double relX = data.getRelativePos().x;
+                double relY = data.getRelativePos().y;
+                double relZ = data.getRelativePos().z;
+
+                // Rotate the relative position around pivot center
+                double[] rotatedXZ = rotateXZDouble(relX, relZ, pivotCenterX, pivotCenterZ, rotationSteps);
+                double rotatedRelX = rotatedXZ[0];
+                double rotatedRelZ = rotatedXZ[1];
+
+                // Calculate world position
+                double worldX = targetPos.getX() + rotatedRelX;
+                double worldY = targetPos.getY() + relY;
+                double worldZ = targetPos.getZ() + rotatedRelZ;
+
+                // Copy NBT - only remove UUID (will be regenerated)
+                CompoundTag nbt = data.getNbt().copy();
+                nbt.remove("UUID");
+                // Remove spawn-related properties from saved NBT - these will be restored
+                // to default values in unfreezeSpawnedEntities using a fresh entity.
+                // This ensures mobs can move (NoAI), gravity works correctly (NoGravity),
+                // and entities behave normally after spawn.
+                // All other properties (color, type, inventory, etc.) are preserved.
+                nbt.remove("NoGravity");
+                nbt.remove("NoAI");
+
+                // Set Pos in NBT BEFORE entity creation
+                net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
+                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldX));
+                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldY));
+                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldZ));
+                nbt.put("Pos", posTag);
+
+                // Remove maps from item frames
+                String entityType = data.getEntityType();
+                if (entityType.equals("minecraft:item_frame") || entityType.equals("minecraft:glow_item_frame")) {
+                    EntityData.removeMapFromItemFrameNbt(nbt);
+                }
+
+                // Ensure id tag exists
+                if (!nbt.contains("id")) {
+                    nbt.putString("id", data.getEntityType());
+                }
+
+                // Update block_pos for hanging entities
+                updateHangingEntityCoordsRotated(nbt, targetPos.getX(), targetPos.getY(), targetPos.getZ(),
+                    rotationSteps, pivotX, pivotZ);
+
+                // Update sleeping_pos for villagers
+                updateSleepingPosRotated(nbt, targetPos.getX(), targetPos.getY(), targetPos.getZ(),
+                    rotationSteps, pivotX, pivotZ);
+
+                // Rotate Facing for hanging entities
+                if (nbt.contains("Facing") && rotationSteps != 0) {
+                    int facing = nbt.getByteOr("Facing", (byte) 0);
+                    if (facing >= 2 && facing <= 5) {
+                        int newFacing = rotateFacing(facing, rotationSteps);
+                        nbt.putByte("Facing", (byte) newFacing);
+                    }
+                }
+
+                // Rotate yaw in NBT for non-hanging entities
+                boolean isHangingEntity = entityType.equals("minecraft:item_frame") ||
+                    entityType.equals("minecraft:glow_item_frame") ||
+                    entityType.equals("minecraft:painting");
+                if (!isHangingEntity && rotationSteps != 0 && nbt.contains("Rotation")) {
+                    net.minecraft.nbt.Tag rotationTag = nbt.get("Rotation");
+                    if (rotationTag instanceof net.minecraft.nbt.ListTag rotationList && rotationList.size() >= 2) {
+                        float originalYaw = rotationList.getFloatOr(0, 0f);
+                        float pitch = rotationList.getFloatOr(1, 0f);
+                        float rotatedYaw = originalYaw + (rotationSteps * 90f);
+
+                        net.minecraft.nbt.ListTag newRotation = new net.minecraft.nbt.ListTag();
+                        newRotation.add(net.minecraft.nbt.FloatTag.valueOf(rotatedYaw));
+                        newRotation.add(net.minecraft.nbt.FloatTag.valueOf(pitch));
+                        nbt.put("Rotation", newRotation);
+                    }
+                }
+
+                // Create entity from NBT
+                Entity entity = EntityType.loadEntityRecursive(nbt, level, EntitySpawnReason.LOAD, e -> e);
+
+                if (entity != null) {
+                    // Temporarily disable gravity during spawn (will be restored in unfreeze)
+                    entity.setNoGravity(true);
+
+                    // Mark entity as spawned by struttura (for cleanup and unfreeze)
+                    entity.getTags().add("struttura_spawned");
+
+                    // Set position
+                    entity.setPos(worldX, worldY, worldZ);
+                    entity.setXRot(data.getPitch());
+                    entity.setUUID(UUID.randomUUID());
+
+                    // Disable AI for mobs (will be re-enabled in unfreezeSpawnedEntities)
+                    if (entity instanceof Mob mob) {
+                        mob.setNoAi(true);
+                    }
+
+                    level.addFreshEntity(entity);
+                    spawnedEntities.add(entity);
+                }
+            } catch (Exception e) {
+                Architect.LOGGER.error("Failed to spawn entity of type {}: {}",
+                    data.getEntityType(), e.getMessage());
+            }
+        }
+
+        return spawnedEntities;
+    }
+
+    /**
+     * Unfreezes all spawned entities.
+     * Re-enables AI for mobs and restores original gravity settings.
+     *
+     * @param level The server level
+     * @param spawnedEntities List of entities that were spawned and need unfreezing
+     */
+    private static void unfreezeSpawnedEntities(ServerLevel level, List<Entity> spawnedEntities) {
+        for (Entity entity : spawnedEntities) {
+            // Check if entity is still valid
+            if (entity.isRemoved()) {
+                continue;
+            }
+
+            EntityType<?> entityType = entity.getType();
+
+            // Create a default entity of the same type to get default property values
+            Entity defaultEntity = entityType.create(level, EntitySpawnReason.LOAD);
+
+            if (defaultEntity != null) {
+                // Get default values from fresh entity
+                boolean defaultNoGravity = defaultEntity.isNoGravity();
+                boolean defaultNoAI = (defaultEntity instanceof Mob defaultMob) && defaultMob.isNoAi();
+
+                // Apply default NoGravity (hanging entities always keep NoGravity)
+                if (isHangingEntity(entity)) {
+                    entity.setNoGravity(true);
+                } else {
+                    entity.setNoGravity(defaultNoGravity);
+                }
+
+                // Apply default NoAI for mobs and nudge out of blocks
+                if (entity instanceof Mob mob) {
+                    EntityUtils.nudgeEntityOutOfBlocks(level, mob);
+                    mob.setNoAi(defaultNoAI);
+                }
+
+                // Discard the temporary default entity
+                defaultEntity.discard();
+            } else {
+                // Fallback if we can't create default entity
+                if (isHangingEntity(entity)) {
+                    entity.setNoGravity(true);
+                } else {
+                    entity.setNoGravity(false);
+                }
+
+                if (entity instanceof Mob mob) {
+                    EntityUtils.nudgeEntityOutOfBlocks(level, mob);
+                    mob.setNoAi(false);
+                }
+            }
+
+            // Clean up struttura tag
+            entity.getTags().remove("struttura_spawned");
+        }
+
+        Architect.LOGGER.info("Unfroze {} entities", spawnedEntities.size());
+    }
+
+    /**
+     * Checks if an entity is a hanging entity (item frame, painting, etc.)
+     */
+    private static boolean isHangingEntity(Entity entity) {
+        String typeName = EntityType.getKey(entity.getType()).toString();
+        return typeName.equals("minecraft:item_frame") ||
+            typeName.equals("minecraft:glow_item_frame") ||
+            typeName.equals("minecraft:painting");
+    }
 }

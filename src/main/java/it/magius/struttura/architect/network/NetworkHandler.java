@@ -1393,7 +1393,8 @@ public class NetworkHandler {
 
     /**
      * Handles spawn action via GUI.
-     * Places a copy of the construction in front of the player without modifying it.
+     * Uses ArchitectSpawn mode which includes random room selection.
+     * The GUI is used by architects/builders to test their constructions.
      */
     private static void handleGuiSpawn(ServerPlayer player, String id) {
         // Verify the construction exists (including those being edited)
@@ -1410,17 +1411,16 @@ public class NetworkHandler {
             return;
         }
 
-        // Use centralized placement with SPAWN mode (does not modify construction)
-        var result = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.SPAWN, false,
-            null, player.getYRot(), false
+        // Use ArchitectSpawn mode for GUI (allows testing room variations)
+        var result = ConstructionOperations.architectSpawn(
+            player, construction, player.getYRot()
         );
 
-        Architect.LOGGER.info("Player {} spawned construction {} via GUI ({} blocks)",
-            player.getName().getString(), id, result.blocksPlaced());
+        Architect.LOGGER.info("Player {} architect-spawned {} via GUI ({} blocks, {} rooms)",
+            player.getName().getString(), id, result.blocksPlaced(), result.roomsSpawned());
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "spawn.success", id, result.blocksPlaced())));
+                I18n.tr(player, "spawn.architect_success", id, result.blocksPlaced(), result.roomsSpawned())));
     }
 
     /**
