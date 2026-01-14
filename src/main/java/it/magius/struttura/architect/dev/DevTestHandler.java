@@ -117,11 +117,11 @@ public class DevTestHandler {
     private void runTestCommands(ServerPlayer player) {
         Architect.LOGGER.info("=== STRUTTURA DevTest: Running test commands ===");
 
-        player.sendSystemMessage(Component.literal("[DevTest] Starting ItemFrame rotation test..."));
+        player.sendSystemMessage(Component.literal("[DevTest] Starting ROOM PULL test..."));
 
         MinecraftServer server = ((ServerLevel) player.level()).getServer();
         ServerLevel level = (ServerLevel) player.level();
-        String constructionId = "it.magius.test2";
+        String constructionId = "it.magius.testroom";
 
         // Step 1: Delete construction if exists
         Architect.LOGGER.info("=== STEP 1: Deleting construction ===");
@@ -129,73 +129,48 @@ public class DevTestHandler {
 
         // Wait 1 second (20 ticks), then Step 2
         scheduleDelayedExecution(server, server.getTickCount() + 20, () -> {
-            // Step 2: Pull construction and check item frame NBT
-            Architect.LOGGER.info("=== STEP 2: Pulling construction ===");
+            // Step 2: Pull construction and check rooms
+            Architect.LOGGER.info("=== STEP 2: Pulling construction with rooms ===");
             executeCommand(player, "tp @s 0 100 0 0 0");
             executeCommand(player, "struttura pull " + constructionId);
 
             // Wait 2 seconds for pull
             scheduleDelayedExecution(server, server.getTickCount() + 40, () -> {
-                Architect.LOGGER.info("=== AFTER PULL: Checking item frames in world ===");
+                Architect.LOGGER.info("=== AFTER PULL: Checking rooms ===");
 
-                // Log ALL stored entity data
                 var registry = ConstructionRegistry.getInstance();
                 Construction construction = registry.get(constructionId);
-                if (construction != null) {
-                    Architect.LOGGER.info("Construction has {} entities stored", construction.getEntities().size());
-                    int idx = 0;
-                    for (EntityData ed : construction.getEntities()) {
-                        idx++;
-                        var nbt = ed.getNbt();
-                        Architect.LOGGER.info("STORED Entity {}: type={}, relPos=({}, {}, {})",
-                            idx, ed.getEntityType(),
-                            ed.getRelativePos().x, ed.getRelativePos().y, ed.getRelativePos().z);
 
-                        if (ed.getEntityType().contains("item_frame")) {
-                            int itemRotation = nbt.getByteOr("ItemRotation", (byte) -1);
-                            int facing = nbt.getByteOr("Facing", (byte) -1);
-                            boolean hasItem = nbt.contains("Item");
-                            String itemId = "";
-                            if (hasItem) {
-                                var itemTag = nbt.get("Item");
-                                if (itemTag instanceof net.minecraft.nbt.CompoundTag itemCompound) {
-                                    itemId = itemCompound.getStringOr("id", "unknown");
-                                }
-                            }
-                            // Log block_pos
-                            String blockPosStr = "N/A";
-                            if (nbt.contains("block_pos")) {
-                                var bpTag = nbt.get("block_pos");
-                                if (bpTag instanceof net.minecraft.nbt.IntArrayTag intArray) {
-                                    int[] coords = intArray.getAsIntArray();
-                                    blockPosStr = String.format("[%d, %d, %d]", coords[0], coords[1], coords[2]);
-                                }
-                            }
-                            Architect.LOGGER.info("  -> ItemFrame: hasItem={}, itemId={}, ItemRotation={}, Facing={}, block_pos={}",
-                                hasItem, itemId, itemRotation, facing, blockPosStr);
+                if (construction == null) {
+                    Architect.LOGGER.error("Construction {} NOT FOUND in registry after pull!", constructionId);
+                    player.sendSystemMessage(Component.literal("[DevTest] ERROR: Construction not found!"));
+                } else {
+                    // Log construction info
+                    Architect.LOGGER.info("Construction {} found:", constructionId);
+                    Architect.LOGGER.info("  - Blocks: {}", construction.getBlockCount());
+                    Architect.LOGGER.info("  - Entities: {}", construction.getEntityCount());
+                    Architect.LOGGER.info("  - Room count: {}", construction.getRoomCount());
+
+                    // Log each room
+                    var rooms = construction.getRooms();
+                    if (rooms.isEmpty()) {
+                        Architect.LOGGER.warn("  - NO ROOMS FOUND!");
+                    } else {
+                        for (var entry : rooms.entrySet()) {
+                            var room = entry.getValue();
+                            Architect.LOGGER.info("  - Room '{}': id={}, blockChanges={}, entities={}",
+                                room.getName(), room.getId(), room.getChangedBlockCount(), room.getEntityCount());
                         }
                     }
-                }
 
-                // Check world item frames
-                var bounds = construction.getBounds();
-                AABB area = new AABB(
-                    bounds.getMinX() - 2, bounds.getMinY() - 2, bounds.getMinZ() - 2,
-                    bounds.getMaxX() + 2, bounds.getMaxY() + 2, bounds.getMaxZ() + 2
-                );
-                int worldFrameCount = 0;
-                for (Entity e : level.getEntities((Entity) null, area,
-                        ent -> ent.getType().toString().contains("item_frame"))) {
-                    worldFrameCount++;
-                    if (e instanceof net.minecraft.world.entity.decoration.ItemFrame itemFrame) {
-                        var heldItem = itemFrame.getItem();
-                        int rotation = itemFrame.getRotation();
-                        Architect.LOGGER.info("WORLD ItemFrame {}: pos=({}, {}, {}), item={}, rotation={}",
-                            worldFrameCount, e.getX(), e.getY(), e.getZ(),
-                            heldItem.isEmpty() ? "EMPTY" : heldItem.getItem().toString(), rotation);
-                    }
+                    // Log bounds
+                    var bounds = construction.getBounds();
+                    Architect.LOGGER.info("  - Bounds: min=({},{},{}), max=({},{},{})",
+                        bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
+                        bounds.getMaxX(), bounds.getMaxY(), bounds.getMaxZ());
+
+                    player.sendSystemMessage(Component.literal("[DevTest] Found " + construction.getRoomCount() + " rooms"));
                 }
-                Architect.LOGGER.info("Total WORLD ItemFrames found: {}", worldFrameCount);
 
                 player.sendSystemMessage(Component.literal("[DevTest] Test completed! Check logs. Exiting..."));
                 Architect.LOGGER.info("=== STRUTTURA DevTest: Test commands completed ===");

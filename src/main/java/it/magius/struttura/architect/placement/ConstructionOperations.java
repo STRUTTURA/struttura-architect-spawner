@@ -884,11 +884,13 @@ public class ConstructionOperations {
         construction.getBlockEntityNbtMap().clear();
         construction.getBlockEntityNbtMap().putAll(newBlockEntityNbt);
 
-        // Clear rooms when rotating - room positions become invalid
-        // TODO: In future, could transform room positions too
-        if (!construction.getRooms().isEmpty()) {
-            Architect.LOGGER.warn("Rooms cleared due to construction rotation - room positions are now invalid");
-            construction.getRooms().clear();
+        // NOTE: Rooms are preserved even when rotating.
+        // Room block changes use relative coordinates that are applied during room switching,
+        // so they remain valid after construction rotation.
+        // The room's block deltas will be applied relative to the rotated construction bounds.
+        if (rotationSteps != 0 && !construction.getRooms().isEmpty()) {
+            Architect.LOGGER.info("Construction rotated {} steps with {} rooms - rooms preserved with relative coordinates",
+                rotationSteps, construction.getRooms().size());
         }
 
         // Step 3: Update entity positions after rotation.

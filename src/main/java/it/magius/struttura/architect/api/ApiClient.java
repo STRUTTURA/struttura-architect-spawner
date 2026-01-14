@@ -1067,6 +1067,7 @@ public class ApiClient {
             for (String roomId : roomsTag.keySet()) {
                 Room room = construction.getRoom(roomId);
                 if (room == null) {
+                    Architect.LOGGER.warn("Room {} not found in metadata, skipping blocks", roomId);
                     continue;
                 }
 
