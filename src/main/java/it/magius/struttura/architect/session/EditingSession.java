@@ -1019,6 +1019,8 @@ public class EditingSession {
                     boolean indexAlreadyUsed = activeEntityToIndex.containsValue(i);
                     if (!indexAlreadyUsed) {
                         trackEntity(worldEntity.getUUID(), i);
+                        // Also track in construction for refreshEntitiesFromWorld before push
+                        construction.trackSpawnedEntity(worldEntity.getUUID());
                         trackedCount++;
                         break; // Move to next world entity
                     }

@@ -138,14 +138,22 @@ public class DevTestHandler {
             scheduleDelayedExecution(server, server.getTickCount() + 40, () -> {
                 Architect.LOGGER.info("=== AFTER PULL: Checking item frames in world ===");
 
-                // Log stored entity data
+                // Log ALL stored entity data
                 var registry = ConstructionRegistry.getInstance();
                 Construction construction = registry.get(constructionId);
                 if (construction != null) {
+                    Architect.LOGGER.info("Construction has {} entities stored", construction.getEntities().size());
+                    int idx = 0;
                     for (EntityData ed : construction.getEntities()) {
+                        idx++;
+                        var nbt = ed.getNbt();
+                        Architect.LOGGER.info("STORED Entity {}: type={}, relPos=({}, {}, {})",
+                            idx, ed.getEntityType(),
+                            ed.getRelativePos().x, ed.getRelativePos().y, ed.getRelativePos().z);
+
                         if (ed.getEntityType().contains("item_frame")) {
-                            var nbt = ed.getNbt();
                             int itemRotation = nbt.getByteOr("ItemRotation", (byte) -1);
+                            int facing = nbt.getByteOr("Facing", (byte) -1);
                             boolean hasItem = nbt.contains("Item");
                             String itemId = "";
                             if (hasItem) {
@@ -154,8 +162,17 @@ public class DevTestHandler {
                                     itemId = itemCompound.getStringOr("id", "unknown");
                                 }
                             }
-                            Architect.LOGGER.info("STORED ItemFrame: hasItem={}, itemId={}, ItemRotation={}",
-                                hasItem, itemId, itemRotation);
+                            // Log block_pos
+                            String blockPosStr = "N/A";
+                            if (nbt.contains("block_pos")) {
+                                var bpTag = nbt.get("block_pos");
+                                if (bpTag instanceof net.minecraft.nbt.IntArrayTag intArray) {
+                                    int[] coords = intArray.getAsIntArray();
+                                    blockPosStr = String.format("[%d, %d, %d]", coords[0], coords[1], coords[2]);
+                                }
+                            }
+                            Architect.LOGGER.info("  -> ItemFrame: hasItem={}, itemId={}, ItemRotation={}, Facing={}, block_pos={}",
+                                hasItem, itemId, itemRotation, facing, blockPosStr);
                         }
                     }
                 }
@@ -166,15 +183,19 @@ public class DevTestHandler {
                     bounds.getMinX() - 2, bounds.getMinY() - 2, bounds.getMinZ() - 2,
                     bounds.getMaxX() + 2, bounds.getMaxY() + 2, bounds.getMaxZ() + 2
                 );
+                int worldFrameCount = 0;
                 for (Entity e : level.getEntities((Entity) null, area,
                         ent -> ent.getType().toString().contains("item_frame"))) {
+                    worldFrameCount++;
                     if (e instanceof net.minecraft.world.entity.decoration.ItemFrame itemFrame) {
                         var heldItem = itemFrame.getItem();
                         int rotation = itemFrame.getRotation();
-                        Architect.LOGGER.info("WORLD ItemFrame: item={}, rotation={}",
+                        Architect.LOGGER.info("WORLD ItemFrame {}: pos=({}, {}, {}), item={}, rotation={}",
+                            worldFrameCount, e.getX(), e.getY(), e.getZ(),
                             heldItem.isEmpty() ? "EMPTY" : heldItem.getItem().toString(), rotation);
                     }
                 }
+                Architect.LOGGER.info("Total WORLD ItemFrames found: {}", worldFrameCount);
 
                 player.sendSystemMessage(Component.literal("[DevTest] Test completed! Check logs. Exiting..."));
                 Architect.LOGGER.info("=== STRUTTURA DevTest: Test commands completed ===");

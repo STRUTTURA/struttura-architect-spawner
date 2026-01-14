@@ -164,8 +164,10 @@ public class EntitySpawnHandler {
         } else {
             newIndex = construction.addEntity(data);
         }
-        // Track the entity with its list index
+        // Track the entity with its list index (session tracking for UI)
         session.trackEntity(entityId, newIndex);
+        // Track the entity UUID in construction (for refreshEntitiesFromWorld before push)
+        construction.trackSpawnedEntity(entityId);
 
         // Expand bounds if entity is outside (shouldn't happen, but for safety)
         construction.getBounds().expandToInclude(entity.blockPosition());
