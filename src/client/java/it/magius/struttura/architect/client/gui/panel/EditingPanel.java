@@ -3,6 +3,8 @@ package it.magius.struttura.architect.client.gui.panel;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.client.gui.EditBoxHelper;
 import it.magius.struttura.architect.client.gui.PanelManager;
+import it.magius.struttura.architect.i18n.LanguageUtils;
+import it.magius.struttura.architect.i18n.LanguageUtils.LangInfo;
 import it.magius.struttura.architect.network.GuiActionPacket;
 import it.magius.struttura.architect.network.SelectionKeyPacket;
 import net.fabricmc.api.EnvType;
@@ -115,7 +117,7 @@ public class EditingPanel {
 
     // Language dropdown state
     private boolean langDropdownOpen = false;
-    private String selectedLangId = "en";  // Default to English
+    private String selectedLangId = LanguageUtils.DEFAULT_LANG;  // Default to English (BCP 47)
     private boolean langInitialized = false;  // Track if language was already set
     private java.util.Map<String, String> allTitles = new java.util.HashMap<>();
     private java.util.Map<String, String> allShortDescriptions = new java.util.HashMap<>();
@@ -148,21 +150,8 @@ public class EditingPanel {
     private String originalRoomName = "";
     private String roomRenameError = "";  // Error message for duplicate ID
 
-    // Supported languages with display names
-    private static final java.util.List<LangInfo> SUPPORTED_LANGUAGES = java.util.List.of(
-        new LangInfo("en", "English"),
-        new LangInfo("it", "Italiano"),
-        new LangInfo("de", "Deutsch"),
-        new LangInfo("fr", "Français"),
-        new LangInfo("es", "Español"),
-        new LangInfo("pt", "Português"),
-        new LangInfo("nl", "Nederlands"),
-        new LangInfo("pl", "Polski"),
-        new LangInfo("ru", "Русский"),
-        new LangInfo("uk", "Українська")
-    );
-
-    private record LangInfo(String id, String displayName) {}
+    // Use centralized language list from LanguageUtils
+    private static final java.util.List<LangInfo> SUPPORTED_LANGUAGES = LanguageUtils.SUPPORTED_LANGUAGES_LIST;
 
     /**
      * Generate room ID from name (same algorithm as server-side Room.generateId).
@@ -273,12 +262,12 @@ public class EditingPanel {
             langInitialized = true;
             String systemLang = Minecraft.getInstance().getLanguageManager().getSelected();
             if (systemLang != null) {
-                // Extract language code (e.g., "en_us" -> "en")
-                String langCode = systemLang.split("_")[0].toLowerCase();
+                // Convert Minecraft language code to BCP 47 (e.g., "en_us" -> "en-US")
+                String bcp47Code = LanguageUtils.fromMinecraft(systemLang);
                 // Check if this language is in our supported list
                 for (LangInfo lang : SUPPORTED_LANGUAGES) {
-                    if (lang.id().equals(langCode)) {
-                        selectedLangId = langCode;
+                    if (lang.bcp47().equals(bcp47Code)) {
+                        selectedLangId = bcp47Code;
                         break;
                     }
                 }
@@ -295,7 +284,7 @@ public class EditingPanel {
     public void clearTranslations() {
         this.allTitles.clear();
         this.allShortDescriptions.clear();
-        this.selectedLangId = "en";
+        this.selectedLangId = LanguageUtils.DEFAULT_LANG;
         this.langInitialized = false;  // Reset so next edit session will use system language
         this.langDropdownOpen = false;
     }
@@ -338,11 +327,11 @@ public class EditingPanel {
     }
 
     /**
-     * Get display name for language ID.
+     * Get display name for language ID (BCP 47 format).
      */
     private String getLangDisplayName(String langId) {
         for (LangInfo lang : SUPPORTED_LANGUAGES) {
-            if (lang.id().equals(langId)) {
+            if (lang.bcp47().equals(langId)) {
                 return lang.displayName();
             }
         }
@@ -1074,7 +1063,7 @@ public class EditingPanel {
         for (LangInfo lang : SUPPORTED_LANGUAGES) {
             boolean itemHovered = mouseX >= listX && mouseX < listX + listW &&
                                   mouseY >= itemY && mouseY < itemY + LINE_HEIGHT + 1;
-            boolean isSelected = lang.id().equals(selectedLangId);
+            boolean isSelected = lang.bcp47().equals(selectedLangId);
 
             if (itemHovered) {
                 graphics.fill(listX + 1, itemY, listX + listW - 1, itemY + LINE_HEIGHT + 1, 0xFF404070);
@@ -1083,7 +1072,7 @@ public class EditingPanel {
                 graphics.fill(listX + 1, itemY, listX + listW - 1, itemY + LINE_HEIGHT + 1, 0xFF505090);
             }
 
-            String itemText = lang.displayName() + getLangIndicator(lang.id());
+            String itemText = lang.displayName() + getLangIndicator(lang.bcp47());
             graphics.drawString(font, itemText, listX + 3, itemY + 1, isSelected ? 0xFFFFFFFF : 0xFFCCCCCC, false);
             itemY += LINE_HEIGHT + 1;
         }
@@ -1638,8 +1627,8 @@ public class EditingPanel {
                 int itemY = cachedLangDropdownListY + 1;
                 for (LangInfo lang : SUPPORTED_LANGUAGES) {
                     if (mouseY >= itemY && mouseY < itemY + LINE_HEIGHT + 1) {
-                        if (!lang.id().equals(selectedLangId)) {
-                            selectedLangId = lang.id();
+                        if (!lang.bcp47().equals(selectedLangId)) {
+                            selectedLangId = lang.bcp47();
                             updateFieldsForSelectedLanguage();
                         }
                         langDropdownOpen = false;

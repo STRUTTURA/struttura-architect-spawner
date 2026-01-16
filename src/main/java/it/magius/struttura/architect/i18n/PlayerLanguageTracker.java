@@ -8,13 +8,14 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Traccia la lingua preferita di ogni giocatore basandosi sulle impostazioni client di Minecraft.
+ * Tracks the preferred language of each player based on Minecraft client settings.
+ * Provides BCP 47 language codes for external APIs.
  */
 public class PlayerLanguageTracker {
 
     private static final PlayerLanguageTracker INSTANCE = new PlayerLanguageTracker();
 
-    // Mappa UUID giocatore -> codice lingua (es: "en_us", "it_it")
+    // Map player UUID -> Minecraft language code (e.g., "en_us", "it_it")
     private final Map<UUID, String> playerLanguages = new ConcurrentHashMap<>();
 
     private PlayerLanguageTracker() {}
@@ -24,48 +25,61 @@ public class PlayerLanguageTracker {
     }
 
     /**
-     * Aggiorna la lingua di un giocatore.
-     * Chiamato quando il client invia le sue impostazioni.
+     * Updates a player's language.
+     * Called when the client sends its settings.
      *
-     * @param player il giocatore
-     * @param languageCode il codice lingua Minecraft (es: "en_us", "it_it", "de_de")
+     * @param player the player
+     * @param languageCode the Minecraft language code (e.g., "en_us", "it_it", "de_de")
      */
     public void setPlayerLanguage(ServerPlayer player, String languageCode) {
         String previousLang = playerLanguages.put(player.getUUID(), languageCode);
         if (previousLang == null || !previousLang.equals(languageCode)) {
-            Architect.LOGGER.debug("Player {} language set to: {}", player.getName().getString(), languageCode);
+            String bcp47 = LanguageUtils.fromMinecraft(languageCode);
+            Architect.LOGGER.debug("Player {} language set to: {} (BCP 47: {})",
+                player.getName().getString(), languageCode, bcp47);
         }
     }
 
     /**
-     * Ottiene la lingua di un giocatore.
+     * Gets a player's Minecraft language code.
      *
-     * @param player il giocatore
-     * @return il codice lingua Minecraft, o "en_us" se non impostato
+     * @param player the player
+     * @return the Minecraft language code, or "en_us" if not set
      */
     public String getPlayerLanguage(ServerPlayer player) {
         return playerLanguages.getOrDefault(player.getUUID(), "en_us");
     }
 
     /**
-     * Ottiene il codice lingua semplificato (es: "en", "it") da un codice Minecraft (es: "en_us", "it_it").
+     * Gets the BCP 47 language code for a player (e.g., "en-US", "it-IT").
+     * This is the format used for external APIs and data storage.
      *
-     * @param player il giocatore
-     * @return il codice lingua a 2 lettere
+     * @param player the player
+     * @return the BCP 47 language tag
      */
-    public String getSimpleLanguageCode(ServerPlayer player) {
-        String fullCode = getPlayerLanguage(player);
-        // Minecraft usa formato "xx_yy" (es: en_us, it_it, de_de)
-        if (fullCode.contains("_")) {
-            return fullCode.split("_")[0];
-        }
-        return fullCode;
+    public String getBcp47LanguageCode(ServerPlayer player) {
+        String minecraftCode = getPlayerLanguage(player);
+        return LanguageUtils.fromMinecraft(minecraftCode);
     }
 
     /**
-     * Rimuove un giocatore dal tracker (quando si disconnette).
+     * Gets the simple 2-letter code from the player's language.
+     * Used for loading translation files.
      *
-     * @param player il giocatore
+     * @param player the player
+     * @return the simple 2-letter code
+     * @deprecated Use getBcp47LanguageCode() for external data, or let I18n handle file loading
+     */
+    @Deprecated
+    public String getSimpleLanguageCode(ServerPlayer player) {
+        String bcp47 = getBcp47LanguageCode(player);
+        return LanguageUtils.toSimple(bcp47);
+    }
+
+    /**
+     * Removes a player from the tracker (when they disconnect).
+     *
+     * @param player the player
      */
     public void removePlayer(ServerPlayer player) {
         playerLanguages.remove(player.getUUID());
@@ -73,10 +87,10 @@ public class PlayerLanguageTracker {
     }
 
     /**
-     * Verifica se un giocatore ha una lingua registrata.
+     * Checks if a player has a registered language.
      *
-     * @param player il giocatore
-     * @return true se la lingua è registrata
+     * @param player the player
+     * @return true if the language is registered
      */
     public boolean hasLanguage(ServerPlayer player) {
         return playerLanguages.containsKey(player.getUUID());

@@ -8,6 +8,7 @@ import com.mojang.brigadier.suggestion.SuggestionProvider;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.i18n.I18n;
+import it.magius.struttura.architect.i18n.LanguageUtils;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EditMode;
@@ -1284,7 +1285,14 @@ public class StrutturaCommand {
             return 0;
         }
 
-        String lang = StringArgumentType.getString(ctx, "lang").toLowerCase();
+        String langInput = StringArgumentType.getString(ctx, "lang");
+        if (!LanguageUtils.isValid(langInput)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "command.invalid_lang",
+                langInput, String.join(", ", LanguageUtils.getSupportedLanguages()))));
+            return 0;
+        }
+
+        String lang = LanguageUtils.toBcp47(langInput);
         String text = StringArgumentType.getString(ctx, "text");
         EditingSession session = EditingSession.getSession(player);
         Construction construction = session.getConstruction();
@@ -1314,7 +1322,14 @@ public class StrutturaCommand {
             return 0;
         }
 
-        String lang = StringArgumentType.getString(ctx, "lang").toLowerCase();
+        String langInput = StringArgumentType.getString(ctx, "lang");
+        if (!LanguageUtils.isValid(langInput)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "command.invalid_lang",
+                langInput, String.join(", ", LanguageUtils.getSupportedLanguages()))));
+            return 0;
+        }
+
+        String lang = LanguageUtils.toBcp47(langInput);
         String text = StringArgumentType.getString(ctx, "text");
         EditingSession session = EditingSession.getSession(player);
         Construction construction = session.getConstruction();
@@ -1344,7 +1359,14 @@ public class StrutturaCommand {
             return 0;
         }
 
-        String lang = StringArgumentType.getString(ctx, "lang").toLowerCase();
+        String langInput = StringArgumentType.getString(ctx, "lang");
+        if (!LanguageUtils.isValid(langInput)) {
+            source.sendFailure(Component.literal(I18n.tr(player, "command.invalid_lang",
+                langInput, String.join(", ", LanguageUtils.getSupportedLanguages()))));
+            return 0;
+        }
+
+        String lang = LanguageUtils.toBcp47(langInput);
         String text = StringArgumentType.getString(ctx, "text");
         EditingSession session = EditingSession.getSession(player);
         Construction construction = session.getConstruction();

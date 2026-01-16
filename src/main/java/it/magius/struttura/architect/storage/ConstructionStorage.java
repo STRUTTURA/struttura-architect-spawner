@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonElement;
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.i18n.LanguageUtils;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
@@ -264,23 +265,26 @@ public class ConstructionStorage {
         json.addProperty("authorName", construction.getAuthorName());
         json.addProperty("createdAt", construction.getCreatedAt().toString());
 
-        // Titoli multilingua
+        // Multilingual titles - migrate to BCP 47 format
         JsonObject titles = new JsonObject();
-        for (var entry : construction.getTitles().entrySet()) {
+        Map<String, String> migratedTitles = LanguageUtils.migrateKeys(construction.getTitles());
+        for (var entry : migratedTitles.entrySet()) {
             titles.addProperty(entry.getKey(), entry.getValue());
         }
         json.add("titles", titles);
 
-        // Descrizioni brevi multilingua
+        // Multilingual short descriptions - migrate to BCP 47 format
         JsonObject shortDescriptions = new JsonObject();
-        for (var entry : construction.getShortDescriptions().entrySet()) {
+        Map<String, String> migratedShortDescs = LanguageUtils.migrateKeys(construction.getShortDescriptions());
+        for (var entry : migratedShortDescs.entrySet()) {
             shortDescriptions.addProperty(entry.getKey(), entry.getValue());
         }
         json.add("shortDescriptions", shortDescriptions);
 
-        // Descrizioni complete multilingua
+        // Multilingual full descriptions - migrate to BCP 47 format
         JsonObject descriptions = new JsonObject();
-        for (var entry : construction.getDescriptions().entrySet()) {
+        Map<String, String> migratedDescs = LanguageUtils.migrateKeys(construction.getDescriptions());
+        for (var entry : migratedDescs.entrySet()) {
             descriptions.addProperty(entry.getKey(), entry.getValue());
         }
         json.add("descriptions", descriptions);
@@ -383,38 +387,41 @@ public class ConstructionStorage {
             String authorName = json.get("authorName").getAsString();
             Instant createdAt = Instant.parse(json.get("createdAt").getAsString());
 
-            // Carica titoli multilingua
-            Map<String, String> titles = new HashMap<>();
+            // Load multilingual titles and migrate to BCP 47 format
+            Map<String, String> rawTitles = new HashMap<>();
             if (json.has("titles") && json.get("titles").isJsonObject()) {
                 JsonObject titlesObj = json.getAsJsonObject("titles");
                 for (var entry : titlesObj.entrySet()) {
                     if (!entry.getValue().isJsonNull()) {
-                        titles.put(entry.getKey(), entry.getValue().getAsString());
+                        rawTitles.put(entry.getKey(), entry.getValue().getAsString());
                     }
                 }
             }
+            Map<String, String> titles = LanguageUtils.migrateKeys(rawTitles);
 
-            // Carica descrizioni brevi multilingua
-            Map<String, String> shortDescriptions = new HashMap<>();
+            // Load multilingual short descriptions and migrate to BCP 47 format
+            Map<String, String> rawShortDescs = new HashMap<>();
             if (json.has("shortDescriptions") && json.get("shortDescriptions").isJsonObject()) {
                 JsonObject shortDescObj = json.getAsJsonObject("shortDescriptions");
                 for (var entry : shortDescObj.entrySet()) {
                     if (!entry.getValue().isJsonNull()) {
-                        shortDescriptions.put(entry.getKey(), entry.getValue().getAsString());
+                        rawShortDescs.put(entry.getKey(), entry.getValue().getAsString());
                     }
                 }
             }
+            Map<String, String> shortDescriptions = LanguageUtils.migrateKeys(rawShortDescs);
 
-            // Carica descrizioni complete multilingua
-            Map<String, String> descriptions = new HashMap<>();
+            // Load multilingual full descriptions and migrate to BCP 47 format
+            Map<String, String> rawDescs = new HashMap<>();
             if (json.has("descriptions") && json.get("descriptions").isJsonObject()) {
                 JsonObject descriptionsObj = json.getAsJsonObject("descriptions");
                 for (var entry : descriptionsObj.entrySet()) {
                     if (!entry.getValue().isJsonNull()) {
-                        descriptions.put(entry.getKey(), entry.getValue().getAsString());
+                        rawDescs.put(entry.getKey(), entry.getValue().getAsString());
                     }
                 }
             }
+            Map<String, String> descriptions = LanguageUtils.migrateKeys(rawDescs);
 
             Construction construction = new Construction(id, authorId, authorName, createdAt, titles, shortDescriptions, descriptions);
 

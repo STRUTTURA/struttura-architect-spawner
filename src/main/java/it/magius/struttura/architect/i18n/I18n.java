@@ -11,35 +11,36 @@ import java.util.Map;
 import java.util.Properties;
 
 /**
- * Sistema di internazionalizzazione per STRUTTURA: Architect.
- * Supporta traduzioni per-player basate sulle impostazioni client di Minecraft.
- * Fallback automatico a inglese se una traduzione non esiste.
+ * Internationalization system for STRUTTURA: Architect.
+ * Supports per-player translations based on Minecraft client settings.
+ * Automatic fallback to English if a translation doesn't exist.
+ * Uses BCP 47 language tags (e.g., "en-US", "it-IT").
  */
 public class I18n {
 
-    private static final String DEFAULT_LANG = "en";
-
-    // Cache delle traduzioni: lang -> (key -> value)
+    // Cache of translations: simple lang code -> (key -> value)
+    // We use simple codes for file loading but BCP 47 for external APIs
     private static final Map<String, Map<String, String>> translations = new HashMap<>();
 
-    // Lingue caricate
     private static boolean initialized = false;
 
     /**
-     * Inizializza il sistema i18n caricando le lingue disponibili.
+     * Initializes the i18n system by loading available languages.
      */
     public static void init() {
         if (initialized) return;
 
+        // Load translation files using simple codes
         loadLanguage("en");
         loadLanguage("it");
 
         initialized = true;
-        Architect.LOGGER.info("I18n initialized with languages: en, it (default: {})", DEFAULT_LANG);
+        Architect.LOGGER.info("I18n initialized with languages: {} (default: {})",
+            LanguageUtils.SUPPORTED_LANGUAGES, LanguageUtils.DEFAULT_LANG);
     }
 
     /**
-     * Carica un file di lingua.
+     * Loads a language file.
      */
     private static void loadLanguage(String lang) {
         String path = "/assets/architect/lang/" + lang + ".properties";
@@ -67,48 +68,52 @@ public class I18n {
     }
 
     /**
-     * Verifica se una lingua è disponibile.
+     * Checks if a language is available for UI translations.
      */
     public static boolean isLanguageAvailable(String lang) {
-        return translations.containsKey(lang);
+        // Accept both BCP 47 and simple codes
+        String simple = LanguageUtils.toSimple(lang);
+        return translations.containsKey(simple);
     }
 
     /**
-     * Ottiene la lingua di default.
+     * Gets the default language code (BCP 47).
      */
     public static String getDefaultLanguage() {
-        return DEFAULT_LANG;
+        return LanguageUtils.DEFAULT_LANG;
     }
 
     /**
-     * Ottiene il codice lingua del giocatore.
+     * Gets the player's language code in BCP 47 format.
      */
     public static String getPlayerLanguage(ServerPlayer player) {
-        return PlayerLanguageTracker.getInstance().getSimpleLanguageCode(player);
+        return PlayerLanguageTracker.getInstance().getBcp47LanguageCode(player);
     }
 
     /**
-     * Traduce una chiave per un giocatore specifico.
-     * Usa la lingua del client Minecraft del giocatore.
+     * Translates a key for a specific player.
+     * Uses the player's Minecraft client language settings.
      *
-     * @param player il giocatore
-     * @param key la chiave di traduzione
-     * @return la stringa tradotta
+     * @param player the player
+     * @param key the translation key
+     * @return the translated string
      */
     public static String translate(ServerPlayer player, String key) {
         if (!initialized) init();
 
-        String lang = PlayerLanguageTracker.getInstance().getSimpleLanguageCode(player);
-        return translateForLang(lang, key);
+        // Get BCP 47 code and convert to simple for file lookup
+        String bcp47 = PlayerLanguageTracker.getInstance().getBcp47LanguageCode(player);
+        String simple = LanguageUtils.toSimple(bcp47);
+        return translateForLang(simple, key);
     }
 
     /**
-     * Traduce una chiave per un giocatore specifico con parametri.
+     * Translates a key for a specific player with parameters.
      *
-     * @param player il giocatore
-     * @param key la chiave di traduzione
-     * @param args i parametri per i placeholder {0}, {1}, ecc.
-     * @return la stringa tradotta con i parametri sostituiti
+     * @param player the player
+     * @param key the translation key
+     * @param args parameters for placeholders {0}, {1}, etc.
+     * @return the translated string with parameters substituted
      */
     public static String translate(ServerPlayer player, String key, Object... args) {
         String template = translate(player, key);
@@ -116,29 +121,30 @@ public class I18n {
     }
 
     /**
-     * Traduce una chiave per una lingua specifica.
+     * Translates a key for a specific language (simple code).
      */
     private static String translateForLang(String lang, String key) {
-        // Prova la lingua richiesta
+        // Try the requested language
         Map<String, String> langMap = translations.get(lang);
         if (langMap != null && langMap.containsKey(key)) {
             return langMap.get(key);
         }
 
-        // Fallback a inglese
-        if (!lang.equals(DEFAULT_LANG)) {
-            Map<String, String> defaultMap = translations.get(DEFAULT_LANG);
+        // Fallback to English
+        String defaultSimple = LanguageUtils.toSimple(LanguageUtils.DEFAULT_LANG);
+        if (!lang.equals(defaultSimple)) {
+            Map<String, String> defaultMap = translations.get(defaultSimple);
             if (defaultMap != null && defaultMap.containsKey(key)) {
                 return defaultMap.get(key);
             }
         }
 
-        // Ritorna la chiave se non trovata
+        // Return the key if not found
         return key;
     }
 
     /**
-     * Applica gli argomenti ai placeholder.
+     * Applies arguments to placeholders.
      */
     private static String applyArgs(String template, Object... args) {
         for (int i = 0; i < args.length; i++) {
@@ -147,21 +153,22 @@ public class I18n {
         return template;
     }
 
-    // ===== Metodi legacy per compatibilità (usano lingua default) =====
+    // ===== Legacy methods for compatibility (use default language) =====
 
     /**
-     * Traduce una chiave nella lingua di default.
-     * @deprecated Usa translate(ServerPlayer, String) per traduzione per-player
+     * Translates a key in the default language.
+     * @deprecated Use translate(ServerPlayer, String) for per-player translation
      */
     @Deprecated
     public static String translate(String key) {
         if (!initialized) init();
-        return translateForLang(DEFAULT_LANG, key);
+        String defaultSimple = LanguageUtils.toSimple(LanguageUtils.DEFAULT_LANG);
+        return translateForLang(defaultSimple, key);
     }
 
     /**
-     * Traduce una chiave con parametri nella lingua di default.
-     * @deprecated Usa translate(ServerPlayer, String, Object...) per traduzione per-player
+     * Translates a key with parameters in the default language.
+     * @deprecated Use translate(ServerPlayer, String, Object...) for per-player translation
      */
     @Deprecated
     public static String translate(String key, Object... args) {
@@ -171,22 +178,22 @@ public class I18n {
     // ===== Shortcut methods =====
 
     /**
-     * Shortcut per translate(player, key).
+     * Shortcut for translate(player, key).
      */
     public static String tr(ServerPlayer player, String key) {
         return translate(player, key);
     }
 
     /**
-     * Shortcut per translate(player, key, args).
+     * Shortcut for translate(player, key, args).
      */
     public static String tr(ServerPlayer player, String key, Object... args) {
         return translate(player, key, args);
     }
 
     /**
-     * Shortcut per translate(key) - lingua default.
-     * @deprecated Usa tr(ServerPlayer, String) per traduzione per-player
+     * Shortcut for translate(key) - default language.
+     * @deprecated Use tr(ServerPlayer, String) for per-player translation
      */
     @Deprecated
     public static String tr(String key) {
@@ -194,8 +201,8 @@ public class I18n {
     }
 
     /**
-     * Shortcut per translate(key, args) - lingua default.
-     * @deprecated Usa tr(ServerPlayer, String, Object...) per traduzione per-player
+     * Shortcut for translate(key, args) - default language.
+     * @deprecated Use tr(ServerPlayer, String, Object...) for per-player translation
      */
     @Deprecated
     public static String tr(String key, Object... args) {
