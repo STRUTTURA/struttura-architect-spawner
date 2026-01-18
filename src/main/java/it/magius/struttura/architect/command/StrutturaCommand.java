@@ -269,6 +269,14 @@ public class StrutturaCommand {
                         )
                     )
                 )
+                // Options command - handled client-side, registered here for autocomplete
+                .then(Commands.literal("options")
+                    .executes(ctx -> {
+                        // This is handled by the client-side command
+                        // Server just returns success for single-player worlds
+                        return 1;
+                    })
+                )
         );
     }
 

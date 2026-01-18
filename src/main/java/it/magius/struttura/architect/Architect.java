@@ -1,5 +1,6 @@
 package it.magius.struttura.architect;
 
+import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.command.StrutturaCommand;
 import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.dev.DevTestHandler;
@@ -34,6 +35,9 @@ public class Architect implements ModInitializer {
 
 		// Carica la configurazione
 		ArchitectConfig.getInstance();
+
+		// Fetch mod settings from server asynchronously (updates disclaimer if available)
+		ApiClient.fetchModSettings();
 
 		// Inizializza il sistema i18n
 		I18n.init();

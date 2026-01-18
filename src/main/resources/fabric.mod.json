@@ -2,7 +2,7 @@
 	"schemaVersion": 1,
 	"id": "architect",
 	"version": "${version}",
-	"name": "STRUTTURA - Architect",
+	"name": "STRUTTURA",
 	"description": "Create and share your Minecraft structures with the world. Part of the STRUTTURA ecosystem.",
 	"authors": [
 		"MagiusCHE"
@@ -21,6 +21,9 @@
 		],
 		"client": [
 			"it.magius.struttura.architect.ArchitectClient"
+		],
+		"modmenu": [
+			"it.magius.struttura.architect.client.ModMenuIntegration"
 		]
 	},
 	"mixins": [
@@ -36,5 +39,8 @@
 		"minecraft": "~1.21.11",
 		"java": ">=21",
 		"fabric-api": "*"
+	},
+	"suggests": {
+		"modmenu": "*"
 	}
 }

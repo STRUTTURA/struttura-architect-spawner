@@ -1355,4 +1355,99 @@ public class ApiClient {
             return new MetadataResponse(metadataStatus, "Failed to parse metadata", false, constructionId, null);
         }
     }
+
+    /**
+     * Fetches mod settings from the server asynchronously.
+     * Updates the config with modOptionsDisclaimer and saves it.
+     * If the call fails, sets default disclaimer messages.
+     */
+    public static void fetchModSettings() {
+        CompletableFuture.runAsync(() -> {
+            try {
+                executeFetchModSettings();
+            } catch (Exception e) {
+                Architect.LOGGER.error("Failed to fetch mod settings", e);
+                setDefaultDisclaimer();
+            }
+        });
+    }
+
+    private static void executeFetchModSettings() {
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String endpoint = config.getEndpoint();
+        String url = endpoint + "/mod/settings";
+
+        Architect.LOGGER.info("Fetching mod settings from {}", url);
+
+        try {
+            HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+            try {
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(10000); // 10 seconds for startup
+                conn.setReadTimeout(10000);
+                conn.setRequestProperty("Accept", "application/json");
+                conn.setRequestProperty("X-Api-Key", config.getApikey());
+
+                int statusCode = conn.getResponseCode();
+                String responseBody = readResponse(conn);
+
+                Architect.LOGGER.info("Mod settings response: {} - {} bytes", statusCode, responseBody.length());
+
+                if (statusCode >= 200 && statusCode < 300) {
+                    // Parse the response
+                    JsonObject json = GSON.fromJson(responseBody, JsonObject.class);
+                    boolean updated = false;
+
+                    // Update www if present
+                    if (json.has("www") && json.get("www").isJsonPrimitive()) {
+                        String www = json.get("www").getAsString();
+                        if (www != null && !www.isEmpty()) {
+                            config.setWww(www);
+                            Architect.LOGGER.info("Mod settings: www updated to {}", www);
+                            updated = true;
+                        }
+                    }
+
+                    // Update disclaimer if present
+                    if (json.has("modOptionsDisclaimer") && json.get("modOptionsDisclaimer").isJsonObject()) {
+                        JsonObject disclaimerJson = json.getAsJsonObject("modOptionsDisclaimer");
+                        Map<String, String> disclaimer = new HashMap<>();
+
+                        for (var entry : disclaimerJson.entrySet()) {
+                            if (entry.getValue().isJsonPrimitive()) {
+                                disclaimer.put(entry.getKey(), entry.getValue().getAsString());
+                            }
+                        }
+
+                        if (!disclaimer.isEmpty()) {
+                            config.setModOptionsDisclaimer(disclaimer);
+                            Architect.LOGGER.info("Mod settings: {} disclaimer languages loaded", disclaimer.size());
+                            updated = true;
+                        }
+                    }
+
+                    if (updated) {
+                        config.save();
+                        return;
+                    }
+                }
+
+                // If we got here, something went wrong - use defaults
+                Architect.LOGGER.warn("Invalid mod settings response, using defaults");
+                setDefaultDisclaimer();
+
+            } finally {
+                conn.disconnect();
+            }
+        } catch (Exception e) {
+            Architect.LOGGER.error("Failed to fetch mod settings: {}", e.getMessage());
+            setDefaultDisclaimer();
+        }
+    }
+
+    private static void setDefaultDisclaimer() {
+        // If API call fails, do NOT modify the current config value.
+        // This preserves any previously fetched disclaimer from the saved config.
+        Architect.LOGGER.info("Keeping existing disclaimer from config (API call failed)");
+    }
 }

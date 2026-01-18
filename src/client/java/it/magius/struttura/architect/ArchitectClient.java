@@ -1,5 +1,6 @@
 package it.magius.struttura.architect;
 
+import it.magius.struttura.architect.client.ClientCommands;
 import it.magius.struttura.architect.client.KeybindingHandler;
 import it.magius.struttura.architect.client.ModKeybindings;
 import it.magius.struttura.architect.client.ScreenshotCapture;
@@ -34,6 +35,9 @@ public class ArchitectClient implements ClientModInitializer {
 
         // Registra i keybindings
         ModKeybindings.register();
+
+        // Registra i comandi client-side
+        ClientCommands.register();
 
         // Il payload type è già registrato dal server in NetworkHandler.registerServer()
         // Il client deve solo registrare il receiver

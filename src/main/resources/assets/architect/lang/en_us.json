@@ -13,5 +13,23 @@
   "key.struttura.select_pos2": "Selection Pos2",
   "key.struttura.select_clear": "Selection Clear",
   "key.struttura.select_apply": "Selection Apply",
-  "key.struttura.select_applyall": "Selection Apply All"
+  "key.struttura.select_applyall": "Selection Apply All",
+
+  "struttura.settings.title": "STRUTTURA Settings",
+  "struttura.settings.disclaimer.default": "Welcome to STRUTTURA! Share your Minecraft creations with the world. Visit https://struttura.magius.it for more info.",
+  "struttura.settings.apikey": "API Key",
+  "struttura.settings.timeout": "Request Timeout (sec)",
+  "struttura.settings.overlay": "Visiting Building Frame Position",
+  "struttura.settings.offset": "Offset",
+  "struttura.settings.save": "Save",
+  "struttura.settings.cancel": "Cancel",
+
+  "struttura.apikey.setup.title": "API Key Setup",
+  "struttura.apikey.setup.step1": "Create an account or sign in on",
+  "struttura.apikey.setup.website.btn": "struttura.magius.it",
+  "struttura.apikey.setup.step2": "Create a new API Key in your dashboard",
+  "struttura.apikey.setup.dashboard.btn": "Open Dashboard",
+  "struttura.apikey.setup.step3": "Copy your API Key and paste it here (Ctrl+V)",
+  "struttura.apikey.setup.step4": "Press Connect to link your account",
+  "struttura.apikey.setup.connect": "Connect"
 }

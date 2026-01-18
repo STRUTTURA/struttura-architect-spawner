@@ -5,6 +5,7 @@
 	"client": [
 		"ArchitectClientMixin",
 		"HammerGuiMixin",
+		"PauseScreenMixin",
 		"TitleScreenMixin"
 	],
 	"injectors": {

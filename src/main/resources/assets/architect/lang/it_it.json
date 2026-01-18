@@ -13,5 +13,23 @@
   "key.struttura.select_pos2": "Selezione Pos2",
   "key.struttura.select_clear": "Selezione Pulisci",
   "key.struttura.select_apply": "Selezione Applica",
-  "key.struttura.select_applyall": "Selezione Applica Tutto"
+  "key.struttura.select_applyall": "Selezione Applica Tutto",
+
+  "struttura.settings.title": "Impostazioni STRUTTURA",
+  "struttura.settings.disclaimer.default": "Benvenuto in STRUTTURA! Condividi le tue creazioni Minecraft con il mondo. Visita https://struttura.magius.it per maggiori informazioni.",
+  "struttura.settings.apikey": "Chiave API",
+  "struttura.settings.timeout": "Timeout Richieste (sec)",
+  "struttura.settings.overlay": "Posizione Frame Creazione in Visita",
+  "struttura.settings.offset": "Offset",
+  "struttura.settings.save": "Salva",
+  "struttura.settings.cancel": "Annulla",
+
+  "struttura.apikey.setup.title": "Configurazione API Key",
+  "struttura.apikey.setup.step1": "Crea un account o accedi su",
+  "struttura.apikey.setup.website.btn": "struttura.magius.it",
+  "struttura.apikey.setup.step2": "Crea una nuova API Key nella tua dashboard",
+  "struttura.apikey.setup.dashboard.btn": "Apri Dashboard",
+  "struttura.apikey.setup.step3": "Copia la tua API Key e incollala qui (Ctrl+V)",
+  "struttura.apikey.setup.step4": "Premi Collega per collegare il tuo account",
+  "struttura.apikey.setup.connect": "Collega"
 }

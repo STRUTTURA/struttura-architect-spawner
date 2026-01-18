@@ -9,10 +9,12 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
- * Configurazione del mod Architect.
- * Il file viene salvato in .minecraft/config/architect.json
+ * Configurazione del mod STRUTTURA.
+ * Il file viene salvato in .minecraft/config/struttura.json
  */
 public class ArchitectConfig {
 
@@ -20,7 +22,7 @@ public class ArchitectConfig {
         .setPrettyPrinting()
         .create();
 
-    private static final String CONFIG_FILE_NAME = "architect.json";
+    private static final String CONFIG_FILE_NAME = "struttura.json";
 
     private static ArchitectConfig instance;
 
@@ -33,6 +35,18 @@ public class ArchitectConfig {
     // Wireframe rendering settings
     private int wireframeFadeStart = 10;   // Distanza inizio fade (blocchi)
     private int wireframeFadeEnd = 30;     // Distanza fine fade / non renderizzato (blocchi)
+
+    // Overlay position settings (for in-game building info display)
+    private String overlayAnchorV = "TOP";      // TOP, BOTTOM, VCENTER
+    private String overlayAnchorH = "HCENTER";  // LEFT, RIGHT, HCENTER
+    private int overlayOffsetX = 0;             // 0-100 (%)
+    private int overlayOffsetY = 0;             // 0-100 (%)
+
+    // Website URL (for API key requests, etc.)
+    private String www = "https://struttura.magius.it";
+
+    // Server-fetched settings (updated from /mod/settings endpoint)
+    private Map<String, String> modOptionsDisclaimer = new HashMap<>();
 
     private ArchitectConfig() {}
 
@@ -105,10 +119,50 @@ public class ArchitectConfig {
     public int getRequestTimeout() { return requestTimeout; }
     public int getWireframeFadeStart() { return wireframeFadeStart; }
     public int getWireframeFadeEnd() { return wireframeFadeEnd; }
+    public String getOverlayAnchorV() { return overlayAnchorV; }
+    public String getOverlayAnchorH() { return overlayAnchorH; }
+    public int getOverlayOffsetX() { return overlayOffsetX; }
+    public int getOverlayOffsetY() { return overlayOffsetY; }
+    public Map<String, String> getModOptionsDisclaimer() { return modOptionsDisclaimer; }
+    public String getWww() { return www; }
+
+    /**
+     * Gets the disclaimer text for a specific language.
+     * Fallback order: exact match -> base language -> English (en-US or en) -> first available.
+     */
+    public String getDisclaimerForLanguage(String langCode) {
+        if (modOptionsDisclaimer == null || modOptionsDisclaimer.isEmpty()) {
+            return "";
+        }
+        // Try exact match first
+        if (modOptionsDisclaimer.containsKey(langCode)) {
+            return modOptionsDisclaimer.get(langCode);
+        }
+        // Try base language (e.g., "en" from "en-US")
+        String baseLang = langCode.contains("-") ? langCode.split("-")[0] : langCode;
+        if (modOptionsDisclaimer.containsKey(baseLang)) {
+            return modOptionsDisclaimer.get(baseLang);
+        }
+        // Fallback to English (try en-US first, then en)
+        if (modOptionsDisclaimer.containsKey("en-US")) {
+            return modOptionsDisclaimer.get("en-US");
+        }
+        if (modOptionsDisclaimer.containsKey("en")) {
+            return modOptionsDisclaimer.get("en");
+        }
+        // Return first available
+        return modOptionsDisclaimer.values().iterator().next();
+    }
 
     // Setters
     public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
     public void setAuth(String auth) { this.auth = auth; }
     public void setApikey(String apikey) { this.apikey = apikey; }
     public void setRequestTimeout(int requestTimeout) { this.requestTimeout = requestTimeout; }
+    public void setOverlayAnchorV(String overlayAnchorV) { this.overlayAnchorV = overlayAnchorV; }
+    public void setOverlayAnchorH(String overlayAnchorH) { this.overlayAnchorH = overlayAnchorH; }
+    public void setOverlayOffsetX(int overlayOffsetX) { this.overlayOffsetX = Math.max(0, Math.min(100, overlayOffsetX)); }
+    public void setOverlayOffsetY(int overlayOffsetY) { this.overlayOffsetY = Math.max(0, Math.min(100, overlayOffsetY)); }
+    public void setModOptionsDisclaimer(Map<String, String> modOptionsDisclaimer) { this.modOptionsDisclaimer = modOptionsDisclaimer; }
+    public void setWww(String www) { this.www = www; }
 }
