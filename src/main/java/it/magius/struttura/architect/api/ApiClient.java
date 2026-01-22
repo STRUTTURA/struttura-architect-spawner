@@ -191,18 +191,14 @@ public class ApiClient {
         json.addProperty("commandBlocksCount", commandBlocksCount);
         json.addProperty("roomsCount", roomsCount);
 
-        // Bounds (normalizzati: min=0, max=size-1)
+        // Bounds (dimensions)
         JsonObject bounds = new JsonObject();
         var b = construction.getBounds();
         if (b.isValid()) {
-            // I bounds nel metadata devono essere relativi (0,0,0 based)
-            // perché i blocchi sono salvati con coordinate normalizzate
-            bounds.addProperty("minX", 0);
-            bounds.addProperty("minY", 0);
-            bounds.addProperty("minZ", 0);
-            bounds.addProperty("maxX", b.getSizeX() - 1);
-            bounds.addProperty("maxY", b.getSizeY() - 1);
-            bounds.addProperty("maxZ", b.getSizeZ() - 1);
+            // bounds.x/y/z are the dimensions (width, height, depth)
+            bounds.addProperty("x", b.getSizeX());
+            bounds.addProperty("y", b.getSizeY());
+            bounds.addProperty("z", b.getSizeZ());
         }
         json.add("bounds", bounds);
 
@@ -961,16 +957,15 @@ public class ApiClient {
             construction.setRequiredMods(requiredMods);
 
             // Parse i bounds dal metadata (necessari per denormalizzare le coordinate)
+            // bounds.x/y/z are the dimensions, min is always 0,0,0
             if (metadata.has("bounds") && metadata.get("bounds").isJsonObject()) {
                 JsonObject boundsObj = metadata.getAsJsonObject("bounds");
-                if (boundsObj.has("minX") && boundsObj.has("maxX")) {
-                    int minX = boundsObj.get("minX").getAsInt();
-                    int minY = boundsObj.get("minY").getAsInt();
-                    int minZ = boundsObj.get("minZ").getAsInt();
-                    int maxX = boundsObj.get("maxX").getAsInt();
-                    int maxY = boundsObj.get("maxY").getAsInt();
-                    int maxZ = boundsObj.get("maxZ").getAsInt();
-                    construction.getBounds().set(minX, minY, minZ, maxX, maxY, maxZ);
+                if (boundsObj.has("x") && boundsObj.has("y") && boundsObj.has("z")) {
+                    int sizeX = boundsObj.get("x").getAsInt();
+                    int sizeY = boundsObj.get("y").getAsInt();
+                    int sizeZ = boundsObj.get("z").getAsInt();
+                    // Set bounds: min is 0,0,0, max is size-1
+                    construction.getBounds().set(0, 0, 0, sizeX - 1, sizeY - 1, sizeZ - 1);
                 }
             }
 
