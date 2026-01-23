@@ -70,6 +70,14 @@ public class NetworkHandler {
         PayloadTypeRegistry.playS2C().register(ModRequirementsPacket.TYPE, ModRequirementsPacket.STREAM_CODEC);
         PayloadTypeRegistry.playS2C().register(BlockListPacket.TYPE, BlockListPacket.STREAM_CODEC);
         PayloadTypeRegistry.playS2C().register(TranslationsPacket.TYPE, TranslationsPacket.STREAM_CODEC);
+        // InGame building packets
+        PayloadTypeRegistry.playS2C().register(InGameBuildingPacket.TYPE, InGameBuildingPacket.STREAM_CODEC);
+        PayloadTypeRegistry.playC2S().register(InGameLikePacket.TYPE, InGameLikePacket.STREAM_CODEC);
+        // InGame setup packets
+        PayloadTypeRegistry.playS2C().register(InGameListsPacket.TYPE, InGameListsPacket.STREAM_CODEC);
+        PayloadTypeRegistry.playC2S().register(InGameSelectPacket.TYPE, InGameSelectPacket.STREAM_CODEC);
+        // Open options screen packet (for /struttura options command)
+        PayloadTypeRegistry.playS2C().register(OpenOptionsPacket.TYPE, OpenOptionsPacket.STREAM_CODEC);
 
         // Registra il receiver per i dati dello screenshot
         ServerPlayNetworking.registerGlobalReceiver(ScreenshotDataPacket.TYPE, NetworkHandler::handleScreenshotData);
@@ -77,8 +85,21 @@ public class NetworkHandler {
         ServerPlayNetworking.registerGlobalReceiver(SelectionKeyPacket.TYPE, NetworkHandler::handleSelectionKey);
         // Registra il receiver per le azioni GUI
         ServerPlayNetworking.registerGlobalReceiver(GuiActionPacket.TYPE, NetworkHandler::handleGuiAction);
+        // Registra il receiver per i like InGame
+        ServerPlayNetworking.registerGlobalReceiver(InGameLikePacket.TYPE, NetworkHandler::handleInGameLike);
+        // Registra il receiver per la selezione lista InGame
+        ServerPlayNetworking.registerGlobalReceiver(InGameSelectPacket.TYPE, NetworkHandler::handleInGameSelect);
 
         Architect.LOGGER.info("Registered network packets");
+    }
+
+    /**
+     * Sends a packet to the client to open the options/settings screen.
+     * Called when the player executes /struttura options.
+     */
+    public static void sendOpenOptions(ServerPlayer player) {
+        ServerPlayNetworking.send(player, new OpenOptionsPacket());
+        Architect.LOGGER.debug("Sent open options packet to {}", player.getName().getString());
     }
 
     /**
@@ -2647,5 +2668,94 @@ public class NetworkHandler {
         );
 
         return new BlockPos((int) tpX, (int) tpY, (int) tpZ);
+    }
+
+    // ===== InGame Building Methods =====
+
+    /**
+     * Sends the in-game building state to a player.
+     * Called when player enters or exits a spawned building.
+     */
+    public static void sendInGameBuildingState(ServerPlayer player,
+            it.magius.struttura.architect.ingame.model.SpawnedBuildingInfo buildingInfo,
+            boolean hasLiked) {
+        InGameBuildingPacket packet;
+        if (buildingInfo != null) {
+            packet = InGameBuildingPacket.entered(buildingInfo.rdns(), buildingInfo.pk(), hasLiked);
+        } else {
+            packet = InGameBuildingPacket.empty();
+        }
+        ServerPlayNetworking.send(player, packet);
+        Architect.LOGGER.debug("Sent in-game building state to {}: inBuilding={}, rdns={}",
+            player.getName().getString(), packet.inBuilding(), packet.rdns());
+    }
+
+    /**
+     * Handles a like request from a client.
+     */
+    private static void handleInGameLike(InGameLikePacket packet,
+            ServerPlayNetworking.Context context) {
+        ServerPlayer player = context.player();
+
+        Architect.LOGGER.debug("Received like request from {}: rdns={}, pk={}",
+            player.getName().getString(), packet.rdns(), packet.pk());
+
+        // Send the like via LikeManager
+        it.magius.struttura.architect.ingame.LikeManager.getInstance()
+            .likeBuilding(player, packet.rdns(), packet.pk());
+
+        // Send updated state back to client (now liked)
+        it.magius.struttura.architect.ingame.tracker.PlayerBuildingState state =
+            it.magius.struttura.architect.ingame.tracker.PlayerBuildingState.getInstance();
+        it.magius.struttura.architect.ingame.model.SpawnedBuildingInfo currentBuilding =
+            state.getCurrentBuilding(player);
+
+        if (currentBuilding != null && currentBuilding.pk() == packet.pk()) {
+            // Player is still in the building they liked, send update
+            sendInGameBuildingState(player, currentBuilding, true);
+        }
+    }
+
+    /**
+     * Handles an InGame list selection from a client.
+     */
+    private static void handleInGameSelect(InGameSelectPacket packet,
+            ServerPlayNetworking.Context context) {
+        ServerPlayer player = context.player();
+
+        it.magius.struttura.architect.ingame.InGameManager manager =
+            it.magius.struttura.architect.ingame.InGameManager.getInstance();
+
+        if (packet.declined()) {
+            Architect.LOGGER.info("Player {} declined InGame mode", player.getName().getString());
+            manager.decline();
+        } else {
+            Architect.LOGGER.info("Player {} selected InGame list: {} (id={})",
+                player.getName().getString(), packet.listName(), packet.listId());
+
+            // Initialize with selected list
+            manager.initialize(
+                packet.listId(),
+                packet.listName(),
+                it.magius.struttura.architect.ingame.InGameState.AuthType.PUBLIC
+            );
+
+            // Fetch the spawnable list data
+            var server = ((ServerLevel) player.level()).getServer();
+            it.magius.struttura.architect.api.ApiClient.fetchSpawnableList(packet.listId(), response -> {
+                if (response != null && response.success() && response.spawnableList() != null) {
+                    server.execute(() -> {
+                        manager.setSpawnableList(response.spawnableList());
+                        player.sendSystemMessage(
+                            net.minecraft.network.chat.Component.translatable(
+                                "struttura.ingame.activated",
+                                packet.listName(),
+                                response.spawnableList().getBuildingCount()
+                            )
+                        );
+                    });
+                }
+            });
+        }
     }
 }

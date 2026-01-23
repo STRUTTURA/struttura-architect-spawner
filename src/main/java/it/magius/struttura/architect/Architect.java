@@ -6,6 +6,11 @@ import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.dev.DevTestHandler;
 import it.magius.struttura.architect.entity.EntityFreezeHandler;
 import it.magius.struttura.architect.entity.EntitySpawnHandler;
+import it.magius.struttura.architect.ingame.ChunkDiscoveryHandler;
+import it.magius.struttura.architect.ingame.InGameManager;
+import it.magius.struttura.architect.ingame.ModAttachments;
+import it.magius.struttura.architect.ingame.spawn.SpawnQueue;
+import it.magius.struttura.architect.ingame.tracker.BuildingTracker;
 import it.magius.struttura.architect.item.TapeAttackHandler;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.network.NetworkHandler;
@@ -33,6 +38,9 @@ public class Architect implements ModInitializer {
 	public void onInitialize() {
 		LOGGER.info("STRUTTURA: Architect v{} initializing...", MOD_VERSION);
 
+		// Register chunk data attachments (must be early)
+		ModAttachments.register();
+
 		// Carica la configurazione
 		ArchitectConfig.getInstance();
 
@@ -53,6 +61,15 @@ public class Architect implements ModInitializer {
 
 		// Registra l'handler per lo spawn automatico di entità
 		EntitySpawnHandler.getInstance().register();
+
+		// Register chunk discovery handler for InGame spawner
+		ChunkDiscoveryHandler.getInstance().register();
+
+		// Register spawn queue for gradual chunk processing
+		SpawnQueue.getInstance().register();
+
+		// Register building tracker for player proximity detection
+		BuildingTracker.getInstance().register();
 
 		// TODO: Re-enable tape handler when keystone feature is implemented
 		// Registra l'handler per il left-click con il Tape sui blocchi
@@ -79,6 +96,11 @@ public class Architect implements ModInitializer {
 			ConstructionRegistry.getInstance().saveAll();
 		});
 
+		// Initialize InGame system when world loads
+		ServerWorldEvents.LOAD.register((server, world) -> {
+			InGameManager.getInstance().onWorldLoad(server, world);
+		});
+
 		// Pulisci il registro quando il mondo viene scaricato
 		ServerWorldEvents.UNLOAD.register((server, world) -> {
 			// Solo per il mondo overworld (evita di pulire piu' volte)
@@ -86,6 +108,8 @@ public class Architect implements ModInitializer {
 				LOGGER.info("World unloading, clearing construction registry");
 				ConstructionRegistry.getInstance().clear();
 			}
+			// Unload InGame system
+			InGameManager.getInstance().onWorldUnload(world);
 		});
 
 		// Quando un giocatore si connette, ri-sincronizza il wireframe se aveva una sessione attiva
@@ -97,6 +121,9 @@ public class Architect implements ModInitializer {
 				LOGGER.info("Player {} rejoined with active editing session, syncing wireframe", player.getName().getString());
 				NetworkHandler.sendWireframeSync(player);
 			}
+
+			// Notify InGame manager that player joined (may show setup screen)
+			InGameManager.getInstance().onPlayerJoin(player);
 
 			// DevTest: execute test commands if enabled
 			if (DevTestHandler.isEnabled()) {

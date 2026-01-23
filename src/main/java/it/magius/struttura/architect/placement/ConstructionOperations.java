@@ -753,15 +753,28 @@ public class ConstructionOperations {
         int pivotX,
         int pivotZ
     ) {
-        BlockPos entrance = construction.getAnchors().getEntrance(); // normalized coords
+        // Get entrance or use pivot as fallback (center of building)
+        int entranceX, entranceY, entranceZ;
+        if (construction.getAnchors().hasEntrance()) {
+            BlockPos entrance = construction.getAnchors().getEntrance(); // normalized coords
+            entranceX = entrance.getX();
+            entranceY = entrance.getY();
+            entranceZ = entrance.getZ();
+        } else {
+            // No entrance anchor - use pivot (center) at ground level
+            entranceX = pivotX;
+            entranceY = 0;
+            entranceZ = pivotZ;
+        }
 
         // Rotate the entrance position around the pivot (same rotation applied in placeConstructionAt)
-        int[] rotatedEntrance = rotateXZ(entrance.getX(), entrance.getZ(), pivotX, pivotZ, rotationSteps);
+        int[] rotatedEntrance = rotateXZ(entranceX, entranceZ, pivotX, pivotZ, rotationSteps);
 
-        // targetPos = spawnPoint - rotatedEntrance
+        // targetPos = spawnPoint - entrance offset
+        // If entrance is at Y=0 and ground is at Y=60, building origin should be at Y=60
         return new BlockPos(
             spawnPoint.getX() - rotatedEntrance[0],
-            spawnPoint.getY() - entrance.getY(), // Y doesn't change with rotation
+            spawnPoint.getY() - entranceY,
             spawnPoint.getZ() - rotatedEntrance[1]
         );
     }
@@ -2008,20 +2021,52 @@ public class ConstructionOperations {
         float yaw,
         @Nullable List<String> forcedRoomIds
     ) {
+        return architectSpawn(
+            (ServerLevel) player.level(),
+            construction,
+            yaw,
+            forcedRoomIds,
+            null,  // No specific spawn point - calculate from player
+            player.level().getSeed() ^ (long)(player.getX() * 1000) ^ (long)(player.getZ() * 1000),
+            player
+        );
+    }
+
+    /**
+     * Spawns a construction with random room selection.
+     * Used both for architect mode (position from player) and InGame spawning (specific position).
+     *
+     * @param level The server level
+     * @param construction The construction to spawn
+     * @param yaw The rotation angle for the construction
+     * @param forcedRoomIds Optional list of room IDs to force spawn
+     * @param spawnPoint Optional specific spawn point (entrance position). If null, calculates from player.
+     * @param roomSeed Seed for random room selection
+     * @param player Optional player for position calculation when spawnPoint is null
+     * @return ArchitectSpawnResult with counts and origin position
+     */
+    public static ArchitectSpawnResult architectSpawn(
+        ServerLevel level,
+        Construction construction,
+        float yaw,
+        @Nullable List<String> forcedRoomIds,
+        @Nullable BlockPos spawnPoint,
+        long roomSeed,
+        @Nullable ServerPlayer player
+    ) {
         if (construction.getBlockCount() == 0) {
             return new ArchitectSpawnResult(0, 0, 0, BlockPos.ZERO);
         }
 
-        ServerLevel level = (ServerLevel) player.level();
         ConstructionBounds bounds = construction.getBounds();
 
         // Step 1: Extract eligible rooms (all rooms in ArchitectSpawn mode)
         List<Room> eligibleRooms = extractEligibleRooms(construction);
 
         // Step 2: Select rooms to spawn (random, non-overlapping, with forced rooms support)
-        List<Room> roomsToSpawn = selectRoomsToSpawn(eligibleRooms, player, construction, forcedRoomIds);
+        List<Room> roomsToSpawn = selectRoomsToSpawnWithSeed(eligibleRooms, roomSeed, construction, forcedRoomIds);
 
-        // Step 3: Calculate position and rotation (same as pull/move)
+        // Step 3: Calculate position and rotation
         int rotationSteps = 0;
         int pivotX = 0;
         int pivotZ = 0;
@@ -2041,10 +2086,20 @@ public class ConstructionOperations {
         }
 
         BlockPos targetPos;
-        if (construction.getAnchors().hasEntrance()) {
-            targetPos = calculatePositionAtEntranceRotated(player, construction, rotationSteps, pivotX, pivotZ);
+        if (spawnPoint != null) {
+            // Use provided spawn point (InGame spawning)
+            targetPos = calculatePositionAtEntranceRotated(spawnPoint, construction, rotationSteps, pivotX, pivotZ);
+        } else if (player != null) {
+            // Calculate from player position (Architect mode)
+            if (construction.getAnchors().hasEntrance()) {
+                targetPos = calculatePositionAtEntranceRotated(player, construction, rotationSteps, pivotX, pivotZ);
+            } else {
+                targetPos = calculatePositionInFront(player, bounds);
+            }
         } else {
-            targetPos = calculatePositionInFront(player, bounds);
+            // No position available
+            Architect.LOGGER.error("architectSpawn called without spawnPoint or player");
+            return new ArchitectSpawnResult(0, 0, 0, BlockPos.ZERO);
         }
 
         // Step 4: Place base construction blocks (skip entities and command blocks)
@@ -2089,17 +2144,17 @@ public class ConstructionOperations {
     }
 
     /**
-     * Selects rooms to spawn using randomization.
+     * Selects rooms to spawn using randomization with a provided seed.
      *
      * @param eligibleRooms Rooms that passed spawn criteria
-     * @param player Player for position-based seed
+     * @param seed Seed for random room selection
      * @param construction Construction for bounds calculation
      * @param forcedRoomIds Optional list of room IDs to force spawn (100% probability)
      * @return List of non-overlapping rooms to spawn
      */
-    private static List<Room> selectRoomsToSpawn(
+    private static List<Room> selectRoomsToSpawnWithSeed(
         List<Room> eligibleRooms,
-        ServerPlayer player,
+        long seed,
         Construction construction,
         @Nullable List<String> forcedRoomIds
     ) {
@@ -2140,10 +2195,6 @@ public class ConstructionOperations {
             // The +1 accounts for the "no room spawns" option
             double spawnProbability = 1.0 / (nonForcedRooms.size() + 1);
 
-            // Create seeded random based on world seed + player position
-            long seed = player.level().getSeed()
-                ^ (long)(player.getX() * 1000)
-                ^ (long)(player.getZ() * 1000);
             Random random = new Random(seed);
 
             for (Room room : nonForcedRooms) {

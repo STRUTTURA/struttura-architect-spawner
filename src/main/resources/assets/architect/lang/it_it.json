@@ -31,5 +31,13 @@
   "struttura.apikey.setup.dashboard.btn": "Apri Dashboard",
   "struttura.apikey.setup.step3": "Copia la tua API Key e incollala qui (Ctrl+V)",
   "struttura.apikey.setup.step4": "Premi Collega per collegare il tuo account",
-  "struttura.apikey.setup.connect": "Collega"
+  "struttura.apikey.setup.connect": "Collega",
+
+  "struttura.ingame.setup.title": "STRUTTURA: Modalità InGame",
+  "struttura.ingame.setup.subtitle": "Seleziona una lista di creazioni da esplorare in questo mondo",
+  "struttura.ingame.setup.decline": "Gioca senza creazioni",
+  "struttura.ingame.setup.nolists": "Nessuna lista di creazioni disponibile",
+  "struttura.ingame.setup.buildings": "%d creazioni",
+
+  "struttura.ingame.activated": "§a[STRUTTURA]§f Modalità InGame attivata! Lista: %s (%d creazioni)"
 }

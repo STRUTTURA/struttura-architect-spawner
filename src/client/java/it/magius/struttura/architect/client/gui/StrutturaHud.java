@@ -1,6 +1,7 @@
 package it.magius.struttura.architect.client.gui;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.client.ingame.InBuildingHud;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
@@ -48,14 +49,15 @@ public class StrutturaHud {
             return;
         }
 
-        // Only render if in editing mode
+        // Check if in editing mode
         PanelManager pm = PanelManager.getInstance();
-        if (!pm.isEditing()) {
-            return;
+        if (pm.isEditing()) {
+            // Render mini editing status panel (non-interactive)
+            renderEditingStatusPanel(graphics, mc.font, pm);
+        } else {
+            // If not editing, try to render in-building HUD
+            InBuildingHud.render(graphics, mc.font);
         }
-
-        // Render mini editing status panel (non-interactive)
-        renderEditingStatusPanel(graphics, mc.font, pm);
     }
 
     /**

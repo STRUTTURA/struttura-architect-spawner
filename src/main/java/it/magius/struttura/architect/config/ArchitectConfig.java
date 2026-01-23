@@ -48,6 +48,9 @@ public class ArchitectConfig {
     // Server-fetched settings (updated from /mod/settings endpoint)
     private Map<String, String> modOptionsDisclaimer = new HashMap<>();
 
+    // InGame spawner settings (for dedicated servers)
+    private Long inGameListId = null;  // If set, auto-initialize InGame with this list
+
     private ArchitectConfig() {}
 
     /**
@@ -125,6 +128,7 @@ public class ArchitectConfig {
     public int getOverlayOffsetY() { return overlayOffsetY; }
     public Map<String, String> getModOptionsDisclaimer() { return modOptionsDisclaimer; }
     public String getWww() { return www; }
+    public Long getInGameListId() { return inGameListId; }
 
     /**
      * Gets the disclaimer text for a specific language.
@@ -165,4 +169,5 @@ public class ArchitectConfig {
     public void setOverlayOffsetY(int overlayOffsetY) { this.overlayOffsetY = Math.max(0, Math.min(100, overlayOffsetY)); }
     public void setModOptionsDisclaimer(Map<String, String> modOptionsDisclaimer) { this.modOptionsDisclaimer = modOptionsDisclaimer; }
     public void setWww(String www) { this.www = www; }
+    public void setInGameListId(Long inGameListId) { this.inGameListId = inGameListId; }
 }

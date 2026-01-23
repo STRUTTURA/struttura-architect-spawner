@@ -8,14 +8,20 @@ import it.magius.struttura.architect.client.WireframeRenderer;
 import it.magius.struttura.architect.client.gui.PanelManager;
 import it.magius.struttura.architect.client.gui.StrutturaHud;
 import it.magius.struttura.architect.client.gui.panel.MainPanel;
+import it.magius.struttura.architect.client.gui.InGameSetupScreen;
+import it.magius.struttura.architect.client.ingame.InGameClientState;
 import it.magius.struttura.architect.network.BlockListPacket;
 import it.magius.struttura.architect.network.BlockPositionsSyncPacket;
 import it.magius.struttura.architect.network.ConstructionListPacket;
 import it.magius.struttura.architect.network.EditingInfoPacket;
+import it.magius.struttura.architect.network.InGameBuildingPacket;
+import it.magius.struttura.architect.network.InGameListsPacket;
 import it.magius.struttura.architect.network.ModRequirementsPacket;
+import it.magius.struttura.architect.network.OpenOptionsPacket;
 import it.magius.struttura.architect.network.ScreenshotRequestPacket;
 import it.magius.struttura.architect.network.TranslationsPacket;
 import it.magius.struttura.architect.network.WireframeSyncPacket;
+import it.magius.struttura.architect.client.gui.StrutturaSettingsScreen;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -184,6 +190,37 @@ public class ArchitectClient implements ClientModInitializer {
             });
         });
 
+        // Registra il receiver per lo stato building InGame
+        ClientPlayNetworking.registerGlobalReceiver(InGameBuildingPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                InGameClientState state = InGameClientState.getInstance();
+                if (packet.inBuilding()) {
+                    state.enterBuilding(packet.rdns(), packet.pk(), packet.hasLiked());
+                    Architect.LOGGER.debug("Entered building: {} (pk={})", packet.rdns(), packet.pk());
+                } else {
+                    state.exitBuilding();
+                    Architect.LOGGER.debug("Exited building");
+                }
+            });
+        });
+
+        // Registra il receiver per la lista InGame (mostra setup screen)
+        ClientPlayNetworking.registerGlobalReceiver(InGameListsPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                Architect.LOGGER.info("Received InGame lists packet with {} lists", packet.lists().size());
+                // Show the setup screen
+                context.client().setScreen(new InGameSetupScreen(packet.lists(), packet.isNewWorld()));
+            });
+        });
+
+        // Registra il receiver per aprire la schermata opzioni (/struttura options)
+        ClientPlayNetworking.registerGlobalReceiver(OpenOptionsPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                Architect.LOGGER.debug("Opening settings screen via packet");
+                context.client().setScreen(new StrutturaSettingsScreen(null));
+            });
+        });
+
         // Registra l'evento per la cattura screenshot (deve essere su render tick)
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             ScreenshotCapture.onRenderTick();
@@ -202,6 +239,7 @@ public class ArchitectClient implements ClientModInitializer {
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             WireframeRenderer.reset();
             PanelManager.getInstance().reset();
+            InGameClientState.getInstance().reset();
             Architect.LOGGER.debug("Disconnected, wireframe and GUI data reset");
         });
 

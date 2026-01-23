@@ -28,17 +28,12 @@ public class ClientCommands {
     }
 
     private static void registerCommands(CommandDispatcher<FabricClientCommandSource> dispatcher, CommandBuildContext context) {
-        dispatcher.register(
-            ClientCommandManager.literal("struttura")
-                .then(ClientCommandManager.literal("options")
-                    .executes(ctx -> {
-                        // Schedule screen opening on the next tick to avoid issues
-                        Minecraft.getInstance().schedule(() -> {
-                            Minecraft.getInstance().setScreen(new StrutturaSettingsScreen(null));
-                        });
-                        return 1;
-                    })
-                )
-        );
+        // NOTE: We intentionally do NOT register any client commands under /struttura
+        // because Fabric has a known issue (#3568) where client commands with the same
+        // root as server commands cause conflicts - the client dispatcher intercepts
+        // the command but fails for subcommands it doesn't know about.
+        //
+        // Instead, /struttura options is handled server-side via StrutturaCommand.
+        // The server sends an OpenOptionsPacket to the client which opens the screen.
     }
 }

@@ -1,6 +1,9 @@
 package it.magius.struttura.architect.mixin.client;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.client.ingame.InGameClientState;
+import it.magius.struttura.architect.network.InGameLikePacket;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
@@ -47,16 +50,28 @@ public abstract class PauseScreenMixin extends Screen {
         int buttonX = this.width - buttonWidth - 4;
         int buttonY = 4;
 
-        // Heart icon: Unicode heart character
+        // Check if already liked
+        InGameClientState state = InGameClientState.getInstance();
+        boolean alreadyLiked = state.hasLiked();
+
+        // Heart icon: filled heart if liked, empty heart if not
+        String heartIcon = alreadyLiked ? "\u2764" : "\u2661";  // ❤ vs ♡
+        String tooltipText = alreadyLiked ? "Liked: " + buildingName : "Like: " + buildingName;
+
         architect$likeButton = Button.builder(
-                Component.literal("\u2764"), // Heart symbol
+                Component.literal(heartIcon),
                 button -> architect$onLikeClicked()
         )
         .bounds(buttonX, buttonY, buttonWidth, buttonHeight)
         .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                Component.literal("Like: " + buildingName)
+                Component.literal(tooltipText)
         ))
         .build();
+
+        // Disable button if already liked
+        if (alreadyLiked) {
+            architect$likeButton.active = false;
+        }
 
         this.addRenderableWidget(architect$likeButton);
     }
@@ -67,9 +82,10 @@ public abstract class PauseScreenMixin extends Screen {
      */
     @Unique
     private String architect$getCurrentBuildingName() {
-        // TODO: Implement building detection logic
-        // This will check if the player is inside a spawned building's bounds
-        // For now, return null to hide the button
+        InGameClientState state = InGameClientState.getInstance();
+        if (state.isInBuilding()) {
+            return state.getBuildingName();
+        }
         return null;
     }
 
@@ -78,8 +94,26 @@ public abstract class PauseScreenMixin extends Screen {
      */
     @Unique
     private void architect$onLikeClicked() {
-        // TODO: Implement like functionality
-        // This will send a request to the server to like the building
-        Architect.LOGGER.info("LIKE button clicked!");
+        InGameClientState state = InGameClientState.getInstance();
+        if (!state.isInBuilding()) {
+            return;
+        }
+
+        if (state.hasLiked()) {
+            Architect.LOGGER.debug("Building already liked");
+            return;
+        }
+
+        // Send like packet to server
+        Architect.LOGGER.info("Sending like for building: {}", state.getRdns());
+        ClientPlayNetworking.send(new InGameLikePacket(state.getRdns(), state.getPk()));
+
+        // Optimistically update local state
+        state.setLiked(true);
+
+        // Update button appearance
+        if (architect$likeButton != null) {
+            architect$likeButton.active = false;
+        }
     }
 }

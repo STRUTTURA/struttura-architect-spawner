@@ -9,6 +9,11 @@ import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.i18n.LanguageUtils;
+import it.magius.struttura.architect.ingame.InGameManager;
+import it.magius.struttura.architect.ingame.InGameState;
+import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
+import it.magius.struttura.architect.ingame.model.SpawnableList;
+import it.magius.struttura.architect.ingame.model.SpawnRule;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EditMode;
@@ -269,13 +274,35 @@ public class StrutturaCommand {
                         )
                     )
                 )
-                // Options command - handled client-side, registered here for autocomplete
+                // Options command - sends packet to client to open settings screen
                 .then(Commands.literal("options")
                     .executes(ctx -> {
-                        // This is handled by the client-side command
-                        // Server just returns success for single-player worlds
+                        if (ctx.getSource().getEntity() instanceof ServerPlayer player) {
+                            NetworkHandler.sendOpenOptions(player);
+                        }
                         return 1;
                     })
+                )
+                // Spawner commands for InGame mode
+                .then(Commands.literal("spawner")
+                    .then(Commands.literal("init")
+                        .executes(StrutturaCommand::executeSpawnerInit)
+                    )
+                    .then(Commands.literal("status")
+                        .executes(StrutturaCommand::executeSpawnerStatus)
+                    )
+                    .then(Commands.literal("list")
+                        .executes(StrutturaCommand::executeSpawnerList)
+                    )
+                    .then(Commands.literal("force")
+                        .then(Commands.argument("rdns", StringArgumentType.string())
+                            .suggests(SPAWNER_BUILDING_SUGGESTIONS)
+                            .executes(StrutturaCommand::executeSpawnerForce)
+                        )
+                    )
+                    .then(Commands.literal("reset")
+                        .executes(StrutturaCommand::executeSpawnerReset)
+                    )
                 )
         );
     }
@@ -2571,5 +2598,277 @@ public class StrutturaCommand {
 
         // Continue without screenshot - still push the structure (with null screenshot data)
         onVanillaScreenshotReceived(state, null);
+    }
+
+    // ===== Spawner Commands =====
+
+    // Suggestion provider for buildings in the active spawnable list
+    private static final SuggestionProvider<CommandSourceStack> SPAWNER_BUILDING_SUGGESTIONS =
+        (context, builder) -> {
+            java.util.Set<String> suggestions = new java.util.LinkedHashSet<>();
+            InGameManager manager = InGameManager.getInstance();
+            SpawnableList list = manager.getSpawnableList();
+            if (list != null) {
+                for (SpawnableBuilding building : list.getBuildings()) {
+                    suggestions.add(building.getRdns());
+                }
+            }
+            return SharedSuggestionProvider.suggest(suggestions, builder);
+        };
+
+    /**
+     * /struttura spawner init - (Re)initialize InGame mode
+     */
+    private static int executeSpawnerInit(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        // Verify it's a player
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        InGameManager manager = InGameManager.getInstance();
+
+        if (!manager.isReady()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_ready")));
+            return 0;
+        }
+
+        // Check if already initialized with a list
+        if (manager.isActive()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.already_initialized",
+                manager.getState().getListName())));
+            return 0;
+        }
+
+        // If declined, reset and allow re-initialization
+        if (manager.isInitialized() && manager.getState().isDeclined()) {
+            manager.reset();
+        }
+
+        // TODO: Open list selection screen (Fase 2.2)
+        // For now, just show a message
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.init_started")), false);
+
+        return 1;
+    }
+
+    /**
+     * /struttura spawner status - Show current InGame state
+     */
+    private static int executeSpawnerStatus(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        // Verify it's a player
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        InGameManager manager = InGameManager.getInstance();
+
+        if (!manager.isReady()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_ready")));
+            return 0;
+        }
+
+        InGameState state = manager.getState();
+
+        if (!state.isInitialized()) {
+            source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.not_initialized")), false);
+            return 1;
+        }
+
+        if (state.isDeclined()) {
+            source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.declined")), false);
+            return 1;
+        }
+
+        // Active state - show details
+        String listName = state.getListName() != null ? state.getListName() : "Unknown";
+        Long listId = state.getListId();
+        InGameState.AuthType authType = state.getAuthType();
+
+        SpawnableList spawnableList = manager.getSpawnableList();
+        int buildingCount = spawnableList != null ? spawnableList.getBuildingCount() : 0;
+        double spawnPercentage = spawnableList != null ? spawnableList.getSpawningPercentage() * 100 : 0;
+
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.active")), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.list", listName, listId)), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.auth", authType != null ? authType.name() : "N/A")), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.buildings", buildingCount)), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.spawn_rate", String.format("%.1f", spawnPercentage))), false);
+
+        return 1;
+    }
+
+    /**
+     * /struttura spawner list - List buildings in the active list
+     */
+    private static int executeSpawnerList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        // Verify it's a player
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        InGameManager manager = InGameManager.getInstance();
+
+        if (!manager.isActive()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_active")));
+            return 0;
+        }
+
+        SpawnableList list = manager.getSpawnableList();
+        if (list == null || !list.hasBuildings()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.list.empty")));
+            return 0;
+        }
+
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.list.header", list.getBuildingCount())), false);
+
+        for (SpawnableBuilding building : list.getBuildings()) {
+            String limit = building.getXWorld() == 0 ? "∞" : String.valueOf(building.getXWorld());
+            source.sendSuccess(() -> Component.literal(
+                I18n.tr(player, "spawner.list.entry",
+                    building.getRdns(),
+                    building.getSizeX() + "x" + building.getSizeY() + "x" + building.getSizeZ(),
+                    building.getSpawnedCount() + "/" + limit)
+            ), false);
+        }
+
+        return 1;
+    }
+
+    /**
+     * /struttura spawner force <rdns> - Force spawn a building in player's chunk
+     * Uses normal spawn evaluation to find a valid position.
+     */
+    private static int executeSpawnerForce(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        // Verify it's a player
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        InGameManager manager = InGameManager.getInstance();
+
+        if (!manager.isActive()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_active")));
+            return 0;
+        }
+
+        if (!manager.isSpawnerReady()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_ready")));
+            return 0;
+        }
+
+        SpawnableList list = manager.getSpawnableList();
+        if (list == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.list.empty")));
+            return 0;
+        }
+
+        String rdns = StringArgumentType.getString(ctx, "rdns");
+        SpawnableBuilding building = list.getBuildingByRdns(rdns);
+
+        if (building == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.force.not_found", rdns)));
+            return 0;
+        }
+
+        // Get player's current chunk
+        ServerLevel level = (ServerLevel) player.level();
+        net.minecraft.world.level.ChunkPos chunkPos = new net.minecraft.world.level.ChunkPos(player.blockPosition());
+        net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunkSource().getChunkNow(chunkPos.x, chunkPos.z);
+
+        if (chunk == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.force.chunk_not_loaded")));
+            return 0;
+        }
+
+        // Get biome at player position
+        net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> biomeHolder = level.getBiome(player.blockPosition());
+        String biomeId = biomeHolder.unwrapKey()
+            .map(net.minecraft.resources.ResourceKey::toString)
+            .orElse("unknown");
+
+        // Find applicable spawn rule for this biome
+        SpawnRule rule = building.findRuleForBiome(biomeId);
+        if (rule == null) {
+            if (building.getRules().isEmpty()) {
+                rule = SpawnRule.createDefault();
+            } else {
+                source.sendFailure(Component.literal(I18n.tr(player, "spawner.force.no_rule", biomeId)));
+                return 0;
+            }
+        }
+
+        // Use PositionValidator to find a valid spawn position with detailed failure info
+        it.magius.struttura.architect.ingame.spawn.PositionValidator validator =
+            it.magius.struttura.architect.ingame.spawn.PositionValidator.forType(rule.getType());
+
+        java.util.Random random = new java.util.Random();
+
+        // For force command, use the detailed version that reports failures
+        it.magius.struttura.architect.ingame.spawn.PositionValidator.FindResult findResult =
+            validator.findPositionWithDetails(level, chunkPos, building, rule, random);
+
+        if (findResult.position() == null) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.force.no_position", rdns)));
+            // Show detailed failure reasons
+            for (String reason : findResult.failureReasons()) {
+                source.sendFailure(Component.literal("  " + reason));
+            }
+            return 0;
+        }
+
+        java.util.Optional<it.magius.struttura.architect.ingame.spawn.SpawnPosition> positionOpt =
+            java.util.Optional.of(findResult.position());
+
+        it.magius.struttura.architect.ingame.spawn.SpawnPosition position = positionOpt.get();
+
+        // Spawn the building
+        it.magius.struttura.architect.ingame.spawn.InGameBuildingSpawner.spawn(level, chunk, building, position);
+
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.force.success",
+            rdns, position.blockPos().toShortString())), false);
+
+        return 1;
+    }
+
+    /**
+     * /struttura spawner reset - Reset InGame state
+     */
+    private static int executeSpawnerReset(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+
+        // Verify it's a player
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal(I18n.tr("command.player_only")));
+            return 0;
+        }
+
+        InGameManager manager = InGameManager.getInstance();
+
+        if (!manager.isReady()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_ready")));
+            return 0;
+        }
+
+        if (!manager.isInitialized()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "spawner.status.not_initialized")));
+            return 0;
+        }
+
+        manager.reset();
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.reset.success")), false);
+
+        return 1;
     }
 }

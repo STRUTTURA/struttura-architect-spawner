@@ -31,5 +31,13 @@
   "struttura.apikey.setup.dashboard.btn": "Open Dashboard",
   "struttura.apikey.setup.step3": "Copy your API Key and paste it here (Ctrl+V)",
   "struttura.apikey.setup.step4": "Press Connect to link your account",
-  "struttura.apikey.setup.connect": "Connect"
+  "struttura.apikey.setup.connect": "Connect",
+
+  "struttura.ingame.setup.title": "STRUTTURA: InGame Mode",
+  "struttura.ingame.setup.subtitle": "Select a building list to explore in this world",
+  "struttura.ingame.setup.decline": "Play without buildings",
+  "struttura.ingame.setup.nolists": "No building lists available",
+  "struttura.ingame.setup.buildings": "%d buildings",
+
+  "struttura.ingame.activated": "§a[STRUTTURA]§f InGame mode activated! List: %s (%d buildings)"
 }

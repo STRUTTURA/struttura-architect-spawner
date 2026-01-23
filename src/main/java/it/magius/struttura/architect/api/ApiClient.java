@@ -6,6 +6,11 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonElement;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.config.ArchitectConfig;
+import it.magius.struttura.architect.ingame.model.InGameListInfo;
+import it.magius.struttura.architect.ingame.model.PositionType;
+import it.magius.struttura.architect.ingame.model.SpawnRule;
+import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
+import it.magius.struttura.architect.ingame.model.SpawnableList;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
@@ -16,6 +21,7 @@ import net.minecraft.nbt.NbtIo;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.io.*;
@@ -718,6 +724,8 @@ public class ApiClient {
 
     /**
      * Esegue il pull di una costruzione dal server in modo asincrono.
+     * Questo metodo usa un lock globale per prevenire richieste concorrenti.
+     * Per download batch (es. InGame pre-download), usare {@link #downloadConstruction} invece.
      *
      * @param constructionId l'ID della costruzione da scaricare
      * @param onComplete callback chiamato al completamento
@@ -740,6 +748,25 @@ public class ApiClient {
         }).thenAccept(onComplete);
 
         return true;
+    }
+
+    /**
+     * Scarica una costruzione dal server in modo asincrono.
+     * Questo metodo NON usa lock globali, quindi può essere usato per download batch.
+     * Usato dal sistema InGame per pre-scaricare tutte le buildings.
+     *
+     * @param constructionId l'ID della costruzione da scaricare
+     * @param onComplete callback chiamato al completamento
+     */
+    public static void downloadConstruction(String constructionId, Consumer<PullResponse> onComplete) {
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return executePull(constructionId);
+            } catch (Exception e) {
+                Architect.LOGGER.error("Download request failed for {}", constructionId, e);
+                return new PullResponse(0, "Error: " + e.getMessage(), false, null);
+            }
+        }).thenAccept(onComplete);
     }
 
     /**
@@ -1444,5 +1471,246 @@ public class ApiClient {
         // If API call fails, do NOT modify the current config value.
         // This preserves any previously fetched disclaimer from the saved config.
         Architect.LOGGER.info("Keeping existing disclaimer from config (API call failed)");
+    }
+
+    // ===== InGame Spawner API Methods =====
+
+    /**
+     * Response for InGame lists fetch.
+     */
+    public record InGameListsResponse(int statusCode, String message, boolean success,
+                                       List<InGameListInfo> lists, boolean authenticated) {}
+
+    /**
+     * Response for spawnable list export fetch.
+     */
+    public record SpawnableListResponse(int statusCode, String message, boolean success,
+                                         SpawnableList spawnableList) {}
+
+    /**
+     * Fetches available InGame lists from the server asynchronously.
+     * Uses API key if available, otherwise returns public lists only.
+     *
+     * @param onComplete callback called on completion
+     */
+    public static void fetchInGameLists(Consumer<InGameListsResponse> onComplete) {
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return executeFetchInGameLists();
+            } catch (Exception e) {
+                Architect.LOGGER.error("Failed to fetch InGame lists", e);
+                return new InGameListsResponse(0, "Error: " + e.getMessage(), false, null, false);
+            }
+        }).thenAccept(onComplete);
+    }
+
+    private static InGameListsResponse executeFetchInGameLists() throws Exception {
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String endpoint = config.getEndpoint();
+        String url = endpoint + "/lists/ingame";
+
+        Architect.LOGGER.info("Fetching InGame lists from {}", url);
+
+        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        try {
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            conn.setReadTimeout(config.getRequestTimeout() * 1000);
+            conn.setRequestProperty("Accept", "application/json");
+
+            // Include API key if available (optional auth)
+            String apiKey = config.getApikey();
+            if (apiKey != null && !apiKey.isEmpty()) {
+                conn.setRequestProperty("X-Api-Key", apiKey);
+            }
+
+            int statusCode = conn.getResponseCode();
+            String responseBody = readResponse(conn);
+
+            Architect.LOGGER.info("InGame lists response: {} - {} bytes", statusCode, responseBody.length());
+
+            if (statusCode < 200 || statusCode >= 300) {
+                String message = parseResponseMessage(responseBody, statusCode);
+                return new InGameListsResponse(statusCode, message, false, null, false);
+            }
+
+            // Parse response
+            JsonObject json = GSON.fromJson(responseBody, JsonObject.class);
+            List<InGameListInfo> lists = new ArrayList<>();
+
+            if (json.has("lists") && json.get("lists").isJsonArray()) {
+                for (JsonElement element : json.getAsJsonArray("lists")) {
+                    JsonObject listObj = element.getAsJsonObject();
+                    long id = listObj.get("id").getAsLong();
+                    String name = listObj.has("name") ? listObj.get("name").getAsString() : "Unnamed";
+                    String description = listObj.has("description") && !listObj.get("description").isJsonNull()
+                        ? listObj.get("description").getAsString() : "";
+                    int buildingCount = listObj.has("buildingCount") ? listObj.get("buildingCount").getAsInt() : 0;
+                    boolean isPublic = listObj.has("isPublic") && listObj.get("isPublic").getAsBoolean();
+
+                    lists.add(new InGameListInfo(id, name, description, buildingCount, isPublic));
+                }
+            }
+
+            boolean authenticated = json.has("authenticated") && json.get("authenticated").getAsBoolean();
+
+            return new InGameListsResponse(statusCode, "Success", true, lists, authenticated);
+
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    /**
+     * Fetches the full spawnable list with buildings from the server asynchronously.
+     *
+     * @param listId the list ID to fetch
+     * @param onComplete callback called on completion
+     */
+    public static void fetchSpawnableList(long listId, Consumer<SpawnableListResponse> onComplete) {
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return executeFetchSpawnableList(listId);
+            } catch (Exception e) {
+                Architect.LOGGER.error("Failed to fetch spawnable list {}", listId, e);
+                return new SpawnableListResponse(0, "Error: " + e.getMessage(), false, null);
+            }
+        }).thenAccept(onComplete);
+    }
+
+    private static SpawnableListResponse executeFetchSpawnableList(long listId) throws Exception {
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String endpoint = config.getEndpoint();
+        String url = endpoint + "/lists/" + listId + "/export";
+
+        Architect.LOGGER.info("Fetching spawnable list {} from {}", listId, url);
+
+        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        try {
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            conn.setReadTimeout(config.getRequestTimeout() * 1000);
+            conn.setRequestProperty("Accept", "application/json");
+
+            // Include API key if available
+            String apiKey = config.getApikey();
+            if (apiKey != null && !apiKey.isEmpty()) {
+                conn.setRequestProperty("X-Api-Key", apiKey);
+            }
+
+            int statusCode = conn.getResponseCode();
+            String responseBody = readResponse(conn);
+
+            Architect.LOGGER.info("Spawnable list response: {} - {} bytes", statusCode, responseBody.length());
+
+            if (statusCode < 200 || statusCode >= 300) {
+                String message = parseResponseMessage(responseBody, statusCode);
+                return new SpawnableListResponse(statusCode, message, false, null);
+            }
+
+            // Parse response
+            JsonObject json = GSON.fromJson(responseBody, JsonObject.class);
+            SpawnableList spawnableList = parseSpawnableList(json);
+
+            return new SpawnableListResponse(statusCode, "Success", true, spawnableList);
+
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    /**
+     * Parses a SpawnableList from the API export response.
+     */
+    private static SpawnableList parseSpawnableList(JsonObject json) {
+        double spawningPercentage = json.has("spawningPercentage")
+            ? json.get("spawningPercentage").getAsDouble() : 0.025;
+
+        List<SpawnableBuilding> buildings = new ArrayList<>();
+
+        if (json.has("buildings") && json.get("buildings").isJsonArray()) {
+            for (JsonElement element : json.getAsJsonArray("buildings")) {
+                JsonObject bldgObj = element.getAsJsonObject();
+
+                String rdns = bldgObj.get("rdns").getAsString();
+                long pk = bldgObj.get("pk").getAsLong();
+
+                // Parse entrance anchor
+                BlockPos entrance = BlockPos.ZERO;
+                float entranceYaw = 0f;
+                if (bldgObj.has("anchor") && bldgObj.get("anchor").isJsonObject()) {
+                    JsonObject anchorObj = bldgObj.getAsJsonObject("anchor");
+                    if (anchorObj.has("entrance") && anchorObj.get("entrance").isJsonObject()) {
+                        JsonObject entranceObj = anchorObj.getAsJsonObject("entrance");
+                        int x = entranceObj.has("x") ? entranceObj.get("x").getAsInt() : 0;
+                        int y = entranceObj.has("y") ? entranceObj.get("y").getAsInt() : 0;
+                        int z = entranceObj.has("z") ? entranceObj.get("z").getAsInt() : 0;
+                        entranceYaw = entranceObj.has("yaw") ? entranceObj.get("yaw").getAsFloat() : 0f;
+                        entrance = new BlockPos(x, y, z);
+                    }
+                }
+
+                // Parse limits and rules
+                int xWorld = 0;
+                List<SpawnRule> rules = new ArrayList<>();
+
+                if (bldgObj.has("limits") && bldgObj.get("limits").isJsonObject()) {
+                    JsonObject limitsObj = bldgObj.getAsJsonObject("limits");
+                    xWorld = limitsObj.has("xWorld") ? limitsObj.get("xWorld").getAsInt() : 0;
+
+                    if (limitsObj.has("rules") && limitsObj.get("rules").isJsonArray()) {
+                        for (JsonElement ruleElement : limitsObj.getAsJsonArray("rules")) {
+                            JsonObject ruleObj = ruleElement.getAsJsonObject();
+
+                            // Parse biomes list
+                            List<String> biomes = new ArrayList<>();
+                            if (ruleObj.has("biomes") && ruleObj.get("biomes").isJsonArray()) {
+                                for (JsonElement biomeElement : ruleObj.getAsJsonArray("biomes")) {
+                                    biomes.add(biomeElement.getAsString());
+                                }
+                            }
+
+                            double percentage = ruleObj.has("percentage")
+                                ? ruleObj.get("percentage").getAsDouble() : 1.0;
+
+                            // Parse position
+                            PositionType posType = PositionType.ON_GROUND;
+                            int y1 = 50, y2 = 100, margin = 5;
+
+                            if (ruleObj.has("position") && ruleObj.get("position").isJsonObject()) {
+                                JsonObject posObj = ruleObj.getAsJsonObject("position");
+                                String typeStr = posObj.has("type") ? posObj.get("type").getAsString() : "onGround";
+                                posType = PositionType.fromApiValue(typeStr);
+                                y1 = posObj.has("y1") ? posObj.get("y1").getAsInt() : 50;
+                                y2 = posObj.has("y2") ? posObj.get("y2").getAsInt() : 100;
+                                margin = posObj.has("margin") ? posObj.get("margin").getAsInt() : 5;
+                            }
+
+                            rules.add(new SpawnRule(biomes, percentage, posType, y1, y2, margin));
+                        }
+                    }
+                }
+
+                // Parse bounds
+                AABB bounds = new AABB(0, 0, 0, 1, 1, 1);
+                if (bldgObj.has("bounds") && bldgObj.get("bounds").isJsonObject()) {
+                    JsonObject boundsObj = bldgObj.getAsJsonObject("bounds");
+                    double x = boundsObj.has("x") ? boundsObj.get("x").getAsDouble() : 0;
+                    double y = boundsObj.has("y") ? boundsObj.get("y").getAsDouble() : 0;
+                    double z = boundsObj.has("z") ? boundsObj.get("z").getAsDouble() : 0;
+                    double x2 = boundsObj.has("x2") ? boundsObj.get("x2").getAsDouble() : x;
+                    double y2 = boundsObj.has("y2") ? boundsObj.get("y2").getAsDouble() : y;
+                    double z2 = boundsObj.has("z2") ? boundsObj.get("z2").getAsDouble() : z;
+                    bounds = new AABB(x, y, z, x2, y2, z2);
+                }
+
+                buildings.add(new SpawnableBuilding(rdns, pk, entrance, entranceYaw, xWorld, rules, bounds));
+            }
+        }
+
+        Architect.LOGGER.info("Parsed spawnable list: {} buildings, {}% spawn rate",
+            buildings.size(), spawningPercentage * 100);
+
+        return new SpawnableList(spawningPercentage, buildings);
     }
 }
