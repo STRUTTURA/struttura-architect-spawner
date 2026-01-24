@@ -723,7 +723,7 @@ public class ConstructionOperations {
     public static BlockPos calculatePositionAtEntrance(ServerPlayer player, Construction construction) {
         // Calculate spawn point from player position: X, Z from blockPosition, Y = round(Y) - 1
         int spawnX = player.blockPosition().getX();
-        int spawnY = (int) Math.round(player.getY()) - 1;
+        int spawnY = (int) Math.round(player.getY());
         int spawnZ = player.blockPosition().getZ();
         return calculatePositionAtEntrance(new BlockPos(spawnX, spawnY, spawnZ), construction);
     }
@@ -798,7 +798,7 @@ public class ConstructionOperations {
         int pivotZ
     ) {
         int spawnX = player.blockPosition().getX();
-        int spawnY = (int) Math.round(player.getY()) - 1;
+        int spawnY = (int) Math.round(player.getY());
         int spawnZ = player.blockPosition().getZ();
         return calculatePositionAtEntranceRotated(
             new BlockPos(spawnX, spawnY, spawnZ),
@@ -2338,10 +2338,9 @@ public class ConstructionOperations {
 
             originalPosMap.put(newPos, originalPos);
 
-            if (!rotatedState.isAir()) {
-                level.setBlock(newPos, rotatedState, SILENT_PLACE_FLAGS);
-                placedCount++;
-            }
+            // Place ALL blocks from NBT, including air (to clear existing terrain)
+            level.setBlock(newPos, rotatedState, SILENT_PLACE_FLAGS);
+            placedCount++;
         }
 
         // Apply block entity NBT after ALL blocks are placed
