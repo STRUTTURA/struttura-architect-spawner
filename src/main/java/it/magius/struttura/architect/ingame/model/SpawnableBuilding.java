@@ -14,6 +14,7 @@ public class SpawnableBuilding {
 
     private final String rdns;              // Reverse DNS identifier (e.g., "it.magius.pip.home")
     private final long pk;                  // Primary key from the database
+    private final String hash;              // Content hash (SHA256) for cache validation
     private final BlockPos entrance;        // Entrance anchor position (normalized coordinates)
     private final float entranceYaw;        // Entrance facing direction
     private final int xWorld;               // Max spawns in this world (0 = unlimited)
@@ -25,11 +26,12 @@ public class SpawnableBuilding {
     // Runtime state (not persisted)
     private int spawnedCount = 0;
 
-    public SpawnableBuilding(String rdns, long pk, BlockPos entrance, float entranceYaw,
+    public SpawnableBuilding(String rdns, long pk, String hash, BlockPos entrance, float entranceYaw,
                              int xWorld, List<SpawnRule> rules, AABB bounds,
                              Map<String, String> names, Map<String, String> descriptions) {
         this.rdns = rdns;
         this.pk = pk;
+        this.hash = hash;
         this.entrance = entrance;
         this.entranceYaw = entranceYaw;
         this.xWorld = xWorld;
@@ -37,14 +39,6 @@ public class SpawnableBuilding {
         this.bounds = bounds;
         this.names = names != null ? Map.copyOf(names) : Map.of();
         this.descriptions = descriptions != null ? Map.copyOf(descriptions) : Map.of();
-    }
-
-    /**
-     * Legacy constructor for backwards compatibility.
-     */
-    public SpawnableBuilding(String rdns, long pk, BlockPos entrance, float entranceYaw,
-                             int xWorld, List<SpawnRule> rules, AABB bounds) {
-        this(rdns, pk, entrance, entranceYaw, xWorld, rules, bounds, null, null);
     }
 
     /**
@@ -59,6 +53,13 @@ public class SpawnableBuilding {
      */
     public long getPk() {
         return pk;
+    }
+
+    /**
+     * Gets the content hash (SHA256) for cache validation.
+     */
+    public String getHash() {
+        return hash;
     }
 
     /**

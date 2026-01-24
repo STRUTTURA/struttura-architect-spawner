@@ -1547,8 +1547,10 @@ public class ApiClient {
                         ? listObj.get("description").getAsString() : "";
                     int buildingCount = listObj.has("buildingCount") ? listObj.get("buildingCount").getAsInt() : 0;
                     boolean isPublic = listObj.has("isPublic") && listObj.get("isPublic").getAsBoolean();
+                    String contentHash = listObj.has("contentHash") && !listObj.get("contentHash").isJsonNull()
+                        ? listObj.get("contentHash").getAsString() : null;
 
-                    lists.add(new InGameListInfo(id, name, description, buildingCount, isPublic));
+                    lists.add(new InGameListInfo(id, name, description, buildingCount, isPublic, contentHash));
                 }
             }
 
@@ -1623,6 +1625,8 @@ public class ApiClient {
      * Parses a SpawnableList from the API export response.
      */
     private static SpawnableList parseSpawnableList(JsonObject json) {
+        String listHash = json.has("listHash") && !json.get("listHash").isJsonNull()
+            ? json.get("listHash").getAsString() : null;
         double spawningPercentage = json.has("spawningPercentage")
             ? json.get("spawningPercentage").getAsDouble() : 0.025;
 
@@ -1634,6 +1638,8 @@ public class ApiClient {
 
                 String rdns = bldgObj.get("rdns").getAsString();
                 long pk = bldgObj.get("pk").getAsLong();
+                String hash = bldgObj.has("hash") && !bldgObj.get("hash").isJsonNull()
+                    ? bldgObj.get("hash").getAsString() : null;
 
                 // Parse entrance anchor
                 BlockPos entrance = BlockPos.ZERO;
@@ -1723,13 +1729,13 @@ public class ApiClient {
                     }
                 }
 
-                buildings.add(new SpawnableBuilding(rdns, pk, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions));
+                buildings.add(new SpawnableBuilding(rdns, pk, hash, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions));
             }
         }
 
-        Architect.LOGGER.info("Parsed spawnable list: {} buildings, {}% spawn rate",
-            buildings.size(), spawningPercentage * 100);
+        Architect.LOGGER.info("Parsed spawnable list: {} buildings, {}% spawn rate, hash={}",
+            buildings.size(), spawningPercentage * 100, listHash);
 
-        return new SpawnableList(spawningPercentage, buildings);
+        return new SpawnableList(listHash, spawningPercentage, buildings);
     }
 }

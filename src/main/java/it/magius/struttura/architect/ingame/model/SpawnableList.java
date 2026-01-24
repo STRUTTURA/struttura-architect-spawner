@@ -10,12 +10,21 @@ import java.util.Random;
  */
 public class SpawnableList {
 
+    private final String listHash;               // Content hash of the list for cache validation
     private final double spawningPercentage;     // 0.0-1.0, base probability of any spawn in a chunk
     private final List<SpawnableBuilding> buildings;
 
-    public SpawnableList(double spawningPercentage, List<SpawnableBuilding> buildings) {
+    public SpawnableList(String listHash, double spawningPercentage, List<SpawnableBuilding> buildings) {
+        this.listHash = listHash;
         this.spawningPercentage = Math.max(0.0, Math.min(1.0, spawningPercentage));
         this.buildings = buildings != null ? new ArrayList<>(buildings) : new ArrayList<>();
+    }
+
+    /**
+     * Gets the content hash of this list for cache validation.
+     */
+    public String getListHash() {
+        return listHash;
     }
 
     /**
@@ -95,7 +104,7 @@ public class SpawnableList {
 
     @Override
     public String toString() {
-        return "SpawnableList{spawningPercentage=" + spawningPercentage +
+        return "SpawnableList{listHash='" + listHash + "', spawningPercentage=" + spawningPercentage +
                ", buildings=" + buildings.size() + "}";
     }
 }

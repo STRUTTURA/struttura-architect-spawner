@@ -9,7 +9,8 @@ public record InGameListInfo(
     String name,
     String description,
     int buildingCount,
-    boolean isPublic
+    boolean isPublic,
+    String contentHash
 ) {
     @Override
     public String toString() {

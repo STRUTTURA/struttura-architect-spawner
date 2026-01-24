@@ -122,6 +122,9 @@ public class SpawnableListStorage {
 
     private JsonObject serializeList(SpawnableList list) {
         JsonObject json = new JsonObject();
+        if (list.getListHash() != null) {
+            json.addProperty("listHash", list.getListHash());
+        }
         json.addProperty("spawningPercentage", list.getSpawningPercentage());
 
         JsonArray buildingsArray = new JsonArray();
@@ -137,6 +140,9 @@ public class SpawnableListStorage {
         JsonObject json = new JsonObject();
         json.addProperty("rdns", building.getRdns());
         json.addProperty("pk", building.getPk());
+        if (building.getHash() != null) {
+            json.addProperty("hash", building.getHash());
+        }
         json.addProperty("xWorld", building.getXWorld());
 
         // Entrance position with yaw
@@ -199,6 +205,8 @@ public class SpawnableListStorage {
     // ===== Deserialization =====
 
     private SpawnableList deserializeList(JsonObject json) {
+        String listHash = json.has("listHash") && !json.get("listHash").isJsonNull()
+            ? json.get("listHash").getAsString() : null;
         double spawningPercentage = json.has("spawningPercentage")
             ? json.get("spawningPercentage").getAsDouble()
             : 0.5;
@@ -214,13 +222,15 @@ public class SpawnableListStorage {
             }
         }
 
-        return new SpawnableList(spawningPercentage, buildings);
+        return new SpawnableList(listHash, spawningPercentage, buildings);
     }
 
     private SpawnableBuilding deserializeBuilding(JsonObject json) {
         try {
             String rdns = json.get("rdns").getAsString();
             long pk = json.get("pk").getAsLong();
+            String hash = json.has("hash") && !json.get("hash").isJsonNull()
+                ? json.get("hash").getAsString() : null;
             int xWorld = json.has("xWorld") ? json.get("xWorld").getAsInt() : 0;
 
             // Entrance with yaw
@@ -280,7 +290,7 @@ public class SpawnableListStorage {
                 }
             }
 
-            return new SpawnableBuilding(rdns, pk, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions);
+            return new SpawnableBuilding(rdns, pk, hash, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to deserialize building", e);
