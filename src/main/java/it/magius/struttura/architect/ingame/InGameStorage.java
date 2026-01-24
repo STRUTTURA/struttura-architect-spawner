@@ -65,6 +65,10 @@ public class InGameStorage {
                 state.setDeclined(json.get("declined").getAsBoolean());
             }
 
+            if (json.has("listLocked")) {
+                state.setListLocked(json.get("listLocked").getAsBoolean());
+            }
+
             if (json.has("listId") && !json.get("listId").isJsonNull()) {
                 state.setListId(json.get("listId").getAsLong());
             }
@@ -110,6 +114,7 @@ public class InGameStorage {
             JsonObject json = new JsonObject();
             json.addProperty("initialized", state.isInitialized());
             json.addProperty("declined", state.isDeclined());
+            json.addProperty("listLocked", state.isListLocked());
 
             if (state.getListId() != null) {
                 json.addProperty("listId", state.getListId());
@@ -159,6 +164,13 @@ public class InGameStorage {
      */
     public Long getSelectedListId() {
         return state.getListId();
+    }
+
+    /**
+     * Checks if the list is permanently locked to this world.
+     */
+    public boolean isListLocked() {
+        return state.isListLocked();
     }
 
     private Path getFilePath() {

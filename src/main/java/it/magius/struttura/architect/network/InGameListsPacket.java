@@ -16,7 +16,8 @@ import java.util.List;
  */
 public record InGameListsPacket(
     List<ListInfo> lists,
-    boolean isNewWorld      // True if this is a new world that needs setup
+    boolean isNewWorld,      // True if this is a new world that needs setup
+    boolean connectionError  // True if the API server was unreachable
 ) implements CustomPacketPayload {
 
     /**
@@ -39,7 +40,14 @@ public record InGameListsPacket(
      * Create an empty packet (no lists available).
      */
     public static InGameListsPacket empty(boolean isNewWorld) {
-        return new InGameListsPacket(List.of(), isNewWorld);
+        return new InGameListsPacket(List.of(), isNewWorld, false);
+    }
+
+    /**
+     * Create a packet indicating connection error.
+     */
+    public static InGameListsPacket connectionError(boolean isNewWorld) {
+        return new InGameListsPacket(List.of(), isNewWorld, true);
     }
 
     /**
@@ -50,7 +58,7 @@ public record InGameListsPacket(
         for (InGameListInfo info : infos) {
             lists.add(new ListInfo(info.id(), info.name(), info.description(), info.buildingCount()));
         }
-        return new InGameListsPacket(lists, isNewWorld);
+        return new InGameListsPacket(lists, isNewWorld, false);
     }
 
     private static InGameListsPacket read(FriendlyByteBuf buf) {
@@ -64,7 +72,8 @@ public record InGameListsPacket(
             lists.add(new ListInfo(id, name, description, buildingCount));
         }
         boolean isNewWorld = buf.readBoolean();
-        return new InGameListsPacket(lists, isNewWorld);
+        boolean connectionError = buf.readBoolean();
+        return new InGameListsPacket(lists, isNewWorld, connectionError);
     }
 
     private static void write(FriendlyByteBuf buf, InGameListsPacket packet) {
@@ -76,6 +85,7 @@ public record InGameListsPacket(
             buf.writeVarInt(info.buildingCount);
         }
         buf.writeBoolean(packet.isNewWorld);
+        buf.writeBoolean(packet.connectionError);
     }
 
     @Override

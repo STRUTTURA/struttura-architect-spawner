@@ -33,11 +33,27 @@
   "struttura.apikey.setup.step4": "Premi Collega per collegare il tuo account",
   "struttura.apikey.setup.connect": "Collega",
 
-  "struttura.ingame.setup.title": "STRUTTURA: Modalità InGame",
+  "struttura.ingame.setup.title": "L'avventura ha inizio!",
   "struttura.ingame.setup.subtitle": "Seleziona una lista di creazioni da esplorare in questo mondo",
-  "struttura.ingame.setup.decline": "Gioca senza creazioni",
+  "struttura.ingame.setup.subtitle.error": "Impossibile connettersi al server STRUTTURA",
+  "struttura.ingame.setup.skip": "Avvia Mondo e riprova dopo",
+  "struttura.ingame.setup.decline": "Disabilita Modalità Avventura",
+  "struttura.ingame.setup.decline.hint": "Potrai riattivare la modalità avventura con /struttura adventure init",
   "struttura.ingame.setup.nolists": "Nessuna lista di creazioni disponibile",
   "struttura.ingame.setup.buildings": "%d creazioni",
+  "struttura.ingame.setup.connection_error.line1": "STRUTTURA richiede una connessione internet per funzionare.",
+  "struttura.ingame.setup.connection_error.line2": "Verifica la connessione e controlla di poter raggiungere:",
+  "struttura.ingame.setup.connection_error.url": "https://struttura.magius.it",
+  "struttura.ingame.setup.connection_error.retry": "Le creazioni saranno caricate al prossimo avvio del mondo.",
 
-  "struttura.ingame.activated": "§a[STRUTTURA]§f Modalità InGame attivata! Lista: %s (%d creazioni)"
+  "struttura.ingame.activated": "§a[STRUTTURA]§f Modalità InGame attivata! Lista: %s (%d creazioni)",
+  "struttura.ingame.disabled": "§e[STRUTTURA]§f Modalità avventura disabilitata. Usa /struttura adventure init per riattivarla.",
+  "struttura.ingame.skipped": "§e[STRUTTURA]§f Modalità avventura saltata. Riprova al prossimo avvio del mondo.",
+
+  "struttura.like.title": "Dettagli Creazione",
+  "struttura.like.author": "di %s",
+  "struttura.like.message": "Se ti è piaciuta questa creazione, lascia un like per supportare l'autore!",
+  "struttura.like.button": "Like",
+  "struttura.like.default_description": "Questa creazione è stata costruita con passione dall'architetto per essere giocata da tutti i giocatori.",
+  "struttura.like.website_link": "Vai alla creazione sul sito STRUTTURA"
 }

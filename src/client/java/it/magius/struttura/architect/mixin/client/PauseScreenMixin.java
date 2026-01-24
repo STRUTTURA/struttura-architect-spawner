@@ -1,10 +1,9 @@
 package it.magius.struttura.architect.mixin.client;
 
-import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.client.gui.LikeButton;
+import it.magius.struttura.architect.client.gui.LikeScreen;
 import it.magius.struttura.architect.client.ingame.InGameClientState;
-import it.magius.struttura.architect.network.InGameLikePacket;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -22,7 +21,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class PauseScreenMixin extends Screen {
 
     @Unique
-    private Button architect$likeButton;
+    private LikeButton architect$likeButton;
 
     protected PauseScreenMixin(Component title) {
         super(title);
@@ -43,37 +42,23 @@ public abstract class PauseScreenMixin extends Screen {
             return;
         }
 
-        int buttonWidth = 20;
-        int buttonHeight = 20;
-
-        // Position: top-right corner of the screen
-        int buttonX = this.width - buttonWidth - 4;
-        int buttonY = 4;
-
-        // Check if already liked
+        // Create the like button - always clickable to open the LikeScreen
+        // The button shows the current like state but opens a detail screen on click
         InGameClientState state = InGameClientState.getInstance();
         boolean alreadyLiked = state.hasLiked();
 
-        // Heart icon: filled heart if liked, empty heart if not
-        String heartIcon = alreadyLiked ? "\u2764" : "\u2661";  // ❤ vs ♡
-        String tooltipText = alreadyLiked ? "Liked: " + buildingName : "Like: " + buildingName;
+        architect$likeButton = LikeButton.create(
+                this.width,
+                buildingName,
+                alreadyLiked,
+                true, // Always allow clicking to open the screen
+                button -> architect$openLikeScreen()
+        );
 
-        architect$likeButton = Button.builder(
-                Component.literal(heartIcon),
-                button -> architect$onLikeClicked()
-        )
-        .bounds(buttonX, buttonY, buttonWidth, buttonHeight)
-        .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                Component.literal(tooltipText)
-        ))
-        .build();
+        // Make button always active (clickable) to open the like screen
+        architect$likeButton.getButton().active = true;
 
-        // Disable button if already liked
-        if (alreadyLiked) {
-            architect$likeButton.active = false;
-        }
-
-        this.addRenderableWidget(architect$likeButton);
+        this.addRenderableWidget(architect$likeButton.getButton());
     }
 
     /**
@@ -91,29 +76,22 @@ public abstract class PauseScreenMixin extends Screen {
 
     /**
      * Called when the LIKE button is clicked.
+     * Opens the LikeScreen to show building details and allow liking.
      */
     @Unique
-    private void architect$onLikeClicked() {
-        InGameClientState state = InGameClientState.getInstance();
-        if (!state.isInBuilding()) {
-            return;
+    private void architect$openLikeScreen() {
+        if (this.minecraft != null) {
+            this.minecraft.setScreen(new LikeScreen((PauseScreen) (Object) this));
         }
+    }
 
-        if (state.hasLiked()) {
-            Architect.LOGGER.debug("Building already liked");
-            return;
-        }
-
-        // Send like packet to server
-        Architect.LOGGER.info("Sending like for building: {}", state.getRdns());
-        ClientPlayNetworking.send(new InGameLikePacket(state.getRdns(), state.getPk()));
-
-        // Optimistically update local state
-        state.setLiked(true);
-
-        // Update button appearance
+    /**
+     * Injects at the end of render to draw the heart icon on the button.
+     */
+    @Inject(method = "render", at = @At("RETURN"))
+    private void architect$renderLikeHeart(GuiGraphics graphics, int mouseX, int mouseY, float partialTick, CallbackInfo ci) {
         if (architect$likeButton != null) {
-            architect$likeButton.active = false;
+            architect$likeButton.renderHeart(graphics);
         }
     }
 }

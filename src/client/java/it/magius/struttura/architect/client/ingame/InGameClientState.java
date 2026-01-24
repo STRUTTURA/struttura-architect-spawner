@@ -19,6 +19,7 @@ public class InGameClientState {
 
     // Cached display values
     private String buildingName = "";
+    private String description = "";
     private String author = "";
 
     private InGameClientState() {}
@@ -32,15 +33,30 @@ public class InGameClientState {
 
     /**
      * Updates state when player enters a building.
+     * @param rdns the building RDNS
+     * @param pk the building primary key
+     * @param hasLiked whether the player has already liked this building
+     * @param localizedName the localized name (from server, may be empty)
+     * @param localizedDescription the localized description (from server, may be empty)
      */
-    public void enterBuilding(String rdns, long pk, boolean hasLiked) {
+    public void enterBuilding(String rdns, long pk, boolean hasLiked,
+                              String localizedName, String localizedDescription) {
         this.inBuilding = true;
         this.rdns = rdns;
         this.pk = pk;
         this.hasLiked = hasLiked;
 
-        // Parse display values from RDNS
-        this.buildingName = parseBuildingName(rdns);
+        // Use localized name if available, otherwise parse from RDNS
+        if (localizedName != null && !localizedName.isEmpty()) {
+            this.buildingName = localizedName;
+        } else {
+            this.buildingName = parseBuildingName(rdns);
+        }
+
+        // Use localized description if available
+        this.description = localizedDescription != null ? localizedDescription : "";
+
+        // Author is always parsed from RDNS
         this.author = parseAuthor(rdns);
     }
 
@@ -53,6 +69,7 @@ public class InGameClientState {
         this.pk = 0;
         this.hasLiked = false;
         this.buildingName = "";
+        this.description = "";
         this.author = "";
     }
 
@@ -90,6 +107,10 @@ public class InGameClientState {
 
     public String getBuildingName() {
         return buildingName;
+    }
+
+    public String getDescription() {
+        return description;
     }
 
     public String getAuthor() {

@@ -1704,7 +1704,29 @@ public class ApiClient {
                     bounds = new AABB(x, y, z, x2, y2, z2);
                 }
 
-                buildings.add(new SpawnableBuilding(rdns, pk, entrance, entranceYaw, xWorld, rules, bounds));
+                // Parse names (localized)
+                java.util.Map<String, String> names = new java.util.HashMap<>();
+                if (bldgObj.has("names") && bldgObj.get("names").isJsonObject()) {
+                    JsonObject namesObj = bldgObj.getAsJsonObject("names");
+                    for (java.util.Map.Entry<String, JsonElement> entry : namesObj.entrySet()) {
+                        if (entry.getValue().isJsonPrimitive()) {
+                            names.put(entry.getKey(), entry.getValue().getAsString());
+                        }
+                    }
+                }
+
+                // Parse descriptions (localized)
+                java.util.Map<String, String> descriptions = new java.util.HashMap<>();
+                if (bldgObj.has("descriptions") && bldgObj.get("descriptions").isJsonObject()) {
+                    JsonObject descsObj = bldgObj.getAsJsonObject("descriptions");
+                    for (java.util.Map.Entry<String, JsonElement> entry : descsObj.entrySet()) {
+                        if (entry.getValue().isJsonPrimitive()) {
+                            descriptions.put(entry.getKey(), entry.getValue().getAsString());
+                        }
+                    }
+                }
+
+                buildings.add(new SpawnableBuilding(rdns, pk, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions));
             }
         }
 

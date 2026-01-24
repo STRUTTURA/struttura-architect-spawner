@@ -32,12 +32,14 @@ public class InGameManager {
     private static InGameManager instance;
 
     private InGameStorage storage;
+    private SpawnableListStorage listStorage;
     private MinecraftServer server;
     private boolean worldLoaded = false;
 
     // Cached lists for showing to players
     private List<InGameListInfo> cachedLists = null;
     private boolean listsLoading = false;
+    private boolean connectionError = false;
 
     // Track which players have been shown the setup screen
     private final ConcurrentHashMap<UUID, Boolean> playerSetupPending = new ConcurrentHashMap<>();
@@ -74,6 +76,9 @@ public class InGameManager {
         storage = new InGameStorage(worldPath);
         storage.load();
 
+        // Initialize list storage
+        listStorage = new SpawnableListStorage(worldPath);
+
         worldLoaded = true;
 
         // Initialize LikeManager
@@ -85,9 +90,45 @@ public class InGameManager {
         // Check for auto-initialization (dedicated server config)
         checkAutoInitialize();
 
+        // If already initialized and active, try to load the spawnable list from disk
+        if (storage.isActive()) {
+            loadSpawnableListFromDisk();
+        }
+
         // If not initialized, pre-fetch available lists
         if (!storage.isInitialized()) {
             fetchAvailableLists();
+        }
+    }
+
+    /**
+     * Loads the spawnable list from disk storage.
+     * Called on world load when InGame is already active.
+     */
+    private void loadSpawnableListFromDisk() {
+        if (listStorage == null) {
+            return;
+        }
+
+        SpawnableList list = listStorage.load();
+        if (list != null) {
+            Architect.LOGGER.info("Loaded spawnable list from disk with {} buildings", list.getBuildingCount());
+            activateSpawnableList(list, false);
+        } else {
+            // Fallback: try to fetch from API (backwards compatibility for existing worlds)
+            Architect.LOGGER.info("No persisted spawnable list found, fetching from API...");
+            Long listId = storage.getState().getListId();
+            if (listId != null) {
+                ApiClient.fetchSpawnableList(listId, response -> {
+                    if (response != null && response.success() && response.spawnableList() != null && server != null) {
+                        server.execute(() -> {
+                            // Save to disk for future loads
+                            listStorage.save(response.spawnableList());
+                            activateSpawnableList(response.spawnableList(), false);
+                        });
+                    }
+                });
+            }
         }
     }
 
@@ -115,9 +156,11 @@ public class InGameManager {
 
         worldLoaded = false;
         storage = null;
+        listStorage = null;
         server = null;
         cachedLists = null;
         listsLoading = false;
+        connectionError = false;
         playerSetupPending.clear();
         spawnerActivationTime = 0;
 
@@ -163,7 +206,8 @@ public class InGameManager {
 
         ApiClient.fetchInGameLists(response -> {
             listsLoading = false;
-            if (response != null && response.success() && response.lists() != null && !response.lists().isEmpty()) {
+            if (response != null && response.success() && response.lists() != null) {
+                connectionError = false;
                 cachedLists = response.lists();
                 Architect.LOGGER.info("Loaded {} available InGame lists", cachedLists.size());
 
@@ -172,8 +216,22 @@ public class InGameManager {
                     server.execute(this::notifyPendingPlayers);
                 }
             } else {
-                Architect.LOGGER.debug("No InGame lists available");
+                // Check if this is a connection error (statusCode 0 or exception message)
+                if (response == null || response.statusCode() == 0 ||
+                    (response.message() != null && response.message().startsWith("Error:"))) {
+                    connectionError = true;
+                    Architect.LOGGER.warn("Failed to connect to STRUTTURA server: {}",
+                        response != null ? response.message() : "No response");
+                } else {
+                    connectionError = false;
+                    Architect.LOGGER.debug("No InGame lists available");
+                }
                 cachedLists = List.of();
+
+                // Still notify players so they see the error message
+                if (server != null) {
+                    server.execute(this::notifyPendingPlayers);
+                }
             }
         });
     }
@@ -188,18 +246,8 @@ public class InGameManager {
         }
 
         // If already initialized or declined, do nothing
+        // The spawnable list is loaded from disk in onWorldLoad
         if (storage.isInitialized()) {
-            // If active, load the spawnable list if not already loaded
-            if (isActive() && getSpawnableList() == null) {
-                Long listId = storage.getState().getListId();
-                if (listId != null) {
-                    ApiClient.fetchSpawnableList(listId, response -> {
-                        if (response != null && response.success() && response.spawnableList() != null && server != null) {
-                            server.execute(() -> setSpawnableList(response.spawnableList()));
-                        }
-                    });
-                }
-            }
             return;
         }
 
@@ -231,10 +279,31 @@ public class InGameManager {
 
     /**
      * Sends the InGame setup screen to a player.
+     * Uses cached data if available; use sendSetupScreenWithRetry for manual retry.
      */
     public void sendSetupScreen(ServerPlayer player) {
+        sendSetupScreenInternal(player, false);
+    }
+
+    /**
+     * Sends the InGame setup screen to a player, forcing a retry if there was a connection error.
+     * Used when user manually triggers /struttura adventure init.
+     */
+    public void sendSetupScreenWithRetry(ServerPlayer player) {
+        sendSetupScreenInternal(player, true);
+    }
+
+    private void sendSetupScreenInternal(ServerPlayer player, boolean forceRetry) {
+        // If forcing retry and there was a connection error, clear cache
+        if (forceRetry && connectionError && !listsLoading) {
+            Architect.LOGGER.info("Manual retry requested, clearing cache and retrying fetch...");
+            cachedLists = null;
+            connectionError = false;
+        }
+
         if (cachedLists == null) {
-            // Lists not loaded yet, fetch them first
+            // Lists not loaded yet, add player to pending and fetch
+            playerSetupPending.put(player.getUUID(), true);
             if (!listsLoading) {
                 fetchAvailableLists();
             }
@@ -247,12 +316,17 @@ public class InGameManager {
         // Determine if this is a new world (not yet initialized)
         boolean isNewWorld = storage != null && !storage.isInitialized();
 
-        // Send packet
-        InGameListsPacket packet = InGameListsPacket.fromListInfos(cachedLists, isNewWorld);
+        // Send packet with connection error status
+        InGameListsPacket packet;
+        if (connectionError) {
+            packet = InGameListsPacket.connectionError(isNewWorld);
+        } else {
+            packet = InGameListsPacket.fromListInfos(cachedLists, isNewWorld);
+        }
         ServerPlayNetworking.send(player, packet);
 
-        Architect.LOGGER.debug("Sent InGame setup screen to {} with {} lists",
-            player.getName().getString(), cachedLists.size());
+        Architect.LOGGER.debug("Sent InGame setup screen to {} with {} lists (connectionError={})",
+            player.getName().getString(), cachedLists.size(), connectionError);
     }
 
     // ===== State accessors =====
@@ -340,15 +414,27 @@ public class InGameManager {
 
     /**
      * Resets InGame state (allows re-initialization).
+     * @return true if reset was successful, false if blocked (list is locked)
      */
-    public void reset() {
+    public boolean reset() {
         if (storage == null) {
             Architect.LOGGER.error("Cannot reset InGame: no storage loaded");
-            return;
+            return false;
+        }
+
+        // Cannot reset if the list is locked to this world
+        if (storage.isListLocked()) {
+            Architect.LOGGER.warn("Cannot reset InGame: list is locked to this world");
+            return false;
         }
 
         storage.getState().reset();
         storage.save();
+
+        // Delete persisted spawnable list
+        if (listStorage != null) {
+            listStorage.delete();
+        }
 
         // Reset downloader and cache
         BuildingDownloader.getInstance().reset();
@@ -361,12 +447,20 @@ public class InGameManager {
         listsLoading = false;
 
         Architect.LOGGER.info("InGame state reset");
+        return true;
+    }
+
+    /**
+     * Checks if the list is locked to this world.
+     */
+    public boolean isListLocked() {
+        return storage != null && storage.isListLocked();
     }
 
     /**
      * Sets the spawnable list data (downloaded from API).
-     * If downloads were already completed in a previous session, just marks as ready.
-     * Otherwise, triggers the download of all buildings in the list.
+     * This is called when the user selects a list from the setup screen.
+     * The list is saved to disk for future world loads.
      */
     public void setSpawnableList(SpawnableList list) {
         if (storage == null || storage.getState() == null) {
@@ -374,11 +468,26 @@ public class InGameManager {
             return;
         }
 
+        // Save the list to disk for persistence
+        if (listStorage != null) {
+            listStorage.save(list);
+        }
+
+        // Activate the list (this is a fresh selection, so force download)
+        activateSpawnableList(list, true);
+    }
+
+    /**
+     * Activates a spawnable list (either freshly downloaded or loaded from disk).
+     * @param list the list to activate
+     * @param forceDownload if true, always download buildings; if false, check downloadsCompleted flag
+     */
+    private void activateSpawnableList(SpawnableList list, boolean forceDownload) {
         storage.getState().setSpawnableList(list);
-        Architect.LOGGER.info("Loaded spawnable list with {} buildings", list.getBuildingCount());
+        Architect.LOGGER.info("Activating spawnable list with {} buildings", list.getBuildingCount());
 
         // Check if downloads were already completed in a previous session
-        if (storage.getState().isDownloadsCompleted()) {
+        if (!forceDownload && storage.getState().isDownloadsCompleted()) {
             Architect.LOGGER.info("Downloads already completed in previous session, skipping re-download");
             BuildingDownloader.getInstance().markReady();
             spawnerActivationTime = System.currentTimeMillis();

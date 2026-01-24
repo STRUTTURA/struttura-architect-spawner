@@ -195,8 +195,10 @@ public class ArchitectClient implements ClientModInitializer {
             context.client().execute(() -> {
                 InGameClientState state = InGameClientState.getInstance();
                 if (packet.inBuilding()) {
-                    state.enterBuilding(packet.rdns(), packet.pk(), packet.hasLiked());
-                    Architect.LOGGER.debug("Entered building: {} (pk={})", packet.rdns(), packet.pk());
+                    state.enterBuilding(packet.rdns(), packet.pk(), packet.hasLiked(),
+                        packet.localizedName(), packet.localizedDescription());
+                    Architect.LOGGER.debug("Entered building: {} (pk={}, name={})",
+                        packet.rdns(), packet.pk(), packet.localizedName());
                 } else {
                     state.exitBuilding();
                     Architect.LOGGER.debug("Exited building");
@@ -207,9 +209,10 @@ public class ArchitectClient implements ClientModInitializer {
         // Registra il receiver per la lista InGame (mostra setup screen)
         ClientPlayNetworking.registerGlobalReceiver(InGameListsPacket.TYPE, (packet, context) -> {
             context.client().execute(() -> {
-                Architect.LOGGER.info("Received InGame lists packet with {} lists", packet.lists().size());
+                Architect.LOGGER.info("Received InGame lists packet with {} lists (connectionError={})",
+                    packet.lists().size(), packet.connectionError());
                 // Show the setup screen
-                context.client().setScreen(new InGameSetupScreen(packet.lists(), packet.isNewWorld()));
+                context.client().setScreen(new InGameSetupScreen(packet.lists(), packet.isNewWorld(), packet.connectionError()));
             });
         });
 

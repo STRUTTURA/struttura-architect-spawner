@@ -33,11 +33,27 @@
   "struttura.apikey.setup.step4": "Press Connect to link your account",
   "struttura.apikey.setup.connect": "Connect",
 
-  "struttura.ingame.setup.title": "STRUTTURA: InGame Mode",
+  "struttura.ingame.setup.title": "The adventure begins!",
   "struttura.ingame.setup.subtitle": "Select a building list to explore in this world",
-  "struttura.ingame.setup.decline": "Play without buildings",
+  "struttura.ingame.setup.subtitle.error": "Unable to connect to STRUTTURA server",
+  "struttura.ingame.setup.skip": "Start World and retry later",
+  "struttura.ingame.setup.decline": "Disable Adventure Mode",
+  "struttura.ingame.setup.decline.hint": "You can re-enable it with /struttura adventure init",
   "struttura.ingame.setup.nolists": "No building lists available",
   "struttura.ingame.setup.buildings": "%d buildings",
+  "struttura.ingame.setup.connection_error.line1": "STRUTTURA requires an internet connection to work.",
+  "struttura.ingame.setup.connection_error.line2": "Please check your connection and verify you can reach:",
+  "struttura.ingame.setup.connection_error.url": "https://struttura.magius.it",
+  "struttura.ingame.setup.connection_error.retry": "Buildings will be loaded on the next world start.",
 
-  "struttura.ingame.activated": "§a[STRUTTURA]§f InGame mode activated! List: %s (%d buildings)"
+  "struttura.ingame.activated": "§a[STRUTTURA]§f InGame mode activated! List: %s (%d buildings)",
+  "struttura.ingame.disabled": "§e[STRUTTURA]§f Adventure mode disabled. Use /struttura adventure init to enable it.",
+  "struttura.ingame.skipped": "§e[STRUTTURA]§f Adventure mode skipped. Will retry on next world load.",
+
+  "struttura.like.title": "Building Details",
+  "struttura.like.author": "by %s",
+  "struttura.like.message": "If you enjoyed this creation, give it a like to support the author!",
+  "struttura.like.button": "Like",
+  "struttura.like.default_description": "This creation was built with passion by the architect to be enjoyed by all players.",
+  "struttura.like.website_link": "View on STRUTTURA website"
 }

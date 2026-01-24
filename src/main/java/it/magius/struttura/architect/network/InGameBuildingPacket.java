@@ -11,10 +11,12 @@ import net.minecraft.resources.Identifier;
  * Sent when player enters or exits a spawned building.
  */
 public record InGameBuildingPacket(
-    boolean inBuilding,     // True if player is currently inside a building
-    String rdns,            // Building RDNS identifier (empty if not in building)
-    long pk,                // Building primary key (0 if not in building)
-    boolean hasLiked        // True if player has already liked this building
+    boolean inBuilding,         // True if player is currently inside a building
+    String rdns,                // Building RDNS identifier (empty if not in building)
+    long pk,                    // Building primary key (0 if not in building)
+    boolean hasLiked,           // True if player has already liked this building
+    String localizedName,       // Localized building name (empty if not available)
+    String localizedDescription // Localized building description (empty if not available)
 ) implements CustomPacketPayload {
 
     public static final CustomPacketPayload.Type<InGameBuildingPacket> TYPE =
@@ -27,14 +29,17 @@ public record InGameBuildingPacket(
      * Create an empty packet (player is not in any building).
      */
     public static InGameBuildingPacket empty() {
-        return new InGameBuildingPacket(false, "", 0, false);
+        return new InGameBuildingPacket(false, "", 0, false, "", "");
     }
 
     /**
      * Create a packet for when player enters a building.
      */
-    public static InGameBuildingPacket entered(String rdns, long pk, boolean hasLiked) {
-        return new InGameBuildingPacket(true, rdns, pk, hasLiked);
+    public static InGameBuildingPacket entered(String rdns, long pk, boolean hasLiked,
+                                               String localizedName, String localizedDescription) {
+        return new InGameBuildingPacket(true, rdns, pk, hasLiked,
+            localizedName != null ? localizedName : "",
+            localizedDescription != null ? localizedDescription : "");
     }
 
     private static InGameBuildingPacket read(FriendlyByteBuf buf) {
@@ -42,7 +47,9 @@ public record InGameBuildingPacket(
         String rdns = buf.readUtf(512);
         long pk = buf.readLong();
         boolean hasLiked = buf.readBoolean();
-        return new InGameBuildingPacket(inBuilding, rdns, pk, hasLiked);
+        String localizedName = buf.readUtf(256);
+        String localizedDescription = buf.readUtf(2048);
+        return new InGameBuildingPacket(inBuilding, rdns, pk, hasLiked, localizedName, localizedDescription);
     }
 
     private static void write(FriendlyByteBuf buf, InGameBuildingPacket packet) {
@@ -50,6 +57,8 @@ public record InGameBuildingPacket(
         buf.writeUtf(packet.rdns, 512);
         buf.writeLong(packet.pk);
         buf.writeBoolean(packet.hasLiked);
+        buf.writeUtf(packet.localizedName, 256);
+        buf.writeUtf(packet.localizedDescription, 2048);
     }
 
     @Override
@@ -58,9 +67,13 @@ public record InGameBuildingPacket(
     }
 
     /**
-     * Gets the building name from the RDNS (last segment).
+     * Gets the building name - prefers localized name, falls back to RDNS parsing.
      */
     public String getBuildingName() {
+        if (localizedName != null && !localizedName.isEmpty()) {
+            return localizedName;
+        }
+        // Fallback to RDNS parsing
         if (rdns == null || rdns.isEmpty()) {
             return "";
         }
@@ -78,5 +91,12 @@ public record InGameBuildingPacket(
         String[] parts = rdns.split("\\.");
         // RDNS format: tld.author.buildingname (e.g., com.johndoe.myhouse)
         return parts.length >= 2 ? parts[1] : "";
+    }
+
+    /**
+     * Gets the localized description.
+     */
+    public String getDescription() {
+        return localizedDescription != null ? localizedDescription : "";
     }
 }

@@ -2681,13 +2681,34 @@ public class NetworkHandler {
             boolean hasLiked) {
         InGameBuildingPacket packet;
         if (buildingInfo != null) {
-            packet = InGameBuildingPacket.entered(buildingInfo.rdns(), buildingInfo.pk(), hasLiked);
+            // Look up the building in the spawnable list to get localized name/description
+            String localizedName = "";
+            String localizedDescription = "";
+
+            it.magius.struttura.architect.ingame.InGameManager manager =
+                it.magius.struttura.architect.ingame.InGameManager.getInstance();
+            it.magius.struttura.architect.ingame.model.SpawnableList spawnableList = manager.getSpawnableList();
+
+            if (spawnableList != null) {
+                it.magius.struttura.architect.ingame.model.SpawnableBuilding building =
+                    spawnableList.getBuildingByRdns(buildingInfo.rdns());
+                if (building != null) {
+                    // Get player's language code
+                    String langCode = it.magius.struttura.architect.i18n.PlayerLanguageTracker
+                        .getInstance().getPlayerLanguage(player);
+                    localizedName = building.getLocalizedName(langCode);
+                    localizedDescription = building.getLocalizedDescription(langCode);
+                }
+            }
+
+            packet = InGameBuildingPacket.entered(buildingInfo.rdns(), buildingInfo.pk(), hasLiked,
+                localizedName, localizedDescription);
         } else {
             packet = InGameBuildingPacket.empty();
         }
         ServerPlayNetworking.send(player, packet);
-        Architect.LOGGER.debug("Sent in-game building state to {}: inBuilding={}, rdns={}",
-            player.getName().getString(), packet.inBuilding(), packet.rdns());
+        Architect.LOGGER.debug("Sent in-game building state to {}: inBuilding={}, rdns={}, name={}",
+            player.getName().getString(), packet.inBuilding(), packet.rdns(), packet.localizedName());
     }
 
     /**
@@ -2726,36 +2747,50 @@ public class NetworkHandler {
         it.magius.struttura.architect.ingame.InGameManager manager =
             it.magius.struttura.architect.ingame.InGameManager.getInstance();
 
-        if (packet.declined()) {
-            Architect.LOGGER.info("Player {} declined InGame mode", player.getName().getString());
-            manager.decline();
-        } else {
-            Architect.LOGGER.info("Player {} selected InGame list: {} (id={})",
-                player.getName().getString(), packet.listName(), packet.listId());
+        switch (packet.action()) {
+            case DECLINE -> {
+                Architect.LOGGER.info("Player {} declined InGame mode", player.getName().getString());
+                manager.decline();
+                // Send message that adventure mode is disabled
+                player.sendSystemMessage(
+                    net.minecraft.network.chat.Component.translatable("struttura.ingame.disabled")
+                );
+            }
+            case SKIP -> {
+                Architect.LOGGER.info("Player {} skipped InGame mode for now", player.getName().getString());
+                // Don't mark as initialized - will retry next world load
+                player.sendSystemMessage(
+                    net.minecraft.network.chat.Component.translatable("struttura.ingame.skipped")
+                );
+            }
+            case SELECT -> {
+                Architect.LOGGER.info("Player {} selected InGame list: {} (id={})",
+                    player.getName().getString(), packet.listName(), packet.listId());
 
-            // Initialize with selected list
-            manager.initialize(
-                packet.listId(),
-                packet.listName(),
-                it.magius.struttura.architect.ingame.InGameState.AuthType.PUBLIC
-            );
+                // Initialize with selected list
+                manager.initialize(
+                    packet.listId(),
+                    packet.listName(),
+                    it.magius.struttura.architect.ingame.InGameState.AuthType.PUBLIC
+                );
 
-            // Fetch the spawnable list data
-            var server = ((ServerLevel) player.level()).getServer();
-            it.magius.struttura.architect.api.ApiClient.fetchSpawnableList(packet.listId(), response -> {
-                if (response != null && response.success() && response.spawnableList() != null) {
-                    server.execute(() -> {
-                        manager.setSpawnableList(response.spawnableList());
-                        player.sendSystemMessage(
-                            net.minecraft.network.chat.Component.translatable(
-                                "struttura.ingame.activated",
-                                packet.listName(),
-                                response.spawnableList().getBuildingCount()
-                            )
-                        );
-                    });
-                }
-            });
+                // Fetch the spawnable list data
+                var server = ((ServerLevel) player.level()).getServer();
+                it.magius.struttura.architect.api.ApiClient.fetchSpawnableList(packet.listId(), response -> {
+                    if (response != null && response.success() && response.spawnableList() != null) {
+                        server.execute(() -> {
+                            manager.setSpawnableList(response.spawnableList());
+                            player.sendSystemMessage(
+                                net.minecraft.network.chat.Component.translatable(
+                                    "struttura.ingame.activated",
+                                    packet.listName(),
+                                    response.spawnableList().getBuildingCount()
+                                )
+                            );
+                        });
+                    }
+                });
+            }
         }
     }
 }

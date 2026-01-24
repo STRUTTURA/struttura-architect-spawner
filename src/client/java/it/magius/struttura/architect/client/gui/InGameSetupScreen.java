@@ -9,9 +9,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,12 +21,6 @@ import java.util.List;
 @Environment(EnvType.CLIENT)
 public class InGameSetupScreen extends Screen {
 
-    // Background image
-    private static final Identifier BACKGROUND_TEXTURE = Identifier.fromNamespaceAndPath(
-            "architect", "textures/gui/title_background.png");
-    private static final int BG_WIDTH = 1536;
-    private static final int BG_HEIGHT = 658;
-
     private static final int CONTENT_WIDTH = 450;
     private static final int LIST_ITEM_HEIGHT = 50;
     private static final int BUTTON_HEIGHT = 20;
@@ -36,19 +28,22 @@ public class InGameSetupScreen extends Screen {
 
     private final List<InGameListsPacket.ListInfo> lists;
     private final boolean isNewWorld;
+    private final boolean connectionError;
 
     // List buttons
     private final List<Button> listButtons = new ArrayList<>();
     private Button declineBtn;
+    private Button skipBtn;
 
     // Scroll state
     private int scrollOffset = 0;
     private static final int MAX_VISIBLE_ITEMS = 4;
 
-    public InGameSetupScreen(List<InGameListsPacket.ListInfo> lists, boolean isNewWorld) {
+    public InGameSetupScreen(List<InGameListsPacket.ListInfo> lists, boolean isNewWorld, boolean connectionError) {
         super(Component.translatable("struttura.ingame.setup.title"));
         this.lists = lists;
         this.isNewWorld = isNewWorld;
+        this.connectionError = connectionError;
     }
 
     @Override
@@ -87,12 +82,25 @@ public class InGameSetupScreen extends Screen {
             }
         }
 
-        // Decline button at bottom
+        // Bottom buttons - single row with two buttons
         int bottomY = this.height - 40;
+        int buttonWidth = 180;
+        int buttonSpacing = 10;
+        int totalWidth = (buttonWidth * 2) + buttonSpacing;
+        int buttonsLeft = centerX - totalWidth / 2;
+
+        // Skip button (left) - "Start World and retry later"
+        skipBtn = Button.builder(
+            Component.translatable("struttura.ingame.setup.skip"),
+            button -> onSkip()
+        ).bounds(buttonsLeft, bottomY, buttonWidth, BUTTON_HEIGHT).build();
+        this.addRenderableWidget(skipBtn);
+
+        // Decline button (right) - "Disable Adventure Mode" with red/cancel color
         declineBtn = Button.builder(
-            Component.translatable("struttura.ingame.setup.decline"),
+            Component.translatable("struttura.ingame.setup.decline").withStyle(style -> style.withColor(0xFF6666)),
             button -> onDecline()
-        ).bounds(centerX - 100, bottomY, 200, BUTTON_HEIGHT).build();
+        ).bounds(buttonsLeft + buttonWidth + buttonSpacing, bottomY, buttonWidth, BUTTON_HEIGHT).build();
         this.addRenderableWidget(declineBtn);
     }
 
@@ -114,8 +122,18 @@ public class InGameSetupScreen extends Screen {
     private void onDecline() {
         Architect.LOGGER.info("Declined InGame mode");
 
-        // Send decline to server
+        // Send decline to server (permanently disables adventure mode)
         ClientPlayNetworking.send(InGameSelectPacket.decline());
+
+        // Close screen
+        this.onClose();
+    }
+
+    private void onSkip() {
+        Architect.LOGGER.info("Skipped InGame mode for now");
+
+        // Send skip to server (will retry next world load)
+        ClientPlayNetworking.send(InGameSelectPacket.skip());
 
         // Close screen
         this.onClose();
@@ -132,14 +150,22 @@ public class InGameSetupScreen extends Screen {
         int centerX = this.width / 2;
         int contentLeft = centerX - CONTENT_WIDTH / 2;
 
-        // Title
+        // Draw worm logo in top-left corner (uses centralized rendering for consistent antialiasing)
+        GuiAssets.renderWormScaled(graphics, this.height, 0.30f, 10, 10);
+
+        // Title - "The adventure begins!"
         int titleY = 30;
         graphics.drawCenteredString(this.font, this.title, centerX, titleY, 0xFFFFAA00);
 
-        // Subtitle
+        // Subtitle - show error message in red if connection error
         int subtitleY = titleY + 15;
-        Component subtitle = Component.translatable("struttura.ingame.setup.subtitle");
-        graphics.drawCenteredString(this.font, subtitle, centerX, subtitleY, 0xFFCCCCCC);
+        if (connectionError) {
+            Component subtitle = Component.translatable("struttura.ingame.setup.subtitle.error");
+            graphics.drawCenteredString(this.font, subtitle, centerX, subtitleY, 0xFFFF6666);
+        } else {
+            Component subtitle = Component.translatable("struttura.ingame.setup.subtitle");
+            graphics.drawCenteredString(this.font, subtitle, centerX, subtitleY, 0xFFCCCCCC);
+        }
 
         // List items
         int listStartY = subtitleY + 30;
@@ -188,13 +214,43 @@ public class InGameSetupScreen extends Screen {
             }
         }
 
-        // Info text at bottom
+        // Info text in center area
         if (lists.isEmpty()) {
-            int noListsY = this.height / 2;
-            graphics.drawCenteredString(this.font,
-                Component.translatable("struttura.ingame.setup.nolists"),
-                centerX, noListsY, 0xFFFF8888);
+            int messageY = this.height / 2 - 30;
+
+            if (connectionError) {
+                // Connection error details
+                graphics.drawCenteredString(this.font,
+                    Component.translatable("struttura.ingame.setup.connection_error.line1"),
+                    centerX, messageY, 0xFFCCCCCC);
+
+                messageY += 14;
+                graphics.drawCenteredString(this.font,
+                    Component.translatable("struttura.ingame.setup.connection_error.line2"),
+                    centerX, messageY, 0xFFCCCCCC);
+
+                messageY += 20;
+                graphics.drawCenteredString(this.font,
+                    Component.translatable("struttura.ingame.setup.connection_error.url"),
+                    centerX, messageY, 0xFF88AAFF);
+
+                messageY += 20;
+                graphics.drawCenteredString(this.font,
+                    Component.translatable("struttura.ingame.setup.connection_error.retry"),
+                    centerX, messageY, 0xFF888888);
+            } else {
+                // No lists available
+                graphics.drawCenteredString(this.font,
+                    Component.translatable("struttura.ingame.setup.nolists"),
+                    centerX, messageY, 0xFFFF8888);
+            }
         }
+
+        // Draw hint below buttons
+        int hintY = this.height - 40 + BUTTON_HEIGHT + 5;
+        graphics.drawCenteredString(this.font,
+            Component.translatable("struttura.ingame.setup.decline.hint"),
+            centerX, hintY, 0xFF666666);
 
         // Render widgets (buttons)
         super.render(graphics, mouseX, mouseY, partialTick);
@@ -204,34 +260,7 @@ public class InGameSetupScreen extends Screen {
      * Renders the background image.
      */
     private void renderBackground(GuiGraphics graphics) {
-        int screenWidth = this.width;
-        int screenHeight = this.height;
-
-        float imageAspect = (float) BG_WIDTH / BG_HEIGHT;
-        float screenAspect = (float) screenWidth / screenHeight;
-
-        float u = 0, v = 0;
-        int regionWidth = BG_WIDTH, regionHeight = BG_HEIGHT;
-
-        if (screenAspect > imageAspect) {
-            int visibleTextureHeight = (int) (BG_WIDTH / screenAspect);
-            v = (BG_HEIGHT - visibleTextureHeight) / 2f;
-            regionHeight = visibleTextureHeight;
-        } else {
-            int visibleTextureWidth = (int) (BG_HEIGHT * screenAspect);
-            u = (BG_WIDTH - visibleTextureWidth) / 2f;
-            regionWidth = visibleTextureWidth;
-        }
-
-        graphics.blit(
-                RenderPipelines.GUI_TEXTURED,
-                BACKGROUND_TEXTURE,
-                0, 0,
-                u, v,
-                screenWidth, screenHeight,
-                regionWidth, regionHeight,
-                BG_WIDTH, BG_HEIGHT
-        );
+        GuiAssets.renderBackground(graphics, this.width, this.height);
     }
 
     @Override

@@ -18,6 +18,7 @@ public class InGameState {
 
     private boolean initialized = false;
     private boolean declined = false;
+    private boolean listLocked = false;  // True when list is permanently locked to this world
     private Long listId = null;
     private String listName = null;
     private AuthType authType = null;
@@ -53,11 +54,21 @@ public class InGameState {
     }
 
     /**
+     * Checks if the list is permanently locked to this world.
+     * Once locked, the list cannot be changed.
+     */
+    public boolean isListLocked() {
+        return listLocked;
+    }
+
+    /**
      * Initializes InGame mode with a selected list.
+     * Also locks the list permanently to this world.
      */
     public void initialize(long listId, String listName, AuthType authType, String worldSeed) {
         this.initialized = true;
         this.declined = false;
+        this.listLocked = true;  // Lock the list permanently
         this.listId = listId;
         this.listName = listName;
         this.authType = authType;
@@ -133,6 +144,10 @@ public class InGameState {
 
     public void setDeclined(boolean declined) {
         this.declined = declined;
+    }
+
+    public void setListLocked(boolean listLocked) {
+        this.listLocked = listLocked;
     }
 
     public void setListId(Long listId) {

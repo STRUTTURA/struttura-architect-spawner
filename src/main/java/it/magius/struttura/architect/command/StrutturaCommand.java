@@ -283,25 +283,25 @@ public class StrutturaCommand {
                         return 1;
                     })
                 )
-                // Spawner commands for InGame mode
-                .then(Commands.literal("spawner")
+                // Adventure commands for InGame mode
+                .then(Commands.literal("adventure")
                     .then(Commands.literal("init")
-                        .executes(StrutturaCommand::executeSpawnerInit)
+                        .executes(StrutturaCommand::executeAdventureInit)
                     )
                     .then(Commands.literal("status")
-                        .executes(StrutturaCommand::executeSpawnerStatus)
+                        .executes(StrutturaCommand::executeAdventureStatus)
                     )
                     .then(Commands.literal("list")
-                        .executes(StrutturaCommand::executeSpawnerList)
+                        .executes(StrutturaCommand::executeAdventureList)
                     )
                     .then(Commands.literal("force")
                         .then(Commands.argument("rdns", StringArgumentType.string())
-                            .suggests(SPAWNER_BUILDING_SUGGESTIONS)
-                            .executes(StrutturaCommand::executeSpawnerForce)
+                            .suggests(ADVENTURE_BUILDING_SUGGESTIONS)
+                            .executes(StrutturaCommand::executeAdventureForce)
                         )
                     )
                     .then(Commands.literal("reset")
-                        .executes(StrutturaCommand::executeSpawnerReset)
+                        .executes(StrutturaCommand::executeAdventureReset)
                     )
                 )
         );
@@ -2600,10 +2600,10 @@ public class StrutturaCommand {
         onVanillaScreenshotReceived(state, null);
     }
 
-    // ===== Spawner Commands =====
+    // ===== Adventure Commands =====
 
     // Suggestion provider for buildings in the active spawnable list
-    private static final SuggestionProvider<CommandSourceStack> SPAWNER_BUILDING_SUGGESTIONS =
+    private static final SuggestionProvider<CommandSourceStack> ADVENTURE_BUILDING_SUGGESTIONS =
         (context, builder) -> {
             java.util.Set<String> suggestions = new java.util.LinkedHashSet<>();
             InGameManager manager = InGameManager.getInstance();
@@ -2617,9 +2617,9 @@ public class StrutturaCommand {
         };
 
     /**
-     * /struttura spawner init - (Re)initialize InGame mode
+     * /struttura adventure init - (Re)initialize InGame mode
      */
-    private static int executeSpawnerInit(CommandContext<CommandSourceStack> ctx) {
+    private static int executeAdventureInit(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
 
         // Verify it's a player
@@ -2631,13 +2631,20 @@ public class StrutturaCommand {
         InGameManager manager = InGameManager.getInstance();
 
         if (!manager.isReady()) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_ready")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.not_ready")));
+            return 0;
+        }
+
+        // Check if the list is locked to this world - cannot change list
+        if (manager.isListLocked()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.list_locked",
+                manager.getState().getListName())));
             return 0;
         }
 
         // Check if already initialized with a list
         if (manager.isActive()) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.already_initialized",
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.already_initialized",
                 manager.getState().getListName())));
             return 0;
         }
@@ -2647,17 +2654,16 @@ public class StrutturaCommand {
             manager.reset();
         }
 
-        // TODO: Open list selection screen (Fase 2.2)
-        // For now, just show a message
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.init_started")), false);
+        // Send setup screen to player with retry (forces re-fetch if there was a connection error)
+        manager.sendSetupScreenWithRetry(player);
 
         return 1;
     }
 
     /**
-     * /struttura spawner status - Show current InGame state
+     * /struttura adventure status - Show current InGame state
      */
-    private static int executeSpawnerStatus(CommandContext<CommandSourceStack> ctx) {
+    private static int executeAdventureStatus(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
 
         // Verify it's a player
@@ -2669,19 +2675,19 @@ public class StrutturaCommand {
         InGameManager manager = InGameManager.getInstance();
 
         if (!manager.isReady()) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_ready")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.not_ready")));
             return 0;
         }
 
         InGameState state = manager.getState();
 
         if (!state.isInitialized()) {
-            source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.not_initialized")), false);
+            source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.status.not_initialized")), false);
             return 1;
         }
 
         if (state.isDeclined()) {
-            source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.declined")), false);
+            source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.status.declined")), false);
             return 1;
         }
 
@@ -2694,19 +2700,19 @@ public class StrutturaCommand {
         int buildingCount = spawnableList != null ? spawnableList.getBuildingCount() : 0;
         double spawnPercentage = spawnableList != null ? spawnableList.getSpawningPercentage() * 100 : 0;
 
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.active")), false);
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.list", listName, listId)), false);
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.auth", authType != null ? authType.name() : "N/A")), false);
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.buildings", buildingCount)), false);
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.status.spawn_rate", String.format("%.1f", spawnPercentage))), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.status.active")), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.status.list", listName, listId)), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.status.auth", authType != null ? authType.name() : "N/A")), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.status.buildings", buildingCount)), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.status.spawn_rate", String.format("%.1f", spawnPercentage))), false);
 
         return 1;
     }
 
     /**
-     * /struttura spawner list - List buildings in the active list
+     * /struttura adventure list - List buildings in the active list
      */
-    private static int executeSpawnerList(CommandContext<CommandSourceStack> ctx) {
+    private static int executeAdventureList(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
 
         // Verify it's a player
@@ -2718,22 +2724,22 @@ public class StrutturaCommand {
         InGameManager manager = InGameManager.getInstance();
 
         if (!manager.isActive()) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_active")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.not_active")));
             return 0;
         }
 
         SpawnableList list = manager.getSpawnableList();
         if (list == null || !list.hasBuildings()) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.list.empty")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.list.empty")));
             return 0;
         }
 
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.list.header", list.getBuildingCount())), false);
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.list.header", list.getBuildingCount())), false);
 
         for (SpawnableBuilding building : list.getBuildings()) {
             String limit = building.getXWorld() == 0 ? "∞" : String.valueOf(building.getXWorld());
             source.sendSuccess(() -> Component.literal(
-                I18n.tr(player, "spawner.list.entry",
+                I18n.tr(player, "adventure.list.entry",
                     building.getRdns(),
                     building.getSizeX() + "x" + building.getSizeY() + "x" + building.getSizeZ(),
                     building.getSpawnedCount() + "/" + limit)
@@ -2744,10 +2750,10 @@ public class StrutturaCommand {
     }
 
     /**
-     * /struttura spawner force <rdns> - Force spawn a building in player's chunk
+     * /struttura adventure force <rdns> - Force spawn a building in player's chunk
      * Uses normal spawn evaluation to find a valid position.
      */
-    private static int executeSpawnerForce(CommandContext<CommandSourceStack> ctx) {
+    private static int executeAdventureForce(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
 
         // Verify it's a player
@@ -2759,18 +2765,18 @@ public class StrutturaCommand {
         InGameManager manager = InGameManager.getInstance();
 
         if (!manager.isActive()) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_active")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.not_active")));
             return 0;
         }
 
         if (!manager.isSpawnerReady()) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_ready")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.not_ready")));
             return 0;
         }
 
         SpawnableList list = manager.getSpawnableList();
         if (list == null) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.list.empty")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.list.empty")));
             return 0;
         }
 
@@ -2778,7 +2784,7 @@ public class StrutturaCommand {
         SpawnableBuilding building = list.getBuildingByRdns(rdns);
 
         if (building == null) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.force.not_found", rdns)));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.force.not_found", rdns)));
             return 0;
         }
 
@@ -2788,7 +2794,7 @@ public class StrutturaCommand {
         net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunkSource().getChunkNow(chunkPos.x, chunkPos.z);
 
         if (chunk == null) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.force.chunk_not_loaded")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.force.chunk_not_loaded")));
             return 0;
         }
 
@@ -2804,7 +2810,7 @@ public class StrutturaCommand {
             if (building.getRules().isEmpty()) {
                 rule = SpawnRule.createDefault();
             } else {
-                source.sendFailure(Component.literal(I18n.tr(player, "spawner.force.no_rule", biomeId)));
+                source.sendFailure(Component.literal(I18n.tr(player, "adventure.force.no_rule", biomeId)));
                 return 0;
             }
         }
@@ -2820,7 +2826,7 @@ public class StrutturaCommand {
             validator.findPositionWithDetails(level, chunkPos, building, rule, random);
 
         if (findResult.position() == null) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.force.no_position", rdns)));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.force.no_position", rdns)));
             // Show detailed failure reasons
             for (String reason : findResult.failureReasons()) {
                 source.sendFailure(Component.literal("  " + reason));
@@ -2836,16 +2842,16 @@ public class StrutturaCommand {
         // Spawn the building
         it.magius.struttura.architect.ingame.spawn.InGameBuildingSpawner.spawn(level, chunk, building, position);
 
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.force.success",
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.force.success",
             rdns, position.blockPos().toShortString())), false);
 
         return 1;
     }
 
     /**
-     * /struttura spawner reset - Reset InGame state
+     * /struttura adventure reset - Reset InGame state
      */
-    private static int executeSpawnerReset(CommandContext<CommandSourceStack> ctx) {
+    private static int executeAdventureReset(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
 
         // Verify it's a player
@@ -2857,17 +2863,28 @@ public class StrutturaCommand {
         InGameManager manager = InGameManager.getInstance();
 
         if (!manager.isReady()) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.not_ready")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.not_ready")));
             return 0;
         }
 
         if (!manager.isInitialized()) {
-            source.sendFailure(Component.literal(I18n.tr(player, "spawner.status.not_initialized")));
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.status.not_initialized")));
             return 0;
         }
 
-        manager.reset();
-        source.sendSuccess(() -> Component.literal(I18n.tr(player, "spawner.reset.success")), false);
+        // Check if the list is locked to this world - cannot reset
+        if (manager.isListLocked()) {
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.list_locked",
+                manager.getState().getListName())));
+            return 0;
+        }
+
+        boolean success = manager.reset();
+        if (!success) {
+            source.sendFailure(Component.literal(I18n.tr(player, "adventure.reset.failed")));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(I18n.tr(player, "adventure.reset.success")), false);
 
         return 1;
     }

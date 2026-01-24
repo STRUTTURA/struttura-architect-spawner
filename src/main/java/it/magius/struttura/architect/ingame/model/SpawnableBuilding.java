@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.AABB;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Represents a building that can be spawned in the world via the InGame system.
@@ -18,12 +19,15 @@ public class SpawnableBuilding {
     private final int xWorld;               // Max spawns in this world (0 = unlimited)
     private final List<SpawnRule> rules;    // Spawn rules per biome
     private final AABB bounds;              // Bounding box (dimensions, origin at 0,0,0)
+    private final Map<String, String> names;        // Localized names (lang code -> name)
+    private final Map<String, String> descriptions; // Localized descriptions (lang code -> description)
 
     // Runtime state (not persisted)
     private int spawnedCount = 0;
 
     public SpawnableBuilding(String rdns, long pk, BlockPos entrance, float entranceYaw,
-                             int xWorld, List<SpawnRule> rules, AABB bounds) {
+                             int xWorld, List<SpawnRule> rules, AABB bounds,
+                             Map<String, String> names, Map<String, String> descriptions) {
         this.rdns = rdns;
         this.pk = pk;
         this.entrance = entrance;
@@ -31,6 +35,16 @@ public class SpawnableBuilding {
         this.xWorld = xWorld;
         this.rules = rules != null ? List.copyOf(rules) : List.of();
         this.bounds = bounds;
+        this.names = names != null ? Map.copyOf(names) : Map.of();
+        this.descriptions = descriptions != null ? Map.copyOf(descriptions) : Map.of();
+    }
+
+    /**
+     * Legacy constructor for backwards compatibility.
+     */
+    public SpawnableBuilding(String rdns, long pk, BlockPos entrance, float entranceYaw,
+                             int xWorld, List<SpawnRule> rules, AABB bounds) {
+        this(rdns, pk, entrance, entranceYaw, xWorld, rules, bounds, null, null);
     }
 
     /**
@@ -81,6 +95,90 @@ public class SpawnableBuilding {
      */
     public AABB getBounds() {
         return bounds;
+    }
+
+    /**
+     * Gets all localized names.
+     */
+    public Map<String, String> getNames() {
+        return names;
+    }
+
+    /**
+     * Gets all localized descriptions.
+     */
+    public Map<String, String> getDescriptions() {
+        return descriptions;
+    }
+
+    /**
+     * Gets the localized name for the specified language.
+     * Falls back to English, then to RDNS if no translation is available.
+     * @param langCode the language code (e.g., "en_us", "it_it")
+     */
+    public String getLocalizedName(String langCode) {
+        if (names.isEmpty()) {
+            return rdns;
+        }
+
+        // Try exact match first
+        if (names.containsKey(langCode)) {
+            return names.get(langCode);
+        }
+
+        // Try language without region (e.g., "en" from "en_us")
+        String baseLang = langCode.split("_")[0];
+        for (Map.Entry<String, String> entry : names.entrySet()) {
+            if (entry.getKey().startsWith(baseLang)) {
+                return entry.getValue();
+            }
+        }
+
+        // Fallback to English
+        if (names.containsKey("en_us")) {
+            return names.get("en_us");
+        }
+        if (names.containsKey("en")) {
+            return names.get("en");
+        }
+
+        // Return first available name or RDNS
+        return names.values().stream().findFirst().orElse(rdns);
+    }
+
+    /**
+     * Gets the localized description for the specified language.
+     * Falls back to English, then to empty string if no translation is available.
+     * @param langCode the language code (e.g., "en_us", "it_it")
+     */
+    public String getLocalizedDescription(String langCode) {
+        if (descriptions.isEmpty()) {
+            return "";
+        }
+
+        // Try exact match first
+        if (descriptions.containsKey(langCode)) {
+            return descriptions.get(langCode);
+        }
+
+        // Try language without region
+        String baseLang = langCode.split("_")[0];
+        for (Map.Entry<String, String> entry : descriptions.entrySet()) {
+            if (entry.getKey().startsWith(baseLang)) {
+                return entry.getValue();
+            }
+        }
+
+        // Fallback to English
+        if (descriptions.containsKey("en_us")) {
+            return descriptions.get("en_us");
+        }
+        if (descriptions.containsKey("en")) {
+            return descriptions.get("en");
+        }
+
+        // Return first available description or empty
+        return descriptions.values().stream().findFirst().orElse("");
     }
 
     /**
