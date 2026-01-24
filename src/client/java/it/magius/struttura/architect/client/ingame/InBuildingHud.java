@@ -1,5 +1,6 @@
 package it.magius.struttura.architect.client.ingame;
 
+import it.magius.struttura.architect.config.ArchitectConfig;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.Minecraft;
@@ -8,7 +9,7 @@ import net.minecraft.client.gui.GuiGraphics;
 
 /**
  * HUD overlay that shows building information when player is inside a spawned building.
- * Displays at the top center of the screen (similar to boss bar area).
+ * Position is configurable via ArchitectConfig overlay settings.
  */
 @Environment(EnvType.CLIENT)
 public class InBuildingHud {
@@ -38,6 +39,7 @@ public class InBuildingHud {
 
         Minecraft mc = Minecraft.getInstance();
         int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
 
         String buildingName = state.getBuildingName();
         String author = state.getAuthor();
@@ -60,9 +62,16 @@ public class InBuildingHud {
         int lineCount = line2.isEmpty() ? 1 : 2;
         int panelHeight = LINE_HEIGHT * lineCount + PADDING * 2 - 2;
 
-        // Position at top center (below boss bar area)
-        int panelX = (screenWidth - panelWidth) / 2;
-        int panelY = 32;  // Below boss bar
+        // Get position from config
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String anchorV = config.getOverlayAnchorV();
+        String anchorH = config.getOverlayAnchorH();
+        int offsetXPercent = config.getOverlayOffsetX();
+        int offsetYPercent = config.getOverlayOffsetY();
+
+        // Calculate panel position based on anchors and offsets
+        int panelX = calculateX(screenWidth, panelWidth, anchorH, offsetXPercent);
+        int panelY = calculateY(screenHeight, panelHeight, anchorV, offsetYPercent);
 
         // Draw background
         graphics.fill(panelX, panelY, panelX + panelWidth, panelY + panelHeight, PANEL_BG_COLOR);
@@ -70,16 +79,59 @@ public class InBuildingHud {
 
         // Draw text
         int textY = panelY + PADDING;
+        int textCenterX = panelX + panelWidth / 2;
 
-        // Building name (centered, yellow)
-        graphics.drawCenteredString(font, line1, screenWidth / 2, textY, BUILDING_NAME_COLOR);
+        // Building name (centered in panel, yellow)
+        graphics.drawCenteredString(font, line1, textCenterX, textY, BUILDING_NAME_COLOR);
         textY += LINE_HEIGHT;
 
-        // Author (centered, blue)
+        // Author (centered in panel, blue)
         if (!line2.isEmpty()) {
-            graphics.drawCenteredString(font, line2, screenWidth / 2, textY, AUTHOR_COLOR);
+            graphics.drawCenteredString(font, line2, textCenterX, textY, AUTHOR_COLOR);
         }
 
         return true;
+    }
+
+    /**
+     * Calculates X position based on horizontal anchor and offset.
+     * Offset 0% = attached to edge, 50% = center of available space
+     */
+    private static int calculateX(int screenWidth, int panelWidth, String anchorH, int offsetPercent) {
+        switch (anchorH) {
+            case "LEFT":
+                // Offset moves from left edge (0%) toward center (50%)
+                int maxOffsetLeft = (screenWidth - panelWidth) / 2;
+                return (maxOffsetLeft * offsetPercent) / 100;
+            case "RIGHT":
+                // Offset moves from right edge (0%) toward center (50%)
+                int maxOffsetRight = (screenWidth - panelWidth) / 2;
+                return screenWidth - panelWidth - (maxOffsetRight * offsetPercent) / 100;
+            case "HCENTER":
+            default:
+                // Centered horizontally, offset has no effect
+                return (screenWidth - panelWidth) / 2;
+        }
+    }
+
+    /**
+     * Calculates Y position based on vertical anchor and offset.
+     * Offset 0% = attached to edge, 50% = center of available space
+     */
+    private static int calculateY(int screenHeight, int panelHeight, String anchorV, int offsetPercent) {
+        switch (anchorV) {
+            case "TOP":
+                // Offset moves from top edge (0%) toward center (50%)
+                int maxOffsetTop = (screenHeight - panelHeight) / 2;
+                return (maxOffsetTop * offsetPercent) / 100;
+            case "BOTTOM":
+                // Offset moves from bottom edge (0%) toward center (50%)
+                int maxOffsetBottom = (screenHeight - panelHeight) / 2;
+                return screenHeight - panelHeight - (maxOffsetBottom * offsetPercent) / 100;
+            case "VCENTER":
+            default:
+                // Centered vertically, offset has no effect
+                return (screenHeight - panelHeight) / 2;
+        }
     }
 }

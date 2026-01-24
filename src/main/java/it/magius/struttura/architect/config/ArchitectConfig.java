@@ -40,7 +40,7 @@ public class ArchitectConfig {
     private String overlayAnchorV = "TOP";      // TOP, BOTTOM, VCENTER
     private String overlayAnchorH = "HCENTER";  // LEFT, RIGHT, HCENTER
     private int overlayOffsetX = 0;             // 0-100 (%)
-    private int overlayOffsetY = 0;             // 0-100 (%)
+    private int overlayOffsetY = 5;             // 0-100 (%)
 
     // Website URL (for API key requests, etc.)
     private String www = "https://struttura.magius.it";

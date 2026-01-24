@@ -290,13 +290,13 @@ public class OverlayPositionScreen extends Screen {
         double mouseY = event.y();
         int button = event.button();
 
+        // Unfocus all boxes first, then let the clicked one gain focus
+        offsetXBox.setFocused(false);
+        offsetYBox.setFocused(false);
+
         // Handle edit box clicks
         if (offsetXBox.mouseClicked(mouseX, mouseY, button)) return true;
         if (offsetYBox.mouseClicked(mouseX, mouseY, button)) return true;
-
-        // Unfocus all if clicked elsewhere
-        offsetXBox.setFocused(false);
-        offsetYBox.setFocused(false);
 
         return super.mouseClicked(event, consumed);
     }
