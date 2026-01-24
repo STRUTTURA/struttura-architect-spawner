@@ -1691,17 +1691,14 @@ public class ApiClient {
                     }
                 }
 
-                // Parse bounds
+                // Parse bounds - API sends size {x,y,z}, convert to AABB(0,0,0, x-1,y-1,z-1)
                 AABB bounds = new AABB(0, 0, 0, 1, 1, 1);
                 if (bldgObj.has("bounds") && bldgObj.get("bounds").isJsonObject()) {
                     JsonObject boundsObj = bldgObj.getAsJsonObject("bounds");
-                    double x = boundsObj.has("x") ? boundsObj.get("x").getAsDouble() : 0;
-                    double y = boundsObj.has("y") ? boundsObj.get("y").getAsDouble() : 0;
-                    double z = boundsObj.has("z") ? boundsObj.get("z").getAsDouble() : 0;
-                    double x2 = boundsObj.has("x2") ? boundsObj.get("x2").getAsDouble() : x;
-                    double y2 = boundsObj.has("y2") ? boundsObj.get("y2").getAsDouble() : y;
-                    double z2 = boundsObj.has("z2") ? boundsObj.get("z2").getAsDouble() : z;
-                    bounds = new AABB(x, y, z, x2, y2, z2);
+                    int sizeX = boundsObj.has("x") ? boundsObj.get("x").getAsInt() : 1;
+                    int sizeY = boundsObj.has("y") ? boundsObj.get("y").getAsInt() : 1;
+                    int sizeZ = boundsObj.has("z") ? boundsObj.get("z").getAsInt() : 1;
+                    bounds = new AABB(0, 0, 0, sizeX - 1, sizeY - 1, sizeZ - 1);
                 }
 
                 // Parse names (localized)

@@ -137,24 +137,22 @@ public class SpawnableListStorage {
         JsonObject json = new JsonObject();
         json.addProperty("rdns", building.getRdns());
         json.addProperty("pk", building.getPk());
-        json.addProperty("entranceYaw", building.getEntranceYaw());
         json.addProperty("xWorld", building.getXWorld());
 
-        // Entrance position
+        // Entrance position with yaw
         JsonObject entranceJson = new JsonObject();
         entranceJson.addProperty("x", building.getEntrance().getX());
         entranceJson.addProperty("y", building.getEntrance().getY());
         entranceJson.addProperty("z", building.getEntrance().getZ());
+        entranceJson.addProperty("yaw", building.getEntranceYaw());
         json.add("entrance", entranceJson);
 
-        // Bounds
+        // Bounds - save only size {x,y,z} since bounds are normalized (min always 0,0,0)
         JsonObject boundsJson = new JsonObject();
-        boundsJson.addProperty("minX", building.getBounds().minX);
-        boundsJson.addProperty("minY", building.getBounds().minY);
-        boundsJson.addProperty("minZ", building.getBounds().minZ);
-        boundsJson.addProperty("maxX", building.getBounds().maxX);
-        boundsJson.addProperty("maxY", building.getBounds().maxY);
-        boundsJson.addProperty("maxZ", building.getBounds().maxZ);
+        AABB b = building.getBounds();
+        boundsJson.addProperty("x", (int) (b.maxX - b.minX + 1));
+        boundsJson.addProperty("y", (int) (b.maxY - b.minY + 1));
+        boundsJson.addProperty("z", (int) (b.maxZ - b.minZ + 1));
         json.add("bounds", boundsJson);
 
         // Rules
@@ -223,32 +221,29 @@ public class SpawnableListStorage {
         try {
             String rdns = json.get("rdns").getAsString();
             long pk = json.get("pk").getAsLong();
-            float entranceYaw = json.has("entranceYaw") ? json.get("entranceYaw").getAsFloat() : 0f;
             int xWorld = json.has("xWorld") ? json.get("xWorld").getAsInt() : 0;
 
-            // Entrance
+            // Entrance with yaw
             BlockPos entrance = BlockPos.ZERO;
-            if (json.has("entrance")) {
+            float entranceYaw = 0f;
+            if (json.has("entrance") && json.get("entrance").isJsonObject()) {
                 JsonObject entranceJson = json.getAsJsonObject("entrance");
                 entrance = new BlockPos(
                     entranceJson.get("x").getAsInt(),
                     entranceJson.get("y").getAsInt(),
                     entranceJson.get("z").getAsInt()
                 );
+                entranceYaw = entranceJson.has("yaw") ? entranceJson.get("yaw").getAsFloat() : 0f;
             }
 
-            // Bounds
+            // Bounds - load size {x,y,z} and convert to AABB(0,0,0, x-1,y-1,z-1)
             AABB bounds = new AABB(0, 0, 0, 1, 1, 1);
-            if (json.has("bounds")) {
+            if (json.has("bounds") && json.get("bounds").isJsonObject()) {
                 JsonObject boundsJson = json.getAsJsonObject("bounds");
-                bounds = new AABB(
-                    boundsJson.get("minX").getAsDouble(),
-                    boundsJson.get("minY").getAsDouble(),
-                    boundsJson.get("minZ").getAsDouble(),
-                    boundsJson.get("maxX").getAsDouble(),
-                    boundsJson.get("maxY").getAsDouble(),
-                    boundsJson.get("maxZ").getAsDouble()
-                );
+                int sizeX = boundsJson.get("x").getAsInt();
+                int sizeY = boundsJson.get("y").getAsInt();
+                int sizeZ = boundsJson.get("z").getAsInt();
+                bounds = new AABB(0, 0, 0, sizeX - 1, sizeY - 1, sizeZ - 1);
             }
 
             // Rules
