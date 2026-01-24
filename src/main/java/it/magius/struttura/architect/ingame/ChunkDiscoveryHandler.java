@@ -34,7 +34,6 @@ public class ChunkDiscoveryHandler {
      */
     public void register() {
         ServerChunkEvents.CHUNK_LOAD.register(this::onChunkLoad);
-        Architect.LOGGER.info("Chunk discovery handler registered");
     }
 
     /**
@@ -82,8 +81,6 @@ public class ChunkDiscoveryHandler {
         // Check if spawner is ready (all buildings downloaded)
         // If still downloading, chunk is marked as processed but no spawn evaluation
         if (!manager.isSpawnerReady()) {
-            Architect.LOGGER.debug("Chunk [{}, {}]: marked as explored (spawner not ready yet)",
-                chunk.getPos().x, chunk.getPos().z);
             return;
         }
 

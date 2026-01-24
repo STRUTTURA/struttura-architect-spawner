@@ -50,7 +50,10 @@ public class ChunkDataManager {
             data.maxX(), data.maxY(), data.maxZ()
         );
 
-        return new SpawnedBuildingInfo(data.buildingRdns(), data.buildingPk(), bounds, data.rotation());
+        return new SpawnedBuildingInfo(
+            data.buildingRdns(), data.buildingPk(), bounds, data.rotation(),
+            data.buildingName(), data.buildingAuthor()
+        );
     }
 
     /**
@@ -60,12 +63,16 @@ public class ChunkDataManager {
      * @param pk the building's primary key
      * @param bounds the world-space bounding box
      * @param rotation the rotation applied (0, 90, 180, 270)
+     * @param name the building's localized name at spawn time
+     * @param author the building's author nickname
      */
-    public static void setBuildingData(LevelChunk chunk, String rdns, long pk, AABB bounds, int rotation) {
+    public static void setBuildingData(LevelChunk chunk, String rdns, long pk, AABB bounds, int rotation,
+                                       String name, String author) {
         ModAttachments.ChunkSpawnData data = ModAttachments.ChunkSpawnData.withBuilding(
             rdns, pk, rotation,
             bounds.minX, bounds.minY, bounds.minZ,
-            bounds.maxX, bounds.maxY, bounds.maxZ
+            bounds.maxX, bounds.maxY, bounds.maxZ,
+            name, author
         );
         chunk.setAttached(ModAttachments.CHUNK_SPAWN_DATA, data);
         // Fabric Attachment API automatically marks chunk as needing save

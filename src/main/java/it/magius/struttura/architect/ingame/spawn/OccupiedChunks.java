@@ -1,6 +1,5 @@
 package it.magius.struttura.architect.ingame.spawn;
 
-import it.magius.struttura.architect.Architect;
 import net.minecraft.world.phys.AABB;
 
 import java.util.Set;
@@ -25,11 +24,6 @@ public class OccupiedChunks {
         int minChunkZ = (int) Math.floor(bounds.minZ) >> 4;
         int maxChunkZ = (int) Math.floor(bounds.maxZ) >> 4;
 
-        Architect.LOGGER.info("[OccupiedChunks] markOccupied bounds: [{}, {}, {}] to [{}, {}, {}] -> chunks [{}, {}] to [{}, {}]",
-            (int) bounds.minX, (int) bounds.minY, (int) bounds.minZ,
-            (int) bounds.maxX, (int) bounds.maxY, (int) bounds.maxZ,
-            minChunkX, minChunkZ, maxChunkX, maxChunkZ);
-
         int added = 0;
         for (int cx = minChunkX; cx <= maxChunkX; cx++) {
             for (int cz = minChunkZ; cz <= maxChunkZ; cz++) {
@@ -37,9 +31,6 @@ public class OccupiedChunks {
                     added++;
                 }
             }
-        }
-        if (added > 0) {
-            Architect.LOGGER.info("[OccupiedChunks] +{} chunks, total: {}", added, occupiedChunks.size());
         }
     }
 
@@ -50,10 +41,7 @@ public class OccupiedChunks {
      * @return true if the chunk is occupied
      */
     public static boolean isOccupied(int chunkX, int chunkZ) {
-        boolean occupied = occupiedChunks.contains(chunkKey(chunkX, chunkZ));
-        Architect.LOGGER.debug("[OccupiedChunks] isOccupied({}, {}) = {} (total: {})",
-            chunkX, chunkZ, occupied, occupiedChunks.size());
-        return occupied;
+        return occupiedChunks.contains(chunkKey(chunkX, chunkZ));
     }
 
     /**
@@ -71,7 +59,6 @@ public class OccupiedChunks {
         for (int cx = minChunkX; cx <= maxChunkX; cx++) {
             for (int cz = minChunkZ; cz <= maxChunkZ; cz++) {
                 if (occupiedChunks.contains(chunkKey(cx, cz))) {
-                    Architect.LOGGER.debug("[OccupiedChunks] isAnyOccupied: chunk [{}, {}] is occupied", cx, cz);
                     return true;
                 }
             }
@@ -83,9 +70,7 @@ public class OccupiedChunks {
      * Clears all occupied chunks. Called when world unloads.
      */
     public static void clear() {
-        int size = occupiedChunks.size();
         occupiedChunks.clear();
-        Architect.LOGGER.info("[OccupiedChunks] Cleared (was {} chunks)", size);
     }
 
     private static long chunkKey(int x, int z) {

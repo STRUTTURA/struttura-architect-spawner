@@ -196,9 +196,9 @@ public class ArchitectClient implements ClientModInitializer {
                 InGameClientState state = InGameClientState.getInstance();
                 if (packet.inBuilding()) {
                     state.enterBuilding(packet.rdns(), packet.pk(), packet.hasLiked(),
-                        packet.localizedName(), packet.localizedDescription());
-                    Architect.LOGGER.debug("Entered building: {} (pk={}, name={})",
-                        packet.rdns(), packet.pk(), packet.localizedName());
+                        packet.localizedName(), packet.localizedDescription(), packet.author());
+                    Architect.LOGGER.debug("Entered building: {} (pk={}, name={}, author={})",
+                        packet.rdns(), packet.pk(), packet.localizedName(), packet.author());
                 } else {
                     state.exitBuilding();
                     Architect.LOGGER.debug("Exited building");

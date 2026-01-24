@@ -5,7 +5,9 @@ import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.ingame.cache.BuildingCache;
 import it.magius.struttura.architect.ingame.cache.BuildingDownloader;
+import it.magius.struttura.architect.ingame.cache.NbtCacheStorage;
 import it.magius.struttura.architect.ingame.model.InGameListInfo;
+import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
 import it.magius.struttura.architect.ingame.spawn.OccupiedChunks;
 import it.magius.struttura.architect.ingame.spawn.SpawnQueue;
 import it.magius.struttura.architect.ingame.model.SpawnableList;
@@ -19,7 +21,11 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -33,6 +39,7 @@ public class InGameManager {
 
     private InGameStorage storage;
     private SpawnableListStorage listStorage;
+    private NbtCacheStorage nbtCacheStorage;
     private MinecraftServer server;
     private boolean worldLoaded = false;
 
@@ -46,6 +53,11 @@ public class InGameManager {
 
     // Spawner activation timestamp (when download completes and spawner starts working)
     private long spawnerActivationTime = 0;
+
+    // List refresh state
+    private boolean listRefreshInProgress = false;
+    private long lastRefreshCheckTime = 0;
+    private static final long REFRESH_CHECK_INTERVAL_TICKS = 20 * 60; // Check every minute if refresh is needed
 
     private InGameManager() {}
 
@@ -79,13 +91,16 @@ public class InGameManager {
         // Initialize list storage
         listStorage = new SpawnableListStorage(worldPath);
 
+        // Initialize NBT cache storage
+        nbtCacheStorage = new NbtCacheStorage(worldPath);
+
         worldLoaded = true;
 
         // Initialize LikeManager
         String worldSeed = String.valueOf(server.overworld().getSeed());
         LikeManager.getInstance().init(worldPath, worldSeed);
 
-        Architect.LOGGER.info("InGame system initialized for world: {}", storage.getState());
+        // InGame system initialized
 
         // Check for auto-initialization (dedicated server config)
         checkAutoInitialize();
@@ -112,11 +127,20 @@ public class InGameManager {
 
         SpawnableList list = listStorage.load();
         if (list != null) {
-            Architect.LOGGER.info("Loaded spawnable list from disk with {} buildings", list.getBuildingCount());
+            // Load NBT cache from disk (only entries with matching hashes)
+            if (nbtCacheStorage != null) {
+                Map<String, String> expectedHashes = new HashMap<>();
+                for (SpawnableBuilding building : list.getBuildings()) {
+                    if (building.getHash() != null) {
+                        expectedHashes.put(building.getRdns(), building.getHash());
+                    }
+                }
+                nbtCacheStorage.load(expectedHashes);
+            }
+
             activateSpawnableList(list, false);
         } else {
             // Fallback: try to fetch from API (backwards compatibility for existing worlds)
-            Architect.LOGGER.info("No persisted spawnable list found, fetching from API...");
             Long listId = storage.getState().getListId();
             if (listId != null) {
                 ApiClient.fetchSpawnableList(listId, response -> {
@@ -145,6 +169,11 @@ public class InGameManager {
             storage.save();
         }
 
+        // Save NBT cache to disk before clearing
+        if (nbtCacheStorage != null && BuildingCache.getInstance().size() > 0) {
+            nbtCacheStorage.save();
+        }
+
         // Clear LikeManager
         LikeManager.getInstance().clear();
 
@@ -157,14 +186,15 @@ public class InGameManager {
         worldLoaded = false;
         storage = null;
         listStorage = null;
+        nbtCacheStorage = null;
         server = null;
         cachedLists = null;
         listsLoading = false;
         connectionError = false;
         playerSetupPending.clear();
         spawnerActivationTime = 0;
-
-        Architect.LOGGER.info("InGame system unloaded");
+        listRefreshInProgress = false;
+        lastRefreshCheckTime = 0;
     }
 
     /**
@@ -180,7 +210,6 @@ public class InGameManager {
         Long configListId = config.getInGameListId();
 
         if (configListId != null) {
-            Architect.LOGGER.info("Auto-initializing InGame with config list ID: {}", configListId);
             // Fetch list from API and initialize
             ApiClient.fetchSpawnableList(configListId, response -> {
                 if (response != null && response.success() && response.spawnableList() != null) {
@@ -202,14 +231,11 @@ public class InGameManager {
         }
         listsLoading = true;
 
-        Architect.LOGGER.debug("Fetching available InGame lists...");
-
         ApiClient.fetchInGameLists(response -> {
             listsLoading = false;
             if (response != null && response.success() && response.lists() != null) {
                 connectionError = false;
                 cachedLists = response.lists();
-                Architect.LOGGER.info("Loaded {} available InGame lists", cachedLists.size());
 
                 // Send to any players waiting for setup
                 if (server != null) {
@@ -220,11 +246,8 @@ public class InGameManager {
                 if (response == null || response.statusCode() == 0 ||
                     (response.message() != null && response.message().startsWith("Error:"))) {
                     connectionError = true;
-                    Architect.LOGGER.warn("Failed to connect to STRUTTURA server: {}",
-                        response != null ? response.message() : "No response");
                 } else {
                     connectionError = false;
-                    Architect.LOGGER.debug("No InGame lists available");
                 }
                 cachedLists = List.of();
 
@@ -296,7 +319,6 @@ public class InGameManager {
     private void sendSetupScreenInternal(ServerPlayer player, boolean forceRetry) {
         // If forcing retry and there was a connection error, clear cache
         if (forceRetry && connectionError && !listsLoading) {
-            Architect.LOGGER.info("Manual retry requested, clearing cache and retrying fetch...");
             cachedLists = null;
             connectionError = false;
         }
@@ -324,9 +346,6 @@ public class InGameManager {
             packet = InGameListsPacket.fromListInfos(cachedLists, isNewWorld);
         }
         ServerPlayNetworking.send(player, packet);
-
-        Architect.LOGGER.debug("Sent InGame setup screen to {} with {} lists (connectionError={})",
-            player.getName().getString(), cachedLists.size(), connectionError);
     }
 
     // ===== State accessors =====
@@ -393,8 +412,6 @@ public class InGameManager {
 
         storage.getState().initialize(listId, listName, authType, worldSeed);
         storage.save();
-
-        Architect.LOGGER.info("InGame initialized with list '{}' (ID: {})", listName, listId);
     }
 
     /**
@@ -408,8 +425,6 @@ public class InGameManager {
 
         storage.getState().decline();
         storage.save();
-
-        Architect.LOGGER.info("InGame mode declined by user");
     }
 
     /**
@@ -436,6 +451,11 @@ public class InGameManager {
             listStorage.delete();
         }
 
+        // Delete NBT cache
+        if (nbtCacheStorage != null) {
+            nbtCacheStorage.deleteAll();
+        }
+
         // Reset downloader and cache
         BuildingDownloader.getInstance().reset();
         BuildingCache.getInstance().clear();
@@ -446,7 +466,6 @@ public class InGameManager {
         cachedLists = null;
         listsLoading = false;
 
-        Architect.LOGGER.info("InGame state reset");
         return true;
     }
 
@@ -479,39 +498,24 @@ public class InGameManager {
 
     /**
      * Activates a spawnable list (either freshly downloaded or loaded from disk).
+     * Buildings are downloaded on-demand when spawning, not upfront.
      * @param list the list to activate
-     * @param forceDownload if true, always download buildings; if false, check downloadsCompleted flag
+     * @param forceDownload ignored (kept for API compatibility)
      */
     private void activateSpawnableList(SpawnableList list, boolean forceDownload) {
         storage.getState().setSpawnableList(list);
-        Architect.LOGGER.info("Activating spawnable list with {} buildings", list.getBuildingCount());
 
-        // Check if downloads were already completed in a previous session
-        if (!forceDownload && storage.getState().isDownloadsCompleted()) {
-            Architect.LOGGER.info("Downloads already completed in previous session, skipping re-download");
-            BuildingDownloader.getInstance().markReady();
-            spawnerActivationTime = System.currentTimeMillis();
-            Architect.LOGGER.info("[SPAWNER ACTIVATED] timestamp={} - Spawner is now active (restored from previous session)",
-                spawnerActivationTime);
-            return;
-        }
+        // Mark spawner as ready immediately - buildings will be downloaded on-demand when needed
+        BuildingDownloader.getInstance().markReady();
+        spawnerActivationTime = System.currentTimeMillis();
 
-        // Start downloading all buildings
-        BuildingDownloader downloader = BuildingDownloader.getInstance();
-        downloader.startDownload(list, server, () -> {
-            // This callback is called when all downloads complete (on any thread)
-            if (server != null) {
-                server.execute(() -> {
-                    // Mark downloads as completed and persist
-                    storage.getState().setDownloadsCompleted(true);
-                    storage.save();
-
-                    spawnerActivationTime = System.currentTimeMillis();
-                    Architect.LOGGER.info("[SPAWNER ACTIVATED] timestamp={} - Spawner is now active, will spawn on NEW chunks only",
-                        spawnerActivationTime);
-                });
+        // Notify players
+        if (server != null) {
+            for (net.minecraft.server.level.ServerPlayer player : server.getPlayerList().getPlayers()) {
+                player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                    "§a[STRUTTURA]§f Spawner activated with " + list.getBuildingCount() + " buildings"));
             }
-        });
+        }
     }
 
     /**
@@ -544,5 +548,156 @@ public class InGameManager {
      */
     public long getSpawnerActivationTime() {
         return spawnerActivationTime;
+    }
+
+    /**
+     * Called every server tick. Handles periodic list refresh checks.
+     */
+    public void onServerTick(MinecraftServer server) {
+        if (!isActive() || !isSpawnerReady()) {
+            return;
+        }
+
+        // Check if it's time to check for list refresh
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastRefreshCheckTime < REFRESH_CHECK_INTERVAL_TICKS * 50) {
+            return;
+        }
+        lastRefreshCheckTime = currentTime;
+
+        // Check if list needs refresh
+        SpawnableList list = getSpawnableList();
+        if (list == null) {
+            return;
+        }
+
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        if (list.needsRefreshCheck(config.getListRefreshIntervalMinutes())) {
+            checkForListUpdates();
+        }
+    }
+
+    /**
+     * Asynchronously checks for list updates using hash validation.
+     * If the list has changed, downloads the new version and invalidates changed NBT cache entries.
+     */
+    private void checkForListUpdates() {
+        if (listRefreshInProgress) {
+            return;
+        }
+
+        SpawnableList currentList = getSpawnableList();
+        if (currentList == null || storage == null) {
+            return;
+        }
+
+        Long listId = storage.getState().getListId();
+        if (listId == null) {
+            return;
+        }
+
+        String currentHash = currentList.getListHash();
+        listRefreshInProgress = true;
+
+        ApiClient.fetchSpawnableList(listId, currentHash, response -> {
+            if (server != null) {
+                server.execute(() -> handleListRefreshResponse(response, currentList));
+            } else {
+                listRefreshInProgress = false;
+            }
+        });
+    }
+
+    /**
+     * Handles the response from a list refresh check.
+     */
+    private void handleListRefreshResponse(ApiClient.SpawnableListResponse response, SpawnableList currentList) {
+        listRefreshInProgress = false;
+
+        if (response == null) {
+            // Update download time even on failure to avoid constant retries
+            currentList.setDownloadTime(System.currentTimeMillis());
+            if (listStorage != null) {
+                listStorage.save(currentList);
+            }
+            return;
+        }
+
+        // 204 = no changes, list is up to date
+        if (response.statusCode() == 204) {
+            currentList.setDownloadTime(System.currentTimeMillis());
+            if (listStorage != null) {
+                listStorage.save(currentList);
+            }
+            return;
+        }
+
+        // Error response
+        if (!response.success()) {
+            // Update download time even on error to avoid constant retries
+            currentList.setDownloadTime(System.currentTimeMillis());
+            if (listStorage != null) {
+                listStorage.save(currentList);
+            }
+            return;
+        }
+
+        // New list received - apply updates
+        SpawnableList newList = response.spawnableList();
+        if (newList == null) {
+            return;
+        }
+
+        // Find buildings with changed hashes and invalidate their NBT cache
+        invalidateChangedBuildings(currentList, newList);
+
+        // Save and activate the new list
+        if (listStorage != null) {
+            listStorage.save(newList);
+        }
+
+        // Update state with new list (preserves spawn counts from current session)
+        storage.getState().setSpawnableList(newList);
+    }
+
+    /**
+     * Invalidates NBT cache entries for buildings whose hash has changed.
+     * Also clears download failure penalties for updated buildings.
+     */
+    private void invalidateChangedBuildings(SpawnableList oldList, SpawnableList newList) {
+        BuildingCache cache = BuildingCache.getInstance();
+
+        // Build a map of old building hashes
+        Set<String> invalidatedRdns = new HashSet<>();
+
+        for (SpawnableBuilding newBuilding : newList.getBuildings()) {
+            SpawnableBuilding oldBuilding = oldList.getBuildingByRdns(newBuilding.getRdns());
+
+            if (oldBuilding == null) {
+                // New building added - no invalidation needed
+                continue;
+            }
+
+            String oldHash = oldBuilding.getHash();
+            String newHash = newBuilding.getHash();
+
+            // If hash changed, invalidate the cached NBT and clear download failure penalty
+            if (oldHash != null && newHash != null && !oldHash.equals(newHash)) {
+                cache.remove(newBuilding.getRdns());
+                invalidatedRdns.add(newBuilding.getRdns());
+                // Clear download failure penalty since building was updated
+                if (oldBuilding.hasDownloadFailure()) {
+                    oldBuilding.clearDownloadFailure();
+                }
+            }
+        }
+
+        // Also remove buildings that no longer exist in the new list
+        for (SpawnableBuilding oldBuilding : oldList.getBuildings()) {
+            if (newList.getBuildingByRdns(oldBuilding.getRdns()) == null) {
+                cache.remove(oldBuilding.getRdns());
+                invalidatedRdns.add(oldBuilding.getRdns());
+            }
+        }
     }
 }

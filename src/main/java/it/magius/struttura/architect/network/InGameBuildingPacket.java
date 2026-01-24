@@ -16,7 +16,8 @@ public record InGameBuildingPacket(
     long pk,                    // Building primary key (0 if not in building)
     boolean hasLiked,           // True if player has already liked this building
     String localizedName,       // Localized building name (empty if not available)
-    String localizedDescription // Localized building description (empty if not available)
+    String localizedDescription,// Localized building description (empty if not available)
+    String author               // Author nickname (from list or chunk data fallback)
 ) implements CustomPacketPayload {
 
     public static final CustomPacketPayload.Type<InGameBuildingPacket> TYPE =
@@ -29,17 +30,19 @@ public record InGameBuildingPacket(
      * Create an empty packet (player is not in any building).
      */
     public static InGameBuildingPacket empty() {
-        return new InGameBuildingPacket(false, "", 0, false, "", "");
+        return new InGameBuildingPacket(false, "", 0, false, "", "", "");
     }
 
     /**
      * Create a packet for when player enters a building.
      */
     public static InGameBuildingPacket entered(String rdns, long pk, boolean hasLiked,
-                                               String localizedName, String localizedDescription) {
+                                               String localizedName, String localizedDescription,
+                                               String author) {
         return new InGameBuildingPacket(true, rdns, pk, hasLiked,
             localizedName != null ? localizedName : "",
-            localizedDescription != null ? localizedDescription : "");
+            localizedDescription != null ? localizedDescription : "",
+            author != null ? author : "");
     }
 
     private static InGameBuildingPacket read(FriendlyByteBuf buf) {
@@ -49,7 +52,8 @@ public record InGameBuildingPacket(
         boolean hasLiked = buf.readBoolean();
         String localizedName = buf.readUtf(256);
         String localizedDescription = buf.readUtf(2048);
-        return new InGameBuildingPacket(inBuilding, rdns, pk, hasLiked, localizedName, localizedDescription);
+        String author = buf.readUtf(128);
+        return new InGameBuildingPacket(inBuilding, rdns, pk, hasLiked, localizedName, localizedDescription, author);
     }
 
     private static void write(FriendlyByteBuf buf, InGameBuildingPacket packet) {
@@ -59,6 +63,7 @@ public record InGameBuildingPacket(
         buf.writeBoolean(packet.hasLiked);
         buf.writeUtf(packet.localizedName, 256);
         buf.writeUtf(packet.localizedDescription, 2048);
+        buf.writeUtf(packet.author, 128);
     }
 
     @Override
@@ -82,9 +87,14 @@ public record InGameBuildingPacket(
     }
 
     /**
-     * Gets the author from the RDNS (second segment if format is tld.author.name).
+     * Gets the author nickname.
+     * Returns the author field if available, otherwise falls back to RDNS parsing.
      */
     public String getAuthor() {
+        if (author != null && !author.isEmpty()) {
+            return author;
+        }
+        // Fallback to RDNS parsing
         if (rdns == null || rdns.isEmpty()) {
             return "";
         }

@@ -1,8 +1,8 @@
 package it.magius.struttura.architect.ingame.spawn;
 
-import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.ingame.ChunkDataManager;
 import it.magius.struttura.architect.ingame.InGameManager;
+import it.magius.struttura.architect.ingame.cache.BuildingCache;
 import it.magius.struttura.architect.ingame.model.SpawnRule;
 import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
 import it.magius.struttura.architect.ingame.model.SpawnableList;
@@ -36,8 +36,6 @@ public class SpawnEvaluator {
     public static void evaluate(ServerLevel level, LevelChunk chunk) {
         // Check if chunk is occupied by a multi-chunk building from this session
         if (OccupiedChunks.isOccupied(chunk.getPos().x, chunk.getPos().z)) {
-            Architect.LOGGER.info("[SpawnEvaluator] Chunk [{}, {}] SKIPPED - already occupied",
-                chunk.getPos().x, chunk.getPos().z);
             return;
         }
 
@@ -88,8 +86,9 @@ public class SpawnEvaluator {
             }
         }
 
-        // Step 5: Check rule's percentage
-        if (random.nextDouble() > rule.getPercentage()) {
+        // Step 5: Check rule's percentage (with download failure penalty if applicable)
+        double effectivePercentage = building.getEffectivePercentage(rule);
+        if (random.nextDouble() > effectivePercentage) {
             return;
         }
 
@@ -111,19 +110,20 @@ public class SpawnEvaluator {
         // Step 8: Check if ANY chunk in the building bounds is already occupied
         // This prevents overlapping buildings even when anchor chunks are different
         if (OccupiedChunks.isAnyOccupied(expectedBounds)) {
-            Architect.LOGGER.info("[SpawnEvaluator] Chunk [{}, {}] SKIPPED - building bounds overlap with occupied chunks",
-                chunk.getPos().x, chunk.getPos().z);
             return;
         }
 
-        Architect.LOGGER.info("[SpawnEvaluator] Chunk [{}, {}] WILL SPAWN {} at {} rotation {}",
-            chunk.getPos().x, chunk.getPos().z, building.getRdns(),
-            position.blockPos().toShortString(), position.rotation());
+        // Step 9: Check if building is available or can be downloaded
+        // If already downloading, skip this spawn (chunk will be re-evaluated later)
+        BuildingCache cache = BuildingCache.getInstance();
+        if (!cache.contains(building.getRdns()) && cache.isDownloading(building.getRdns())) {
+            return;
+        }
 
-        // Step 9: Mark chunks as occupied BEFORE spawning
+        // Step 10: Mark chunks as occupied BEFORE spawning
         OccupiedChunks.markOccupied(expectedBounds);
 
-        // Step 10: Spawn the building
+        // Step 11: Spawn the building
         InGameBuildingSpawner.spawn(level, chunk, building, position);
     }
 

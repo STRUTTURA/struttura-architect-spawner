@@ -38,9 +38,11 @@ public class InGameClientState {
      * @param hasLiked whether the player has already liked this building
      * @param localizedName the localized name (from server, may be empty)
      * @param localizedDescription the localized description (from server, may be empty)
+     * @param authorNickname the author nickname (from server, may be empty)
      */
     public void enterBuilding(String rdns, long pk, boolean hasLiked,
-                              String localizedName, String localizedDescription) {
+                              String localizedName, String localizedDescription,
+                              String authorNickname) {
         this.inBuilding = true;
         this.rdns = rdns;
         this.pk = pk;
@@ -56,8 +58,12 @@ public class InGameClientState {
         // Use localized description if available
         this.description = localizedDescription != null ? localizedDescription : "";
 
-        // Author is always parsed from RDNS
-        this.author = parseAuthor(rdns);
+        // Use author nickname if available, otherwise parse from RDNS
+        if (authorNickname != null && !authorNickname.isEmpty()) {
+            this.author = authorNickname;
+        } else {
+            this.author = parseAuthor(rdns);
+        }
     }
 
     /**

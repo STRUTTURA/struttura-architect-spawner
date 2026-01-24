@@ -48,9 +48,22 @@ public class ConstructionStorage {
 
     private final Path baseDirectory;
 
+    /**
+     * Creates a ConstructionStorage for Architect mode (editing).
+     * Path: {gameDirectory}/struttura/architect/buildings/
+     */
     public ConstructionStorage(Path gameDirectory) {
-        this.baseDirectory = gameDirectory.resolve("struttura").resolve("structures");
+        this.baseDirectory = gameDirectory.resolve("struttura").resolve("architect").resolve("buildings");
         ensureDirectoryExists(baseDirectory);
+    }
+
+    /**
+     * Creates a ConstructionStorage with a custom base directory.
+     * Used by NbtCacheStorage for spawner cache.
+     */
+    public ConstructionStorage(Path baseDirectory, boolean directPath) {
+        this.baseDirectory = baseDirectory.resolve("buildings");
+        ensureDirectoryExists(this.baseDirectory);
     }
 
     /**
@@ -83,6 +96,76 @@ public class ConstructionStorage {
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to save construction: {}", construction.getId(), e);
             return false;
+        }
+    }
+
+    /**
+     * Saves only NBT files (blocks.nbt and entities.nbt), no metadata.json.
+     * Used by InGame spawner cache - metadata comes from the list export.
+     *
+     * @param construction the construction to save
+     * @return true if save was successful
+     */
+    public boolean saveNbtOnly(Construction construction) {
+        try {
+            Path constructionDir = getConstructionDirectory(construction.getId());
+            ensureDirectoryExists(constructionDir);
+
+            // Save blocks only
+            saveBlocks(construction, constructionDir);
+
+            // Save entities only
+            saveEntities(construction, constructionDir);
+
+            Architect.LOGGER.debug("Saved NBT cache: {} ({} blocks, {} entities)",
+                construction.getId(), construction.getBlockCount(), construction.getEntityCount());
+            return true;
+
+        } catch (Exception e) {
+            Architect.LOGGER.error("Failed to save NBT cache: {}", construction.getId(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Loads only NBT files (blocks.nbt and entities.nbt) into an existing construction.
+     * Used by InGame spawner cache - metadata comes from the list export.
+     *
+     * @param id the construction ID (RDNS)
+     * @return the construction with loaded blocks/entities, or null if not found
+     */
+    public Construction loadNbtOnly(String id) {
+        try {
+            Path constructionDir = getConstructionDirectory(id);
+
+            if (!Files.exists(constructionDir)) {
+                return null;
+            }
+
+            Path blocksFile = constructionDir.resolve("blocks.nbt");
+            if (!Files.exists(blocksFile)) {
+                return null;
+            }
+
+            // Create minimal construction (metadata not needed for InGame)
+            Construction construction = new Construction(id, new UUID(0, 0), "ingame");
+
+            // Load blocks
+            loadBlocks(construction, constructionDir);
+
+            // Load entities
+            loadEntities(construction, constructionDir);
+
+            // Note: Bounds are NOT set here - they come from SpawnableBuilding metadata
+            // and will be applied in InGameBuildingSpawner.doSpawn before architectSpawn
+
+            Architect.LOGGER.debug("Loaded NBT cache: {} ({} blocks, {} entities)",
+                construction.getId(), construction.getBlockCount(), construction.getEntityCount());
+            return construction;
+
+        } catch (Exception e) {
+            Architect.LOGGER.error("Failed to load NBT cache: {}", id, e);
+            return null;
         }
     }
 

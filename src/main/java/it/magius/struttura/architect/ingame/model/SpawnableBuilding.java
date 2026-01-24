@@ -15,6 +15,7 @@ public class SpawnableBuilding {
     private final String rdns;              // Reverse DNS identifier (e.g., "it.magius.pip.home")
     private final long pk;                  // Primary key from the database
     private final String hash;              // Content hash (SHA256) for cache validation
+    private final String author;            // Author nickname
     private final BlockPos entrance;        // Entrance anchor position (normalized coordinates)
     private final float entranceYaw;        // Entrance facing direction
     private final int xWorld;               // Max spawns in this world (0 = unlimited)
@@ -25,13 +26,15 @@ public class SpawnableBuilding {
 
     // Runtime state (not persisted)
     private int spawnedCount = 0;
+    private boolean downloadFailed = false;  // True if NBT download failed, applies 20% penalty
 
-    public SpawnableBuilding(String rdns, long pk, String hash, BlockPos entrance, float entranceYaw,
+    public SpawnableBuilding(String rdns, long pk, String hash, String author, BlockPos entrance, float entranceYaw,
                              int xWorld, List<SpawnRule> rules, AABB bounds,
                              Map<String, String> names, Map<String, String> descriptions) {
         this.rdns = rdns;
         this.pk = pk;
         this.hash = hash;
+        this.author = author != null ? author : "";
         this.entrance = entrance;
         this.entranceYaw = entranceYaw;
         this.xWorld = xWorld;
@@ -60,6 +63,13 @@ public class SpawnableBuilding {
      */
     public String getHash() {
         return hash;
+    }
+
+    /**
+     * Gets the author nickname.
+     */
+    public String getAuthor() {
+        return author;
     }
 
     /**
@@ -244,6 +254,43 @@ public class SpawnableBuilding {
      */
     public void resetSpawnCount() {
         spawnedCount = 0;
+    }
+
+    /**
+     * Marks this building as having failed to download.
+     * Applies a 20% penalty to spawn probability until the list is refreshed.
+     */
+    public void markDownloadFailed() {
+        this.downloadFailed = true;
+    }
+
+    /**
+     * Clears the download failure flag.
+     * Called when the list is refreshed or building is updated.
+     */
+    public void clearDownloadFailure() {
+        this.downloadFailed = false;
+    }
+
+    /**
+     * Checks if this building has a download failure penalty.
+     */
+    public boolean hasDownloadFailure() {
+        return downloadFailed;
+    }
+
+    /**
+     * Gets the effective spawn percentage for a rule, accounting for download failure penalty.
+     * If download failed, the percentage is reduced by 20%.
+     * @param rule the spawn rule
+     * @return the effective percentage (0.0-1.0)
+     */
+    public double getEffectivePercentage(SpawnRule rule) {
+        double base = rule.getPercentage();
+        if (downloadFailed) {
+            return base * 0.8; // 20% penalty
+        }
+        return base;
     }
 
     @Override

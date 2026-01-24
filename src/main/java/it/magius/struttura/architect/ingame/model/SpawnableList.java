@@ -13,11 +13,17 @@ public class SpawnableList {
     private final String listHash;               // Content hash of the list for cache validation
     private final double spawningPercentage;     // 0.0-1.0, base probability of any spawn in a chunk
     private final List<SpawnableBuilding> buildings;
+    private long downloadTime;                   // Timestamp when list was downloaded (for refresh checks)
 
     public SpawnableList(String listHash, double spawningPercentage, List<SpawnableBuilding> buildings) {
+        this(listHash, spawningPercentage, buildings, System.currentTimeMillis());
+    }
+
+    public SpawnableList(String listHash, double spawningPercentage, List<SpawnableBuilding> buildings, long downloadTime) {
         this.listHash = listHash;
         this.spawningPercentage = Math.max(0.0, Math.min(1.0, spawningPercentage));
         this.buildings = buildings != null ? new ArrayList<>(buildings) : new ArrayList<>();
+        this.downloadTime = downloadTime;
     }
 
     /**
@@ -34,6 +40,21 @@ public class SpawnableList {
      */
     public double getSpawningPercentage() {
         return spawningPercentage;
+    }
+
+    /**
+     * Gets the timestamp when this list was downloaded.
+     * Used to determine when to check for updates.
+     */
+    public long getDownloadTime() {
+        return downloadTime;
+    }
+
+    /**
+     * Updates the download time (called after successful refresh check).
+     */
+    public void setDownloadTime(long downloadTime) {
+        this.downloadTime = downloadTime;
     }
 
     /**
@@ -102,9 +123,20 @@ public class SpawnableList {
         }
     }
 
+    /**
+     * Checks if this list needs a refresh check based on elapsed time.
+     * @param refreshIntervalMinutes the configured refresh interval in minutes
+     * @return true if enough time has passed since last download
+     */
+    public boolean needsRefreshCheck(int refreshIntervalMinutes) {
+        long elapsed = System.currentTimeMillis() - downloadTime;
+        long intervalMs = refreshIntervalMinutes * 60L * 1000L;
+        return elapsed >= intervalMs;
+    }
+
     @Override
     public String toString() {
         return "SpawnableList{listHash='" + listHash + "', spawningPercentage=" + spawningPercentage +
-               ", buildings=" + buildings.size() + "}";
+               ", buildings=" + buildings.size() + ", downloadTime=" + downloadTime + "}";
     }
 }

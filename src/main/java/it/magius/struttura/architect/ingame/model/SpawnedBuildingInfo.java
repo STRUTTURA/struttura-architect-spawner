@@ -5,12 +5,15 @@ import net.minecraft.world.phys.AABB;
 /**
  * Information about a building that has been spawned in the world.
  * Stored in chunk NBT data for tracking and player proximity detection.
+ * Includes name and author for display even if building is removed from list.
  */
 public record SpawnedBuildingInfo(
     String rdns,        // Reverse DNS identifier
     long pk,            // Primary key from database
     AABB bounds,        // World-space bounding box of the spawned building
-    int rotation        // Rotation applied (0, 90, 180, 270 degrees)
+    int rotation,       // Rotation applied (0, 90, 180, 270 degrees)
+    String name,        // Localized name at spawn time
+    String author       // Author nickname
 ) {
     /**
      * Checks if a position is inside this building's bounds.

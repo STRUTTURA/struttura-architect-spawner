@@ -20,6 +20,7 @@ import it.magius.struttura.architect.session.EditingSession;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 
@@ -99,6 +100,11 @@ public class Architect implements ModInitializer {
 		// Initialize InGame system when world loads
 		ServerWorldEvents.LOAD.register((server, world) -> {
 			InGameManager.getInstance().onWorldLoad(server, world);
+		});
+
+		// Register server tick for InGame periodic refresh checks
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			InGameManager.getInstance().onServerTick(server);
 		});
 
 		// Pulisci il registro quando il mondo viene scaricato

@@ -751,22 +751,283 @@ public class ApiClient {
     }
 
     /**
-     * Scarica una costruzione dal server in modo asincrono.
-     * Questo metodo NON usa lock globali, quindi può essere usato per download batch.
-     * Usato dal sistema InGame per pre-scaricare tutte le buildings.
+     * Downloads a construction for InGame spawning (blocks + entities only, no metadata).
+     * Uses the public /building/:id/ingame endpoint that doesn't require owner auth.
+     * This method does NOT use global locks, so it can be used for batch downloads.
      *
-     * @param constructionId l'ID della costruzione da scaricare
-     * @param onComplete callback chiamato al completamento
+     * @param constructionId the building RDNS to download
+     * @param onComplete callback called on completion
      */
     public static void downloadConstruction(String constructionId, Consumer<PullResponse> onComplete) {
         CompletableFuture.supplyAsync(() -> {
             try {
-                return executePull(constructionId);
+                return executeInGameDownload(constructionId);
             } catch (Exception e) {
-                Architect.LOGGER.error("Download request failed for {}", constructionId, e);
+                Architect.LOGGER.error("InGame download request failed for {}", constructionId, e);
                 return new PullResponse(0, "Error: " + e.getMessage(), false, null);
             }
         }).thenAccept(onComplete);
+    }
+
+    /**
+     * Downloads blocks and entities for InGame spawning using the public endpoint.
+     * 1. Calls /building/:id/ingame to get signed CDN URLs
+     * 2. Downloads blocks from blocksUrl
+     * 3. Downloads entities from entitiesUrl (if present)
+     * No metadata is downloaded - it comes from the list export.
+     */
+    private static PullResponse executeInGameDownload(String constructionId) throws Exception {
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String endpoint = config.getEndpoint();
+
+        // Step 1: Get CDN URLs from the InGame endpoint
+        String url = endpoint + "/building/" + constructionId + "/ingame";
+        Architect.LOGGER.info("Fetching InGame URLs for {} from {}", constructionId, url);
+
+        String blocksUrl;
+        String entitiesUrl = null;
+
+        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        try {
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            conn.setReadTimeout(config.getRequestTimeout() * 1000);
+            conn.setRequestProperty("Accept", "application/json");
+            // Include API key for rate limiting but auth not required
+            String apiKey = config.getApikey();
+            if (apiKey != null && !apiKey.isEmpty()) {
+                conn.setRequestProperty("X-Api-Key", apiKey);
+            }
+
+            int status = conn.getResponseCode();
+
+            if (status < 200 || status >= 300) {
+                String errorBody = readResponse(conn);
+                String message = parseResponseMessage(errorBody, status);
+                return new PullResponse(status, message, false, null);
+            }
+
+            // Parse JSON response with CDN URLs
+            String responseBody = readResponse(conn);
+            JsonObject json = GSON.fromJson(responseBody, JsonObject.class);
+            blocksUrl = json.get("blocksUrl").getAsString();
+            if (json.has("entitiesUrl") && !json.get("entitiesUrl").isJsonNull()) {
+                entitiesUrl = json.get("entitiesUrl").getAsString();
+            }
+
+            Architect.LOGGER.info("Got CDN URLs - blocks: {}, entities: {}",
+                blocksUrl != null ? "yes" : "no", entitiesUrl != null ? "yes" : "no");
+
+        } finally {
+            conn.disconnect();
+        }
+
+        // Step 2: Download blocks from CDN
+        byte[] blocksData;
+        HttpURLConnection blocksConn = (HttpURLConnection) URI.create(blocksUrl).toURL().openConnection();
+        try {
+            blocksConn.setRequestMethod("GET");
+            blocksConn.setInstanceFollowRedirects(true);
+            blocksConn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            blocksConn.setReadTimeout(config.getRequestTimeout() * 1000);
+            blocksConn.setRequestProperty("Accept", "application/octet-stream");
+
+            int blocksStatus = blocksConn.getResponseCode();
+
+            if (blocksStatus < 200 || blocksStatus >= 300) {
+                String errorBody = readResponse(blocksConn);
+                String message = parseResponseMessage(errorBody, blocksStatus);
+                return new PullResponse(blocksStatus, message, false, null);
+            }
+
+            blocksData = readBinaryResponse(blocksConn);
+            Architect.LOGGER.info("Downloaded blocks: {} bytes", blocksData.length);
+
+        } finally {
+            blocksConn.disconnect();
+        }
+
+        // Step 3: Download entities from CDN (if present)
+        byte[] entitiesData = null;
+        if (entitiesUrl != null) {
+            HttpURLConnection entitiesConn = (HttpURLConnection) URI.create(entitiesUrl).toURL().openConnection();
+            try {
+                entitiesConn.setRequestMethod("GET");
+                entitiesConn.setInstanceFollowRedirects(true);
+                entitiesConn.setConnectTimeout(config.getRequestTimeout() * 1000);
+                entitiesConn.setReadTimeout(config.getRequestTimeout() * 1000);
+                entitiesConn.setRequestProperty("Accept", "application/octet-stream");
+
+                int entitiesStatus = entitiesConn.getResponseCode();
+
+                if (entitiesStatus >= 200 && entitiesStatus < 300) {
+                    entitiesData = readBinaryResponse(entitiesConn);
+                    Architect.LOGGER.info("Downloaded entities: {} bytes", entitiesData.length);
+                } else if (entitiesStatus == 404) {
+                    Architect.LOGGER.debug("No entities for {}", constructionId);
+                } else {
+                    Architect.LOGGER.warn("Failed to download entities: {}", entitiesStatus);
+                }
+
+            } finally {
+                entitiesConn.disconnect();
+            }
+        }
+
+        // Step 4: Parse the NBT data (reuse existing parsing logic)
+        Construction construction = parseConstructionFromNbt(constructionId, blocksData, entitiesData);
+        if (construction == null) {
+            return new PullResponse(200, "Failed to parse NBT data", false, null);
+        }
+
+        return new PullResponse(200, "Success", true, construction);
+    }
+
+    /**
+     * Parses blocks and entities NBT data into a Construction object.
+     * Used by InGame download (no metadata needed).
+     */
+    private static Construction parseConstructionFromNbt(String constructionId, byte[] blocksData, byte[] entitiesData) {
+        try {
+            // Create minimal construction (metadata comes from list export)
+            Construction construction = new Construction(constructionId, new java.util.UUID(0, 0), "ingame");
+
+            // Parse blocks NBT
+            ByteArrayInputStream blocksStream = new ByteArrayInputStream(blocksData);
+            CompoundTag blocksRoot = NbtIo.readCompressed(blocksStream, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+
+            // Parse palette
+            ListTag paletteList = blocksRoot.getList("palette").orElse(new ListTag());
+            List<BlockState> palette = new ArrayList<>();
+            for (int i = 0; i < paletteList.size(); i++) {
+                CompoundTag paletteEntry = paletteList.getCompound(i).orElseThrow();
+                String stateString = paletteEntry.getString("state").orElse("");
+                BlockState state = parseBlockState(stateString);
+                palette.add(state);
+            }
+
+            // Parse blocks
+            ListTag blocksList = blocksRoot.getList("blocks").orElse(new ListTag());
+            for (int i = 0; i < blocksList.size(); i++) {
+                CompoundTag blockTag = blocksList.getCompound(i).orElseThrow();
+                int x = blockTag.getInt("x").orElse(0);
+                int y = blockTag.getInt("y").orElse(0);
+                int z = blockTag.getInt("z").orElse(0);
+                int paletteIndex = blockTag.getInt("p").orElse(0);
+
+                BlockPos pos = new BlockPos(x, y, z);
+                BlockState state = palette.get(paletteIndex);
+
+                CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
+                if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                    construction.addBlockRaw(pos, state, blockEntityNbt);
+                } else {
+                    construction.addBlockRaw(pos, state);
+                }
+            }
+
+            // Parse rooms if present
+            CompoundTag roomsTag = blocksRoot.getCompound("rooms").orElse(null);
+            if (roomsTag != null) {
+                for (String roomId : roomsTag.keySet()) {
+                    Room room = construction.getRoom(roomId);
+                    if (room == null) {
+                        room = new Room(roomId, roomId, java.time.Instant.now());
+                        construction.addRoom(room);
+                    }
+
+                    CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
+                    if (roomTag == null) continue;
+
+                    ListTag roomBlocksList = roomTag.getList("blocks").orElse(new ListTag());
+                    for (int i = 0; i < roomBlocksList.size(); i++) {
+                        CompoundTag blockTag = roomBlocksList.getCompound(i).orElseThrow();
+                        int x = blockTag.getInt("x").orElse(0);
+                        int y = blockTag.getInt("y").orElse(0);
+                        int z = blockTag.getInt("z").orElse(0);
+                        int paletteIndex = blockTag.getInt("p").orElse(0);
+
+                        BlockPos pos = new BlockPos(x, y, z);
+                        BlockState state = palette.get(paletteIndex);
+
+                        CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
+                        if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                            room.setBlockChange(pos, state, blockEntityNbt);
+                        } else {
+                            room.setBlockChange(pos, state);
+                        }
+                    }
+                }
+            }
+
+            // Parse entities if present
+            if (entitiesData != null && entitiesData.length > 0) {
+                ByteArrayInputStream entitiesStream = new ByteArrayInputStream(entitiesData);
+                CompoundTag entitiesRoot = NbtIo.readCompressed(entitiesStream, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+
+                // Base entities
+                ListTag entitiesList = entitiesRoot.getList("entities").orElse(new ListTag());
+                for (int i = 0; i < entitiesList.size(); i++) {
+                    CompoundTag entityTag = entitiesList.getCompound(i).orElseThrow();
+
+                    String type = entityTag.getString("type").orElse("");
+                    double ex = entityTag.getDouble("x").orElse(0.0);
+                    double ey = entityTag.getDouble("y").orElse(0.0);
+                    double ez = entityTag.getDouble("z").orElse(0.0);
+                    float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+                    float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+                    CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+
+                    Vec3 relativePos = new Vec3(ex, ey, ez);
+                    EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+                    construction.addEntity(data);
+                }
+
+                // Room entities
+                CompoundTag roomsEntitiesTag = entitiesRoot.getCompound("rooms").orElse(null);
+                if (roomsEntitiesTag != null) {
+                    for (String roomId : roomsEntitiesTag.keySet()) {
+                        Room room = construction.getRoom(roomId);
+                        if (room == null) {
+                            room = new Room(roomId, roomId, java.time.Instant.now());
+                            construction.addRoom(room);
+                        }
+
+                        CompoundTag roomTag = roomsEntitiesTag.getCompound(roomId).orElse(null);
+                        if (roomTag == null) continue;
+
+                        ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
+                        for (int i = 0; i < roomEntitiesList.size(); i++) {
+                            CompoundTag entityTag = roomEntitiesList.getCompound(i).orElseThrow();
+
+                            String type = entityTag.getString("type").orElse("");
+                            double ex = entityTag.getDouble("x").orElse(0.0);
+                            double ey = entityTag.getDouble("y").orElse(0.0);
+                            double ez = entityTag.getDouble("z").orElse(0.0);
+                            float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+                            float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+                            CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+
+                            Vec3 relativePos = new Vec3(ex, ey, ez);
+                            EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+                            room.addEntity(data);
+                        }
+                    }
+                }
+            }
+
+            // Note: Bounds are NOT set here - they come from SpawnableBuilding metadata
+            // and will be applied in InGameBuildingSpawner.doSpawn before architectSpawn
+
+            Architect.LOGGER.info("Parsed InGame construction: {} blocks, {} entities",
+                construction.getBlockCount(), construction.getEntityCount());
+
+            return construction;
+
+        } catch (Exception e) {
+            Architect.LOGGER.error("Failed to parse InGame NBT for {}", constructionId, e);
+            return null;
+        }
     }
 
     /**
@@ -1570,9 +1831,21 @@ public class ApiClient {
      * @param onComplete callback called on completion
      */
     public static void fetchSpawnableList(long listId, Consumer<SpawnableListResponse> onComplete) {
+        fetchSpawnableList(listId, null, onComplete);
+    }
+
+    /**
+     * Fetches the spawnable list with optional hash validation.
+     * If currentHash is provided and matches the server's hash, returns 204 (no changes).
+     *
+     * @param listId the list ID to fetch
+     * @param currentHash the current list hash for cache validation (null to always fetch)
+     * @param onComplete callback called on completion
+     */
+    public static void fetchSpawnableList(long listId, String currentHash, Consumer<SpawnableListResponse> onComplete) {
         CompletableFuture.supplyAsync(() -> {
             try {
-                return executeFetchSpawnableList(listId);
+                return executeFetchSpawnableList(listId, currentHash);
             } catch (Exception e) {
                 Architect.LOGGER.error("Failed to fetch spawnable list {}", listId, e);
                 return new SpawnableListResponse(0, "Error: " + e.getMessage(), false, null);
@@ -1581,9 +1854,16 @@ public class ApiClient {
     }
 
     private static SpawnableListResponse executeFetchSpawnableList(long listId) throws Exception {
+        return executeFetchSpawnableList(listId, null);
+    }
+
+    private static SpawnableListResponse executeFetchSpawnableList(long listId, String currentHash) throws Exception {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String endpoint = config.getEndpoint();
         String url = endpoint + "/lists/" + listId + "/export";
+        if (currentHash != null && !currentHash.isEmpty()) {
+            url += "?hash=" + currentHash;
+        }
 
         Architect.LOGGER.info("Fetching spawnable list {} from {}", listId, url);
 
@@ -1601,6 +1881,13 @@ public class ApiClient {
             }
 
             int statusCode = conn.getResponseCode();
+
+            // Handle 204 No Content - list hasn't changed
+            if (statusCode == 204) {
+                Architect.LOGGER.info("Spawnable list {} unchanged (hash match)", listId);
+                return new SpawnableListResponse(statusCode, "Not Modified", true, null);
+            }
+
             String responseBody = readResponse(conn);
 
             Architect.LOGGER.info("Spawnable list response: {} - {} bytes", statusCode, responseBody.length());
@@ -1640,6 +1927,8 @@ public class ApiClient {
                 long pk = bldgObj.get("pk").getAsLong();
                 String hash = bldgObj.has("hash") && !bldgObj.get("hash").isJsonNull()
                     ? bldgObj.get("hash").getAsString() : null;
+                String author = bldgObj.has("author") && !bldgObj.get("author").isJsonNull()
+                    ? bldgObj.get("author").getAsString() : null;
 
                 // Parse entrance anchor
                 BlockPos entrance = BlockPos.ZERO;
@@ -1729,7 +2018,7 @@ public class ApiClient {
                     }
                 }
 
-                buildings.add(new SpawnableBuilding(rdns, pk, hash, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions));
+                buildings.add(new SpawnableBuilding(rdns, pk, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions));
             }
         }
 

@@ -2684,6 +2684,7 @@ public class NetworkHandler {
             // Look up the building in the spawnable list to get localized name/description
             String localizedName = "";
             String localizedDescription = "";
+            String author = "";
 
             it.magius.struttura.architect.ingame.InGameManager manager =
                 it.magius.struttura.architect.ingame.InGameManager.getInstance();
@@ -2698,17 +2699,26 @@ public class NetworkHandler {
                         .getInstance().getPlayerLanguage(player);
                     localizedName = building.getLocalizedName(langCode);
                     localizedDescription = building.getLocalizedDescription(langCode);
+                    author = building.getAuthor();
                 }
             }
 
+            // Fallback to chunk data if building is not in list (was removed after spawning)
+            if (localizedName.isEmpty() && buildingInfo.name() != null && !buildingInfo.name().isEmpty()) {
+                localizedName = buildingInfo.name();
+            }
+            if (author.isEmpty() && buildingInfo.author() != null && !buildingInfo.author().isEmpty()) {
+                author = buildingInfo.author();
+            }
+
             packet = InGameBuildingPacket.entered(buildingInfo.rdns(), buildingInfo.pk(), hasLiked,
-                localizedName, localizedDescription);
+                localizedName, localizedDescription, author);
         } else {
             packet = InGameBuildingPacket.empty();
         }
         ServerPlayNetworking.send(player, packet);
-        Architect.LOGGER.debug("Sent in-game building state to {}: inBuilding={}, rdns={}, name={}",
-            player.getName().getString(), packet.inBuilding(), packet.rdns(), packet.localizedName());
+        Architect.LOGGER.debug("Sent in-game building state to {}: inBuilding={}, rdns={}, name={}, author={}",
+            player.getName().getString(), packet.inBuilding(), packet.rdns(), packet.localizedName(), packet.author());
     }
 
     /**

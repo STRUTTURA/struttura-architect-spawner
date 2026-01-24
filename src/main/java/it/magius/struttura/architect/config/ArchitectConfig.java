@@ -51,6 +51,10 @@ public class ArchitectConfig {
     // InGame spawner settings (for dedicated servers)
     private Long inGameListId = null;  // If set, auto-initialize InGame with this list
 
+    // InGame cache settings
+    private int listRefreshIntervalMinutes = 60;  // How often to check for list updates (minutes)
+    private int maxCachedNbt = 25;                // Maximum NBT files to keep in memory
+
     private ArchitectConfig() {}
 
     /**
@@ -129,6 +133,8 @@ public class ArchitectConfig {
     public Map<String, String> getModOptionsDisclaimer() { return modOptionsDisclaimer; }
     public String getWww() { return www; }
     public Long getInGameListId() { return inGameListId; }
+    public int getListRefreshIntervalMinutes() { return listRefreshIntervalMinutes; }
+    public int getMaxCachedNbt() { return maxCachedNbt; }
 
     /**
      * Gets the disclaimer text for a specific language.
@@ -170,4 +176,6 @@ public class ArchitectConfig {
     public void setModOptionsDisclaimer(Map<String, String> modOptionsDisclaimer) { this.modOptionsDisclaimer = modOptionsDisclaimer; }
     public void setWww(String www) { this.www = www; }
     public void setInGameListId(Long inGameListId) { this.inGameListId = inGameListId; }
+    public void setListRefreshIntervalMinutes(int minutes) { this.listRefreshIntervalMinutes = Math.max(1, minutes); }
+    public void setMaxCachedNbt(int max) { this.maxCachedNbt = Math.max(1, max); }
 }

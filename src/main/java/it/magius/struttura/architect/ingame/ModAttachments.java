@@ -25,6 +25,7 @@ public class ModAttachments {
 
     /**
      * Data stored on each chunk for the spawner system.
+     * Includes building metadata that persists even if building is removed from list.
      */
     public record ChunkSpawnData(
         boolean processed,
@@ -32,7 +33,9 @@ public class ModAttachments {
         long buildingPk,
         int rotation,
         double minX, double minY, double minZ,
-        double maxX, double maxY, double maxZ
+        double maxX, double maxY, double maxZ,
+        String buildingName,   // Localized name at spawn time (fallback if building removed from list)
+        String buildingAuthor  // Author nickname (fallback if building removed from list)
     ) {
         public static final Codec<ChunkSpawnData> CODEC = RecordCodecBuilder.create(instance ->
             instance.group(
@@ -45,7 +48,9 @@ public class ModAttachments {
                 Codec.DOUBLE.optionalFieldOf("minZ", 0.0).forGetter(ChunkSpawnData::minZ),
                 Codec.DOUBLE.optionalFieldOf("maxX", 0.0).forGetter(ChunkSpawnData::maxX),
                 Codec.DOUBLE.optionalFieldOf("maxY", 0.0).forGetter(ChunkSpawnData::maxY),
-                Codec.DOUBLE.optionalFieldOf("maxZ", 0.0).forGetter(ChunkSpawnData::maxZ)
+                Codec.DOUBLE.optionalFieldOf("maxZ", 0.0).forGetter(ChunkSpawnData::maxZ),
+                Codec.STRING.optionalFieldOf("buildingName", "").forGetter(ChunkSpawnData::buildingName),
+                Codec.STRING.optionalFieldOf("buildingAuthor", "").forGetter(ChunkSpawnData::buildingAuthor)
             ).apply(instance, ChunkSpawnData::new)
         );
 
@@ -53,7 +58,7 @@ public class ModAttachments {
          * Creates data for a processed chunk with no building.
          */
         public static ChunkSpawnData processedOnly() {
-            return new ChunkSpawnData(true, "", 0L, 0, 0, 0, 0, 0, 0, 0);
+            return new ChunkSpawnData(true, "", 0L, 0, 0, 0, 0, 0, 0, 0, "", "");
         }
 
         /**
@@ -61,8 +66,10 @@ public class ModAttachments {
          */
         public static ChunkSpawnData withBuilding(String rdns, long pk, int rotation,
                                                    double minX, double minY, double minZ,
-                                                   double maxX, double maxY, double maxZ) {
-            return new ChunkSpawnData(true, rdns, pk, rotation, minX, minY, minZ, maxX, maxY, maxZ);
+                                                   double maxX, double maxY, double maxZ,
+                                                   String name, String author) {
+            return new ChunkSpawnData(true, rdns, pk, rotation, minX, minY, minZ, maxX, maxY, maxZ,
+                name != null ? name : "", author != null ? author : "");
         }
 
         /**

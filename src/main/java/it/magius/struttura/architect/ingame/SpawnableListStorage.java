@@ -126,6 +126,7 @@ public class SpawnableListStorage {
             json.addProperty("listHash", list.getListHash());
         }
         json.addProperty("spawningPercentage", list.getSpawningPercentage());
+        json.addProperty("downloadTime", list.getDownloadTime());
 
         JsonArray buildingsArray = new JsonArray();
         for (SpawnableBuilding building : list.getBuildings()) {
@@ -142,6 +143,9 @@ public class SpawnableListStorage {
         json.addProperty("pk", building.getPk());
         if (building.getHash() != null) {
             json.addProperty("hash", building.getHash());
+        }
+        if (building.getAuthor() != null && !building.getAuthor().isEmpty()) {
+            json.addProperty("author", building.getAuthor());
         }
         json.addProperty("xWorld", building.getXWorld());
 
@@ -210,6 +214,9 @@ public class SpawnableListStorage {
         double spawningPercentage = json.has("spawningPercentage")
             ? json.get("spawningPercentage").getAsDouble()
             : 0.5;
+        long downloadTime = json.has("downloadTime")
+            ? json.get("downloadTime").getAsLong()
+            : System.currentTimeMillis();
 
         List<SpawnableBuilding> buildings = new ArrayList<>();
         if (json.has("buildings") && json.get("buildings").isJsonArray()) {
@@ -222,7 +229,7 @@ public class SpawnableListStorage {
             }
         }
 
-        return new SpawnableList(listHash, spawningPercentage, buildings);
+        return new SpawnableList(listHash, spawningPercentage, buildings, downloadTime);
     }
 
     private SpawnableBuilding deserializeBuilding(JsonObject json) {
@@ -231,6 +238,8 @@ public class SpawnableListStorage {
             long pk = json.get("pk").getAsLong();
             String hash = json.has("hash") && !json.get("hash").isJsonNull()
                 ? json.get("hash").getAsString() : null;
+            String author = json.has("author") && !json.get("author").isJsonNull()
+                ? json.get("author").getAsString() : null;
             int xWorld = json.has("xWorld") ? json.get("xWorld").getAsInt() : 0;
 
             // Entrance with yaw
@@ -290,7 +299,7 @@ public class SpawnableListStorage {
                 }
             }
 
-            return new SpawnableBuilding(rdns, pk, hash, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions);
+            return new SpawnableBuilding(rdns, pk, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to deserialize building", e);

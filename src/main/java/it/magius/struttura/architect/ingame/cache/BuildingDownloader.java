@@ -62,12 +62,10 @@ public class BuildingDownloader {
     public void startDownload(SpawnableList list, MinecraftServer server, Runnable onComplete) {
         this.server = server;
         if (state == DownloadState.DOWNLOADING) {
-            Architect.LOGGER.warn("Download already in progress, ignoring new request");
             return;
         }
 
         if (list == null || !list.hasBuildings()) {
-            Architect.LOGGER.info("No buildings to download, spawner ready immediately");
             state = DownloadState.READY;
             downloadStartTime = System.currentTimeMillis();
             downloadEndTime = downloadStartTime;
@@ -88,9 +86,6 @@ public class BuildingDownloader {
         downloadQueue.clear();
         currentIndex = 0;
 
-        Architect.LOGGER.info("[DOWNLOAD START] timestamp={} - Starting download of {} buildings",
-            downloadStartTime, totalBuildings);
-
         // Notify players
         broadcastMessage("§e[STRUTTURA]§f Downloading " + totalBuildings + " buildings...");
 
@@ -101,16 +96,9 @@ public class BuildingDownloader {
             if (cache.contains(building.getRdns())) {
                 // Already cached
                 downloadedCount.incrementAndGet();
-                Architect.LOGGER.debug("Building {} already cached", building.getRdns());
             } else {
                 downloadQueue.add(building);
             }
-        }
-
-        int alreadyCached = downloadedCount.get();
-        if (alreadyCached > 0) {
-            Architect.LOGGER.info("Found {} buildings already cached, {} to download",
-                alreadyCached, downloadQueue.size());
         }
 
         // Check if all already cached
@@ -136,15 +124,12 @@ public class BuildingDownloader {
         SpawnableBuilding building = downloadQueue.get(currentIndex);
         String rdns = building.getRdns();
 
-        Architect.LOGGER.info("Downloading building {}/{}: {}",
-            currentIndex + 1, downloadQueue.size(), rdns);
-
         // Use downloadConstruction instead of pullConstruction to avoid global lock
+        String hash = building.getHash();
         ApiClient.downloadConstruction(rdns, response -> {
             if (response.success() && response.construction() != null) {
-                BuildingCache.getInstance().put(rdns, response.construction());
+                BuildingCache.getInstance().put(rdns, response.construction(), hash);
                 int done = downloadedCount.incrementAndGet();
-                Architect.LOGGER.info("Downloaded building {} ({}/{})", rdns, done, totalBuildings);
                 broadcastMessage("§7[STRUTTURA]§f Downloaded " + done + "/" + totalBuildings + ": " + rdns);
             } else {
                 failedCount.incrementAndGet();
@@ -167,15 +152,11 @@ public class BuildingDownloader {
         long duration = downloadEndTime - downloadStartTime;
 
         int failed = failedCount.get();
+        state = DownloadState.READY;
+
         if (failed > 0) {
-            state = DownloadState.READY; // Still mark as ready, some buildings may fail
-            Architect.LOGGER.warn("[DOWNLOAD END] timestamp={} - Download completed with {} failures ({}/{} buildings) in {}ms",
-                downloadEndTime, failed, downloadedCount.get() - failed, totalBuildings, duration);
             broadcastMessage("§e[STRUTTURA]§f Download complete with " + failed + " failures (" + duration + "ms)");
         } else {
-            state = DownloadState.READY;
-            Architect.LOGGER.info("[DOWNLOAD END] timestamp={} - All {} buildings downloaded successfully in {}ms",
-                downloadEndTime, totalBuildings, duration);
             broadcastMessage("§a[STRUTTURA]§f All " + totalBuildings + " buildings downloaded! (" + duration + "ms)");
         }
         broadcastMessage("§a[STRUTTURA]§f Spawner is now active!");
@@ -261,7 +242,6 @@ public class BuildingDownloader {
         downloadQueue.clear();
         currentIndex = 0;
         server = null;
-        Architect.LOGGER.debug("BuildingDownloader reset");
     }
 
     /**
@@ -271,7 +251,6 @@ public class BuildingDownloader {
      */
     public void markReady() {
         state = DownloadState.READY;
-        Architect.LOGGER.info("BuildingDownloader marked as ready (downloads were completed in previous session)");
     }
 
     /**
