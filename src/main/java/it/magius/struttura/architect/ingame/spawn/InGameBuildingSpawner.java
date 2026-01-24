@@ -64,6 +64,9 @@ public class InGameBuildingSpawner {
                             chunk.getPos().x, chunk.getPos().z);
                         if (reloadedChunk != null) {
                             doSpawn(level, reloadedChunk, building, response.construction(), position);
+                        } else {
+                            // Chunk was unloaded during download - spawn skipped, chunk remains occupied
+                            Architect.LOGGER.warn("Chunk unloaded during download, spawn skipped for {}", rdns);
                         }
                     });
                 } else {
