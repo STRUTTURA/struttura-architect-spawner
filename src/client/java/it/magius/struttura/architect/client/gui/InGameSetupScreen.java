@@ -67,8 +67,10 @@ public class InGameSetupScreen extends Screen {
             InGameListsPacket.ListInfo info = lists.get(i);
             final int index = i;
 
-            // Show list name with building count
-            String buttonText = info.name() + " (" + info.buildingCount() + ")";
+            // Show list name with building count (only if count > 0)
+            String buttonText = info.buildingCount() > 0
+                ? info.name() + " (" + info.buildingCount() + ")"
+                : info.name();
             Button btn = Button.builder(
                 Component.literal(buttonText),
                 button -> onListSelected(index)
@@ -196,11 +198,13 @@ public class InGameSetupScreen extends Screen {
             }
             graphics.drawString(this.font, desc, contentLeft + 5, descY, 0xFF888888);
 
-            // Draw building count
-            String countText = info.buildingCount() + " buildings";
-            int countWidth = this.font.width(countText);
-            graphics.drawString(this.font, countText,
-                              contentLeft + CONTENT_WIDTH - countWidth - 5, descY, 0xFF88FF88);
+            // Draw building count (only if count > 0)
+            if (info.buildingCount() > 0) {
+                String countText = info.buildingCount() + " buildings";
+                int countWidth = this.font.width(countText);
+                graphics.drawString(this.font, countText,
+                                  contentLeft + CONTENT_WIDTH - countWidth - 5, descY, 0xFF88FF88);
+            }
         }
 
         // Draw scroll indicators if needed
