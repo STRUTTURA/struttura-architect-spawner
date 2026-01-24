@@ -449,6 +449,9 @@ public class ConstructionStorage {
         // Versione del mod Struttura
         json.addProperty("modVersion", Architect.MOD_VERSION);
 
+        // Pre-spawn bounds fill mode
+        json.addProperty("ensureBounds", construction.getEnsureBounds());
+
         Path metadataFile = directory.resolve("metadata.json");
         try (Writer writer = Files.newBufferedWriter(metadataFile, StandardCharsets.UTF_8)) {
             GSON.toJson(json, writer);
@@ -598,6 +601,11 @@ public class ConstructionStorage {
                         Architect.LOGGER.warn("Invalid UUID in spawnedEntityUuids: {}", element.getAsString());
                     }
                 }
+            }
+
+            // Load pre-spawn bounds fill mode
+            if (json.has("ensureBounds") && !json.get("ensureBounds").isJsonNull()) {
+                construction.setEnsureBounds(json.get("ensureBounds").getAsString());
             }
 
             return construction;

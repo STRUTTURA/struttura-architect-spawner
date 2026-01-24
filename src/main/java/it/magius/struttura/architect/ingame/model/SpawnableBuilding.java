@@ -23,6 +23,7 @@ public class SpawnableBuilding {
     private final AABB bounds;              // Bounding box (dimensions, origin at 0,0,0)
     private final Map<String, String> names;        // Localized names (lang code -> name)
     private final Map<String, String> descriptions; // Localized descriptions (lang code -> description)
+    private final String ensureBounds;      // Pre-spawn bounds fill mode ("none" or "air")
 
     // Runtime state (not persisted)
     private int spawnedCount = 0;
@@ -30,7 +31,7 @@ public class SpawnableBuilding {
 
     public SpawnableBuilding(String rdns, long pk, String hash, String author, BlockPos entrance, float entranceYaw,
                              int xWorld, List<SpawnRule> rules, AABB bounds,
-                             Map<String, String> names, Map<String, String> descriptions) {
+                             Map<String, String> names, Map<String, String> descriptions, String ensureBounds) {
         this.rdns = rdns;
         this.pk = pk;
         this.hash = hash;
@@ -42,6 +43,7 @@ public class SpawnableBuilding {
         this.bounds = bounds;
         this.names = names != null ? Map.copyOf(names) : Map.of();
         this.descriptions = descriptions != null ? Map.copyOf(descriptions) : Map.of();
+        this.ensureBounds = ensureBounds != null ? ensureBounds : "none";
     }
 
     /**
@@ -120,6 +122,14 @@ public class SpawnableBuilding {
      */
     public Map<String, String> getDescriptions() {
         return descriptions;
+    }
+
+    /**
+     * Gets the pre-spawn bounds fill mode.
+     * @return "none" (default) or "air"
+     */
+    public String getEnsureBounds() {
+        return ensureBounds;
     }
 
     /**

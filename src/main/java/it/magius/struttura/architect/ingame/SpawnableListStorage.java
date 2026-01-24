@@ -186,6 +186,9 @@ public class SpawnableListStorage {
         }
         json.add("descriptions", descriptionsJson);
 
+        // Pre-spawn bounds fill mode
+        json.addProperty("ensureBounds", building.getEnsureBounds());
+
         return json;
     }
 
@@ -299,7 +302,11 @@ public class SpawnableListStorage {
                 }
             }
 
-            return new SpawnableBuilding(rdns, pk, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions);
+            // Pre-spawn bounds fill mode
+            String ensureBounds = json.has("ensureBounds") && !json.get("ensureBounds").isJsonNull()
+                ? json.get("ensureBounds").getAsString() : "none";
+
+            return new SpawnableBuilding(rdns, pk, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions, ensureBounds);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to deserialize building", e);

@@ -257,6 +257,9 @@ public class ApiClient {
         // Versione del mod Struttura
         json.addProperty("modVersion", Architect.MOD_VERSION);
 
+        // Pre-spawn bounds fill mode
+        json.addProperty("ensureBounds", construction.getEnsureBounds());
+
         // Blocchi in formato NBT compresso e codificato base64
         byte[] nbtBytes = serializeBlocksToNbt(construction);
         String blocksBase64 = Base64.getEncoder().encodeToString(nbtBytes);
@@ -1288,6 +1291,11 @@ public class ApiClient {
                 }
             }
 
+            // Parse pre-spawn bounds fill mode
+            if (metadata.has("ensureBounds") && !metadata.get("ensureBounds").isJsonNull()) {
+                construction.setEnsureBounds(metadata.get("ensureBounds").getAsString());
+            }
+
             // Deserializza i blocchi da NBT compresso (dati binari diretti, non base64)
             if (blocksData != null && blocksData.length > 0) {
                 deserializeBlocksFromNbt(construction, blocksData);
@@ -2018,7 +2026,11 @@ public class ApiClient {
                     }
                 }
 
-                buildings.add(new SpawnableBuilding(rdns, pk, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions));
+                // Parse ensureBounds (pre-spawn bounds fill mode)
+                String ensureBounds = bldgObj.has("ensureBounds") && !bldgObj.get("ensureBounds").isJsonNull()
+                    ? bldgObj.get("ensureBounds").getAsString() : "none";
+
+                buildings.add(new SpawnableBuilding(rdns, pk, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions, ensureBounds));
             }
         }
 

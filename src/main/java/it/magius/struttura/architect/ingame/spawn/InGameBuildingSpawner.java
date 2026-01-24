@@ -9,6 +9,8 @@ import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.placement.ConstructionOperations;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.AABB;
 
@@ -105,6 +107,14 @@ public class InGameBuildingSpawner {
             construction.getAnchors().setEntrance(entrance, building.getEntranceYaw());
         }
 
+        // Pre-clear bounds if ensureBounds is "air"
+        if ("air".equals(building.getEnsureBounds())) {
+            // Calculate world-space bounds for clearing using SpawnableBuilding metadata
+            // This correctly handles the entrance-to-origin transformation with rotation
+            AABB clearBounds = BoundsCalculator.calculate(building, position);
+            preClearBounds(level, clearBounds);
+        }
+
         // Calculate seed for room selection based on world seed + spawn position
         long roomSeed = level.getSeed()
             ^ (long)(entrancePos.getX() * 1000)
@@ -146,6 +156,41 @@ public class InGameBuildingSpawner {
             // Increment spawn count
             building.incrementSpawnCount();
         }
+    }
+
+    /**
+     * Clears all blocks in the specified bounds by filling with air.
+     * Used when ensureBounds is set to "air" to clear terrain before placing a building.
+     *
+     * @param level the server level
+     * @param bounds the world-space bounding box to clear
+     */
+    private static void preClearBounds(ServerLevel level, AABB bounds) {
+        // Silent placement flags - same as used in ConstructionOperations
+        int flags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
+
+        int minX = (int) Math.floor(bounds.minX);
+        int minY = (int) Math.floor(bounds.minY);
+        int minZ = (int) Math.floor(bounds.minZ);
+        int maxX = (int) Math.floor(bounds.maxX);
+        int maxY = (int) Math.floor(bounds.maxY);
+        int maxZ = (int) Math.floor(bounds.maxZ);
+
+        int clearedCount = 0;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    pos.set(x, y, z);
+                    if (!level.getBlockState(pos).isAir()) {
+                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), flags);
+                        clearedCount++;
+                    }
+                }
+            }
+        }
+
     }
 
 }

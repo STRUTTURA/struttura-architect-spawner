@@ -21,6 +21,7 @@ public class SpawnQueue {
 
     private static final int MAX_CHUNKS_PER_TICK = 3;  // Process max 3 chunks per tick
     private static final long CLEAR_DELAY_TICKS = 5 * 20;  // 5 seconds in ticks
+    private static final int SPAWN_DELAY_TICKS = 0;  // No delay needed - process immediately
 
     private static SpawnQueue instance;
 
@@ -50,12 +51,14 @@ public class SpawnQueue {
     /**
      * Adds a chunk to the spawn evaluation queue.
      * Thread-safe, can be called from any thread.
+     * The chunk will be processed after SPAWN_DELAY_TICKS to ensure world generation is complete.
      *
      * @param level the server level
      * @param chunk the chunk to evaluate
      */
     public void enqueue(ServerLevel level, LevelChunk chunk) {
-        pendingChunks.add(new ChunkEntry(level, chunk.getPos().x, chunk.getPos().z));
+        long processAfterTick = level.getServer().getTickCount() + SPAWN_DELAY_TICKS;
+        pendingChunks.add(new ChunkEntry(level, chunk.getPos().x, chunk.getPos().z, processAfterTick));
     }
 
     /**
@@ -70,11 +73,21 @@ public class SpawnQueue {
 
         // Process up to MAX_CHUNKS_PER_TICK chunks
         int processed = 0;
+        long currentTick = server.getTickCount();
         while (processed < MAX_CHUNKS_PER_TICK && !pendingChunks.isEmpty()) {
-            ChunkEntry entry = pendingChunks.poll();
+            ChunkEntry entry = pendingChunks.peek();
             if (entry == null) {
                 break;
             }
+
+            // Check if chunk is ready to be processed (delay elapsed)
+            if (currentTick < entry.processAfterTick) {
+                // Not ready yet, stop processing (queue is ordered by enqueue time)
+                break;
+            }
+
+            // Remove from queue now that we're processing it
+            pendingChunks.poll();
 
             // Get the level and chunk
             ServerLevel level = server.getLevel(Level.OVERWORLD);
@@ -138,9 +151,9 @@ public class SpawnQueue {
     }
 
     /**
-     * Entry in the spawn queue containing chunk coordinates.
+     * Entry in the spawn queue containing chunk coordinates and the tick when it can be processed.
      * We store coordinates instead of LevelChunk reference to avoid holding
      * references to potentially unloaded chunks.
      */
-    private record ChunkEntry(ServerLevel level, int chunkX, int chunkZ) {}
+    private record ChunkEntry(ServerLevel level, int chunkX, int chunkZ, long processAfterTick) {}
 }

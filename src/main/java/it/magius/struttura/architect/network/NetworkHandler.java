@@ -615,6 +615,7 @@ public class NetworkHandler {
             case "room_exit_nomob" -> handleGuiRoomExit(player, false);  // Exit room without saving entities
             case "set_entrance" -> handleGuiSetEntrance(player);
             case "tp_entrance" -> handleGuiTpEntrance(player);
+            case "set_ensure_bounds" -> handleGuiSetEnsureBounds(player, extraData);  // extraData = "none" or "air"
             default -> Architect.LOGGER.warn("Unknown GUI action: {}", action);
         }
     }
@@ -2009,6 +2010,45 @@ public class NetworkHandler {
     }
 
     /**
+     * Handles set_ensure_bounds action via GUI.
+     * Sets the pre-spawn bounds fill mode ("none" or "air").
+     */
+    private static void handleGuiSetEnsureBounds(ServerPlayer player, String mode) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+
+        // ensureBounds can only be set for base construction, not rooms
+        if (session.isInRoom()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "ensure_bounds.not_in_room")));
+            return;
+        }
+
+        Construction construction = session.getConstruction();
+
+        // Validate mode
+        if (mode == null || (!mode.equals("none") && !mode.equals("air"))) {
+            Architect.LOGGER.warn("Invalid ensureBounds mode: {}", mode);
+            return;
+        }
+
+        construction.setEnsureBounds(mode);
+
+        // Save construction
+        ConstructionRegistry.getInstance().register(construction);
+
+        Architect.LOGGER.info("Set ensureBounds to '{}' for construction {}", mode, construction.getId());
+
+        // Update client
+        sendEditingInfo(player);
+    }
+
+    /**
      * Handles move action via GUI.
      * Uses centralized operations to move construction to new position.
      */
@@ -2235,7 +2275,9 @@ public class NetworkHandler {
                 entranceX,
                 entranceY,
                 entranceZ,
-                entranceYaw
+                entranceYaw,
+                // Pre-spawn bounds fill mode
+                construction.getEnsureBounds()
         );
 
         ServerPlayNetworking.send(player, packet);

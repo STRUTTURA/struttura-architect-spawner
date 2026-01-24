@@ -150,6 +150,18 @@ public class EditingPanel {
     private String originalRoomName = "";
     private String roomRenameError = "";  // Error message for duplicate ID
 
+    // Fill bounds dropdown state (for pre-spawn area clearing)
+    private boolean fillDropdownOpen = false;
+    private int selectedFillIndex = 0;  // 0 = None, 1 = Air
+    private static final String[] FILL_OPTIONS = {"None", "Air"};
+    private static final String[] FILL_VALUES = {"none", "air"};
+    private int cachedFillDropdownX = 0;
+    private int cachedFillDropdownY = 0;
+    private int cachedFillDropdownWidth = 0;
+    // List position cached during rendering for click handling
+    private int cachedFillDropdownListY = 0;
+    private int cachedFillDropdownListHeight = 0;
+
     // Use centralized language list from LanguageUtils
     private static final java.util.List<LangInfo> SUPPORTED_LANGUAGES = LanguageUtils.SUPPORTED_LANGUAGES_LIST;
 
@@ -743,9 +755,47 @@ public class EditingPanel {
         graphics.drawString(font, statsRow2, x + PADDING, currentY, 0xFFCCCCCC, false);
         currentY += LINE_HEIGHT;
 
-        // Row 3: Dimensions: WxHxD (or N/A for rooms)
+        // Row 3: Dimensions: WxHxD (or N/A for rooms) + Fill dropdown (buildings only)
         String statsRow3 = "Dimensions: " + pm.getBounds();
         graphics.drawString(font, statsRow3, x + PADDING, currentY, 0xFFCCCCCC, false);
+
+        // Fill dropdown (only for buildings, not rooms)
+        if (!pm.isInRoom()) {
+            // Sync selectedFillIndex with construction's ensureBounds value
+            String currentEnsureBounds = pm.getEnsureBounds();
+            if (currentEnsureBounds != null) {
+                for (int i = 0; i < FILL_VALUES.length; i++) {
+                    if (FILL_VALUES[i].equals(currentEnsureBounds)) {
+                        selectedFillIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            String fillLabel = "Fill:";
+            int fillLabelWidth = font.width(fillLabel);
+            int fillDropdownWidth = 40;
+            int fillDropdownX = x + WIDTH - PADDING - fillDropdownWidth;
+            int fillLabelX = fillDropdownX - fillLabelWidth - 3;
+            int fillDropdownY = currentY - 1;
+
+            graphics.drawString(font, fillLabel, fillLabelX, currentY, 0xFF808080, false);
+
+            boolean fillHovered = effectiveMouseX >= fillDropdownX && effectiveMouseX < fillDropdownX + fillDropdownWidth &&
+                                  effectiveMouseY >= fillDropdownY && effectiveMouseY < fillDropdownY + DROPDOWN_HEIGHT;
+
+            graphics.fill(fillDropdownX, fillDropdownY, fillDropdownX + fillDropdownWidth, fillDropdownY + DROPDOWN_HEIGHT,
+                         fillHovered ? 0xFF404040 : 0xFF303030);
+            graphics.renderOutline(fillDropdownX, fillDropdownY, fillDropdownWidth, DROPDOWN_HEIGHT, 0xFF606060);
+            graphics.drawString(font, FILL_OPTIONS[selectedFillIndex], fillDropdownX + 3, fillDropdownY + 3, 0xFFCCCCCC, false);
+            graphics.drawString(font, fillDropdownOpen ? "\u25BC" : "\u25B2", fillDropdownX + fillDropdownWidth - 10, fillDropdownY + 3, 0xFF888888, false);
+
+            // Cache for click handling and dropdown rendering
+            cachedFillDropdownX = fillDropdownX;
+            cachedFillDropdownY = fillDropdownY;
+            cachedFillDropdownWidth = fillDropdownWidth;
+        }
+
         currentY += LINE_HEIGHT + PADDING;
 
         // Block/Entity removal section: dropdown + REMOVE button (moved before Mode)
@@ -1030,6 +1080,11 @@ public class EditingPanel {
             renderRoomDropdownList(graphics, mouseX, mouseY, font, pm.getRoomList());
         }
 
+        // Render fill dropdown list ON TOP of other elements (opens upward)
+        if (fillDropdownOpen && !inRoomEditing) {
+            renderFillDropdownList(graphics, mouseX, mouseY, font);
+        }
+
         // Render language dropdown list ON TOP of other elements (opens downward)
         if (langDropdownOpen) {
             renderLangDropdownList(graphics, mouseX, mouseY, font);
@@ -1076,6 +1131,40 @@ public class EditingPanel {
             graphics.drawString(font, itemText, listX + 3, itemY + 1, isSelected ? 0xFFFFFFFF : 0xFFCCCCCC, false);
             itemY += LINE_HEIGHT + 1;
         }
+    }
+
+    /**
+     * Render the fill dropdown list on top of other elements.
+     * The list opens UPWARD from the dropdown button.
+     */
+    private void renderFillDropdownList(GuiGraphics graphics, int mouseX, int mouseY, Font font) {
+        int listHeight = FILL_OPTIONS.length * DROPDOWN_HEIGHT;
+        int listY = cachedFillDropdownY - listHeight;  // Opens upward
+
+        // Background
+        graphics.fill(cachedFillDropdownX, listY, cachedFillDropdownX + cachedFillDropdownWidth, cachedFillDropdownY, 0xF0202020);
+        graphics.renderOutline(cachedFillDropdownX, listY, cachedFillDropdownWidth, listHeight, 0xFF606060);
+
+        int itemY = listY;
+        for (int i = 0; i < FILL_OPTIONS.length; i++) {
+            boolean itemHovered = mouseX >= cachedFillDropdownX && mouseX < cachedFillDropdownX + cachedFillDropdownWidth &&
+                                  mouseY >= itemY && mouseY < itemY + DROPDOWN_HEIGHT;
+            boolean isSelected = i == selectedFillIndex;
+
+            if (itemHovered) {
+                graphics.fill(cachedFillDropdownX + 1, itemY, cachedFillDropdownX + cachedFillDropdownWidth - 1, itemY + DROPDOWN_HEIGHT, 0xFF353535);
+            }
+            if (isSelected) {
+                graphics.fill(cachedFillDropdownX + 1, itemY, cachedFillDropdownX + cachedFillDropdownWidth - 1, itemY + DROPDOWN_HEIGHT, 0xFF404060);
+            }
+
+            graphics.drawString(font, FILL_OPTIONS[i], cachedFillDropdownX + 3, itemY + 3, isSelected ? 0xFFFFFFFF : 0xFFCCCCCC, false);
+            itemY += DROPDOWN_HEIGHT;
+        }
+
+        // Cache list position for click handling
+        cachedFillDropdownListY = listY;
+        cachedFillDropdownListHeight = listHeight;
     }
 
     /**
@@ -1665,6 +1754,28 @@ public class EditingPanel {
             return true;
         }
 
+        // Handle fill dropdown clicks using cached positions
+        if (fillDropdownOpen) {
+            int listHeight = FILL_OPTIONS.length * DROPDOWN_HEIGHT;
+            int listY = cachedFillDropdownY - listHeight;  // Opens upward
+
+            if (mouseX >= cachedFillDropdownX && mouseX < cachedFillDropdownX + cachedFillDropdownWidth &&
+                mouseY >= listY && mouseY < listY + listHeight) {
+                // Click on fill dropdown list item
+                int itemIndex = (int)((mouseY - listY) / DROPDOWN_HEIGHT);
+                if (itemIndex >= 0 && itemIndex < FILL_OPTIONS.length) {
+                    selectedFillIndex = itemIndex;
+                    // Send action to server
+                    ClientPlayNetworking.send(new GuiActionPacket("set_ensure_bounds", "", FILL_VALUES[selectedFillIndex]));
+                    fillDropdownOpen = false;
+                }
+                return true;
+            }
+            // Click outside dropdown - close it
+            fillDropdownOpen = false;
+            return true;
+        }
+
         // Check language dropdown button click
         String langDisplay = getLangDisplayName(selectedLangId) + getLangIndicator(selectedLangId);
         int langWidth = font.width(langDisplay) + 12;
@@ -1779,8 +1890,19 @@ public class EditingPanel {
             currentY += LINE_HEIGHT + PADDING;
         }
 
-        // Skip stats section (3 rows for both room and building editing)
-        currentY += LINE_HEIGHT * 3 + PADDING;
+        // Skip stats rows 1-2 (Blocks, Entities)
+        currentY += LINE_HEIGHT * 2;
+
+        // Row 3: Dimensions + Fill dropdown click
+        if (!inRoomEditing) {
+            // Fill dropdown button click
+            if (mouseX >= cachedFillDropdownX && mouseX < cachedFillDropdownX + cachedFillDropdownWidth &&
+                mouseY >= cachedFillDropdownY && mouseY < cachedFillDropdownY + DROPDOWN_HEIGHT) {
+                fillDropdownOpen = !fillDropdownOpen;
+                return true;
+            }
+        }
+        currentY += LINE_HEIGHT + PADDING;
 
         // Block/Entity removal section: dropdown + REMOVE button (moved before Mode)
         java.util.List<RemovableItem> removableList = buildRemovableList(PanelManager.getInstance());
