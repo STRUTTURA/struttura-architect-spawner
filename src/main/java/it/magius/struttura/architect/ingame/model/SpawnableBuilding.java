@@ -1,5 +1,6 @@
 package it.magius.struttura.architect.ingame.model;
 
+import it.magius.struttura.architect.i18n.LanguageUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.AABB;
 
@@ -135,71 +136,21 @@ public class SpawnableBuilding {
     /**
      * Gets the localized name for the specified language.
      * Falls back to English, then to RDNS if no translation is available.
+     * Uses centralized fallback logic from LanguageUtils.
      * @param langCode the language code (e.g., "en_us", "it_it")
      */
     public String getLocalizedName(String langCode) {
-        if (names.isEmpty()) {
-            return rdns;
-        }
-
-        // Try exact match first
-        if (names.containsKey(langCode)) {
-            return names.get(langCode);
-        }
-
-        // Try language without region (e.g., "en" from "en_us")
-        String baseLang = langCode.split("_")[0];
-        for (Map.Entry<String, String> entry : names.entrySet()) {
-            if (entry.getKey().startsWith(baseLang)) {
-                return entry.getValue();
-            }
-        }
-
-        // Fallback to English
-        if (names.containsKey("en_us")) {
-            return names.get("en_us");
-        }
-        if (names.containsKey("en")) {
-            return names.get("en");
-        }
-
-        // Return first available name or RDNS
-        return names.values().stream().findFirst().orElse(rdns);
+        return LanguageUtils.getLocalizedText(names, langCode, rdns);
     }
 
     /**
      * Gets the localized description for the specified language.
      * Falls back to English, then to empty string if no translation is available.
+     * Uses centralized fallback logic from LanguageUtils.
      * @param langCode the language code (e.g., "en_us", "it_it")
      */
     public String getLocalizedDescription(String langCode) {
-        if (descriptions.isEmpty()) {
-            return "";
-        }
-
-        // Try exact match first
-        if (descriptions.containsKey(langCode)) {
-            return descriptions.get(langCode);
-        }
-
-        // Try language without region
-        String baseLang = langCode.split("_")[0];
-        for (Map.Entry<String, String> entry : descriptions.entrySet()) {
-            if (entry.getKey().startsWith(baseLang)) {
-                return entry.getValue();
-            }
-        }
-
-        // Fallback to English
-        if (descriptions.containsKey("en_us")) {
-            return descriptions.get("en_us");
-        }
-        if (descriptions.containsKey("en")) {
-            return descriptions.get("en");
-        }
-
-        // Return first available description or empty
-        return descriptions.values().stream().findFirst().orElse("");
+        return LanguageUtils.getLocalizedText(descriptions, langCode, "");
     }
 
     /**

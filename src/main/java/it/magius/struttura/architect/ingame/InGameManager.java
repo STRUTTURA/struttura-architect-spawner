@@ -141,7 +141,7 @@ public class InGameManager {
             activateSpawnableList(list, false);
         } else {
             // Fallback: try to fetch from API (backwards compatibility for existing worlds)
-            Long listId = storage.getState().getListId();
+            String listId = storage.getState().getListId();
             if (listId != null) {
                 ApiClient.fetchSpawnableList(listId, response -> {
                     if (response != null && response.success() && response.spawnableList() != null && server != null) {
@@ -207,7 +207,7 @@ public class InGameManager {
         }
 
         ArchitectConfig config = ArchitectConfig.getInstance();
-        Long configListId = config.getInGameListId();
+        String configListId = config.getInGameListId();
 
         if (configListId != null) {
             // Fetch list from API and initialize
@@ -317,8 +317,9 @@ public class InGameManager {
     }
 
     private void sendSetupScreenInternal(ServerPlayer player, boolean forceRetry) {
-        // If forcing retry and there was a connection error, clear cache
-        if (forceRetry && connectionError && !listsLoading) {
+        // If forcing retry, always clear cache and refetch
+        // This ensures that if the user changed their API key, we get fresh lists
+        if (forceRetry && !listsLoading) {
             cachedLists = null;
             connectionError = false;
         }
@@ -396,11 +397,11 @@ public class InGameManager {
 
     /**
      * Initializes InGame mode with a selected list.
-     * @param listId the list ID from the API
+     * @param listId the list ID from the API (can be numeric like "123" or alphanumeric like "most-popular")
      * @param listName the list name for display
      * @param authType how the user authenticated
      */
-    public void initialize(long listId, String listName, InGameState.AuthType authType) {
+    public void initialize(String listId, String listName, InGameState.AuthType authType) {
         if (storage == null) {
             Architect.LOGGER.error("Cannot initialize InGame: no storage loaded");
             return;
@@ -591,7 +592,7 @@ public class InGameManager {
             return;
         }
 
-        Long listId = storage.getState().getListId();
+        String listId = storage.getState().getListId();
         if (listId == null) {
             return;
         }

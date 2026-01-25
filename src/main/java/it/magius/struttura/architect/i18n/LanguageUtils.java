@@ -249,4 +249,76 @@ public class LanguageUtils {
     public static Set<String> getSupportedLanguages() {
         return SUPPORTED_LANGUAGES;
     }
+
+    /**
+     * Gets a localized text from a map with fallback logic.
+     * Fallback order: exact match → base language → en-US/en_us/en → first available.
+     *
+     * This is the centralized function for getting localized text with consistent fallback.
+     * Use this instead of implementing fallback logic in multiple places.
+     *
+     * @param strings the map of language code to text
+     * @param langCode the preferred language code (e.g., "en_us", "it_it", "en-US", "it-IT")
+     * @param defaultValue the default value to return if no text is found
+     * @return the localized text or default value
+     */
+    public static String getLocalizedText(Map<String, String> strings, String langCode, String defaultValue) {
+        if (strings == null || strings.isEmpty()) {
+            return defaultValue;
+        }
+
+        // Normalize language code for comparison
+        String normalizedLang = langCode != null ? langCode.toLowerCase().replace("-", "_") : "en_us";
+
+        // Try exact match first (both formats)
+        if (strings.containsKey(langCode)) {
+            return strings.get(langCode);
+        }
+        // Try normalized format
+        for (Map.Entry<String, String> entry : strings.entrySet()) {
+            String key = entry.getKey().toLowerCase().replace("-", "_");
+            if (key.equals(normalizedLang)) {
+                return entry.getValue();
+            }
+        }
+
+        // Try language without region (e.g., "en" from "en_us")
+        String baseLang = normalizedLang.split("_")[0];
+        for (Map.Entry<String, String> entry : strings.entrySet()) {
+            String key = entry.getKey().toLowerCase().replace("-", "_");
+            if (key.startsWith(baseLang + "_") || key.equals(baseLang)) {
+                return entry.getValue();
+            }
+        }
+
+        // Fallback to English (try various formats)
+        String[] englishKeys = {"en-US", "en_us", "en"};
+        for (String enKey : englishKeys) {
+            if (strings.containsKey(enKey)) {
+                return strings.get(enKey);
+            }
+        }
+        // Try case-insensitive English match
+        for (Map.Entry<String, String> entry : strings.entrySet()) {
+            String key = entry.getKey().toLowerCase().replace("-", "_");
+            if (key.startsWith("en")) {
+                return entry.getValue();
+            }
+        }
+
+        // Return first available value
+        return strings.values().stream().findFirst().orElse(defaultValue);
+    }
+
+    /**
+     * Gets a localized text from a map with fallback logic.
+     * Returns empty string if no text is found.
+     *
+     * @param strings the map of language code to text
+     * @param langCode the preferred language code
+     * @return the localized text or empty string
+     */
+    public static String getLocalizedText(Map<String, String> strings, String langCode) {
+        return getLocalizedText(strings, langCode, "");
+    }
 }

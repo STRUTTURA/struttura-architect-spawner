@@ -2693,7 +2693,7 @@ public class StrutturaCommand {
 
         // Active state - show details
         String listName = state.getListName() != null ? state.getListName() : "Unknown";
-        Long listId = state.getListId();
+        String listId = state.getListId();
         InGameState.AuthType authType = state.getAuthType();
 
         SpawnableList spawnableList = manager.getSpawnableList();

@@ -1810,16 +1810,42 @@ public class ApiClient {
             if (json.has("lists") && json.get("lists").isJsonArray()) {
                 for (JsonElement element : json.getAsJsonArray("lists")) {
                     JsonObject listObj = element.getAsJsonObject();
-                    long id = listObj.get("id").getAsLong();
-                    String name = listObj.has("name") ? listObj.get("name").getAsString() : "Unnamed";
-                    String description = listObj.has("description") && !listObj.get("description").isJsonNull()
-                        ? listObj.get("description").getAsString() : "";
+                    // Handle both numeric and string IDs (virtual lists have alphanumeric IDs like "most-popular")
+                    String id = listObj.get("id").isJsonPrimitive()
+                        ? listObj.get("id").getAsString() : String.valueOf(listObj.get("id").getAsLong());
+
+                    // Parse localized names JSON object
+                    Map<String, String> names = new HashMap<>();
+                    if (listObj.has("names") && listObj.get("names").isJsonObject()) {
+                        JsonObject namesObj = listObj.getAsJsonObject("names");
+                        for (Map.Entry<String, JsonElement> entry : namesObj.entrySet()) {
+                            if (!entry.getValue().isJsonNull()) {
+                                names.put(entry.getKey(), entry.getValue().getAsString());
+                            }
+                        }
+                    }
+
+                    // Parse localized descriptions JSON object
+                    Map<String, String> descriptions = new HashMap<>();
+                    if (listObj.has("descriptions") && listObj.get("descriptions").isJsonObject()) {
+                        JsonObject descObj = listObj.getAsJsonObject("descriptions");
+                        for (Map.Entry<String, JsonElement> entry : descObj.entrySet()) {
+                            if (!entry.getValue().isJsonNull()) {
+                                descriptions.put(entry.getKey(), entry.getValue().getAsString());
+                            }
+                        }
+                    }
+
                     int buildingCount = listObj.has("buildingCount") ? listObj.get("buildingCount").getAsInt() : 0;
                     boolean isPublic = listObj.has("isPublic") && listObj.get("isPublic").getAsBoolean();
+                    boolean isVirtual = listObj.has("virtual") && listObj.get("virtual").getAsBoolean();
+                    boolean isOwn = listObj.has("isOwn") && listObj.get("isOwn").getAsBoolean();
+                    String icon = listObj.has("icon") && !listObj.get("icon").isJsonNull()
+                        ? listObj.get("icon").getAsString() : "minecraft:book";  // Default icon
                     String contentHash = listObj.has("contentHash") && !listObj.get("contentHash").isJsonNull()
                         ? listObj.get("contentHash").getAsString() : null;
 
-                    lists.add(new InGameListInfo(id, name, description, buildingCount, isPublic, contentHash));
+                    lists.add(new InGameListInfo(id, names, descriptions, buildingCount, isPublic, isVirtual, isOwn, icon, contentHash));
                 }
             }
 
@@ -1835,10 +1861,10 @@ public class ApiClient {
     /**
      * Fetches the full spawnable list with buildings from the server asynchronously.
      *
-     * @param listId the list ID to fetch
+     * @param listId the list ID to fetch (can be numeric or alphanumeric for virtual lists)
      * @param onComplete callback called on completion
      */
-    public static void fetchSpawnableList(long listId, Consumer<SpawnableListResponse> onComplete) {
+    public static void fetchSpawnableList(String listId, Consumer<SpawnableListResponse> onComplete) {
         fetchSpawnableList(listId, null, onComplete);
     }
 
@@ -1846,11 +1872,11 @@ public class ApiClient {
      * Fetches the spawnable list with optional hash validation.
      * If currentHash is provided and matches the server's hash, returns 204 (no changes).
      *
-     * @param listId the list ID to fetch
+     * @param listId the list ID to fetch (can be numeric or alphanumeric for virtual lists)
      * @param currentHash the current list hash for cache validation (null to always fetch)
      * @param onComplete callback called on completion
      */
-    public static void fetchSpawnableList(long listId, String currentHash, Consumer<SpawnableListResponse> onComplete) {
+    public static void fetchSpawnableList(String listId, String currentHash, Consumer<SpawnableListResponse> onComplete) {
         CompletableFuture.supplyAsync(() -> {
             try {
                 return executeFetchSpawnableList(listId, currentHash);
@@ -1861,11 +1887,11 @@ public class ApiClient {
         }).thenAccept(onComplete);
     }
 
-    private static SpawnableListResponse executeFetchSpawnableList(long listId) throws Exception {
+    private static SpawnableListResponse executeFetchSpawnableList(String listId) throws Exception {
         return executeFetchSpawnableList(listId, null);
     }
 
-    private static SpawnableListResponse executeFetchSpawnableList(long listId, String currentHash) throws Exception {
+    private static SpawnableListResponse executeFetchSpawnableList(String listId, String currentHash) throws Exception {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String endpoint = config.getEndpoint();
         String url = endpoint + "/lists/" + listId + "/export";

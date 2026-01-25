@@ -9,10 +9,17 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Screen for selecting an InGame building list when starting a new world.
@@ -21,10 +28,17 @@ import java.util.List;
 @Environment(EnvType.CLIENT)
 public class InGameSetupScreen extends Screen {
 
-    private static final int CONTENT_WIDTH = 450;
-    private static final int LIST_ITEM_HEIGHT = 50;
+    private static final int CONTENT_WIDTH = 350;
+    private static final int LIST_ITEM_HEIGHT = 24;
     private static final int BUTTON_HEIGHT = 20;
-    private static final int SPACING = 8;
+    private static final int SPACING = 0;
+    private static final int ICON_SIZE = 16;  // Standard item icon size
+
+    // Default fallback icon
+    private static final ItemStack DEFAULT_ICON = new ItemStack(Items.BOOK);
+
+    // Cache for resolved ItemStacks from icon IDs
+    private final Map<String, ItemStack> iconCache = new HashMap<>();
 
     private final List<InGameListsPacket.ListInfo> lists;
     private final boolean isNewWorld;
@@ -38,6 +52,11 @@ public class InGameSetupScreen extends Screen {
     // Scroll state
     private int scrollOffset = 0;
     private static final int MAX_VISIBLE_ITEMS = 4;
+    private static final int SCROLL_BUTTON_SIZE = 20;
+
+    // Scroll buttons
+    private Button scrollUpBtn;
+    private Button scrollDownBtn;
 
     public InGameSetupScreen(List<InGameListsPacket.ListInfo> lists, boolean isNewWorld, boolean connectionError) {
         super(Component.translatable("struttura.ingame.setup.title"));
@@ -62,26 +81,51 @@ public class InGameSetupScreen extends Screen {
         int listStartY = subtitleY + 30;
 
         // Create list item buttons
+        // Get current Minecraft language for localization
+        String langCode = this.minecraft != null ? this.minecraft.getLanguageManager().getSelected() : "en_us";
+
         int visibleItems = Math.min(lists.size(), MAX_VISIBLE_ITEMS);
         for (int i = 0; i < lists.size(); i++) {
             InGameListsPacket.ListInfo info = lists.get(i);
             final int index = i;
 
-            // Show list name with building count (only if count > 0)
+            // Show localized list name with building count (only if count > 0)
+            String localizedName = info.getLocalizedName(langCode);
             String buttonText = info.buildingCount() > 0
-                ? info.name() + " (" + info.buildingCount() + ")"
-                : info.name();
+                ? localizedName + " (" + info.buildingCount() + ")"
+                : localizedName;
             Button btn = Button.builder(
                 Component.literal(buttonText),
                 button -> onListSelected(index)
             ).bounds(contentLeft, listStartY + (i * (LIST_ITEM_HEIGHT + SPACING)),
-                     CONTENT_WIDTH, LIST_ITEM_HEIGHT - 10)
+                     CONTENT_WIDTH, BUTTON_HEIGHT)
              .build();
 
             listButtons.add(btn);
-            if (i < MAX_VISIBLE_ITEMS) {
-                this.addRenderableWidget(btn);
-            }
+            // Add all buttons as widgets, visibility will be managed in render
+            this.addRenderableWidget(btn);
+        }
+
+        // Scroll buttons (only if more than MAX_VISIBLE_ITEMS lists)
+        if (lists.size() > MAX_VISIBLE_ITEMS) {
+            int listEndY = listStartY + (MAX_VISIBLE_ITEMS * (LIST_ITEM_HEIGHT + SPACING));
+            int scrollBtnX = contentLeft + CONTENT_WIDTH + 5;
+
+            // Scroll up button
+            scrollUpBtn = Button.builder(
+                Component.literal("\u25B2"),
+                button -> scrollUp()
+            ).bounds(scrollBtnX, listStartY, SCROLL_BUTTON_SIZE, SCROLL_BUTTON_SIZE).build();
+            this.addRenderableWidget(scrollUpBtn);
+
+            // Scroll down button
+            scrollDownBtn = Button.builder(
+                Component.literal("\u25BC"),
+                button -> scrollDown()
+            ).bounds(scrollBtnX, listEndY - SCROLL_BUTTON_SIZE - 3, SCROLL_BUTTON_SIZE, SCROLL_BUTTON_SIZE).build();
+            this.addRenderableWidget(scrollDownBtn);
+
+            updateScrollButtonStates();
         }
 
         // Bottom buttons - single row with two buttons
@@ -112,10 +156,12 @@ public class InGameSetupScreen extends Screen {
         }
 
         InGameListsPacket.ListInfo selected = lists.get(index);
-        Architect.LOGGER.info("Selected InGame list: {} (id={})", selected.name(), selected.id());
+        String langCode = this.minecraft != null ? this.minecraft.getLanguageManager().getSelected() : "en_us";
+        String localizedName = selected.getLocalizedName(langCode);
+        Architect.LOGGER.info("Selected InGame list: {} (id={})", localizedName, selected.id());
 
         // Send selection to server
-        ClientPlayNetworking.send(InGameSelectPacket.select(selected.id(), selected.name()));
+        ClientPlayNetworking.send(InGameSelectPacket.select(selected.id(), localizedName));
 
         // Close screen
         this.onClose();
@@ -141,6 +187,29 @@ public class InGameSetupScreen extends Screen {
         this.onClose();
     }
 
+    private void scrollUp() {
+        if (scrollOffset > 0) {
+            scrollOffset--;
+            updateScrollButtonStates();
+        }
+    }
+
+    private void scrollDown() {
+        if (scrollOffset + MAX_VISIBLE_ITEMS < lists.size()) {
+            scrollOffset++;
+            updateScrollButtonStates();
+        }
+    }
+
+    private void updateScrollButtonStates() {
+        if (scrollUpBtn != null) {
+            scrollUpBtn.active = scrollOffset > 0;
+        }
+        if (scrollDownBtn != null) {
+            scrollDownBtn.active = scrollOffset + MAX_VISIBLE_ITEMS < lists.size();
+        }
+    }
+
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         // Draw background image
@@ -153,7 +222,7 @@ public class InGameSetupScreen extends Screen {
         int contentLeft = centerX - CONTENT_WIDTH / 2;
 
         // Draw worm logo in top-left corner (uses centralized rendering for consistent antialiasing)
-        GuiAssets.renderWormScaled(graphics, this.height, 0.30f, 10, 10);
+        GuiAssets.renderWormScaled(graphics, this.height, 0.30f, 10, 0);
 
         // Title - "The adventure begins!"
         int titleY = 30;
@@ -169,54 +238,24 @@ public class InGameSetupScreen extends Screen {
             graphics.drawCenteredString(this.font, subtitle, centerX, subtitleY, 0xFFCCCCCC);
         }
 
-        // List items
+        // List items - update button positions and visibility based on scroll
         int listStartY = subtitleY + 30;
 
-        for (int i = 0; i < lists.size() && i < MAX_VISIBLE_ITEMS; i++) {
-            int displayIndex = i + scrollOffset;
-            if (displayIndex >= lists.size()) break;
+        for (int i = 0; i < listButtons.size(); i++) {
+            Button btn = listButtons.get(i);
+            int visibleIndex = i - scrollOffset;
 
-            InGameListsPacket.ListInfo info = lists.get(displayIndex);
-            int itemY = listStartY + (i * (LIST_ITEM_HEIGHT + SPACING));
-
-            // Draw item background
-            graphics.fill(contentLeft - 5, itemY - 5,
-                         contentLeft + CONTENT_WIDTH + 5, itemY + LIST_ITEM_HEIGHT - 5,
-                         0x60000000);
-
-            // Update button position and visibility
-            if (displayIndex < listButtons.size()) {
-                Button btn = listButtons.get(displayIndex);
+            if (visibleIndex >= 0 && visibleIndex < MAX_VISIBLE_ITEMS) {
+                // Button is visible
+                int itemY = listStartY + (visibleIndex * (LIST_ITEM_HEIGHT + SPACING));
                 btn.setY(itemY);
-            }
-
-            // Draw description below button
-            int descY = itemY + LIST_ITEM_HEIGHT - 18;
-            String desc = info.description();
-            if (desc.length() > 60) {
-                desc = desc.substring(0, 57) + "...";
-            }
-            graphics.drawString(this.font, desc, contentLeft + 5, descY, 0xFF888888);
-
-            // Draw building count (only if count > 0)
-            if (info.buildingCount() > 0) {
-                String countText = info.buildingCount() + " buildings";
-                int countWidth = this.font.width(countText);
-                graphics.drawString(this.font, countText,
-                                  contentLeft + CONTENT_WIDTH - countWidth - 5, descY, 0xFF88FF88);
+                btn.visible = true;
+            } else {
+                // Button is not visible (scrolled out)
+                btn.visible = false;
             }
         }
 
-        // Draw scroll indicators if needed
-        if (lists.size() > MAX_VISIBLE_ITEMS) {
-            if (scrollOffset > 0) {
-                graphics.drawCenteredString(this.font, "▲", centerX, listStartY - 15, 0xFFFFFFFF);
-            }
-            if (scrollOffset + MAX_VISIBLE_ITEMS < lists.size()) {
-                int bottomY = listStartY + (MAX_VISIBLE_ITEMS * (LIST_ITEM_HEIGHT + SPACING));
-                graphics.drawCenteredString(this.font, "▼", centerX, bottomY, 0xFFFFFFFF);
-            }
-        }
 
         // Info text in center area
         if (lists.isEmpty()) {
@@ -258,6 +297,70 @@ public class InGameSetupScreen extends Screen {
 
         // Render widgets (buttons)
         super.render(graphics, mouseX, mouseY, partialTick);
+
+        // Render decoration icons for lists (at left and right edges of button)
+        for (int i = 0; i < listButtons.size(); i++) {
+            Button btn = listButtons.get(i);
+            if (!btn.visible) continue;
+
+            InGameListsPacket.ListInfo info = lists.get(i);
+
+            // Get icon from the list info (resolved dynamically from API)
+            ItemStack icon = getIconForList(info.icon());
+
+            int btnX = btn.getX();
+            int btnY = btn.getY();
+            int btnWidth = btn.getWidth();
+            int btnHeight = btn.getHeight();
+
+            // Vertical center
+            int iconY = btnY + (btnHeight - ICON_SIZE) / 2;
+
+            // Render icon on the left edge (with small padding)
+            int leftIconX = btnX + 4;
+            graphics.renderItem(icon, leftIconX, iconY);
+
+            // Render icon on the right edge (with small padding)
+            int rightIconX = btnX + btnWidth - ICON_SIZE - 4;
+            graphics.renderItem(icon, rightIconX, iconY);
+        }
+    }
+
+    /**
+     * Resolves a Minecraft item ID (e.g., "minecraft:bell") to an ItemStack.
+     * Caches results for performance.
+     */
+    private ItemStack getIconForList(String iconId) {
+        if (iconId == null || iconId.isEmpty()) {
+            return DEFAULT_ICON;
+        }
+
+        // Check cache first
+        if (iconCache.containsKey(iconId)) {
+            return iconCache.get(iconId);
+        }
+
+        // Try to resolve the item from registry
+        try {
+            Identifier itemId = Identifier.tryParse(iconId);
+            if (itemId != null) {
+                var itemOptional = BuiltInRegistries.ITEM.get(itemId);
+                if (itemOptional.isPresent()) {
+                    Item item = itemOptional.get().value();
+                    if (item != Items.AIR) {
+                        ItemStack stack = new ItemStack(item);
+                        iconCache.put(iconId, stack);
+                        return stack;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Architect.LOGGER.warn("Failed to resolve icon '{}': {}", iconId, e.getMessage());
+        }
+
+        // Fallback to default icon
+        iconCache.put(iconId, DEFAULT_ICON);
+        return DEFAULT_ICON;
     }
 
     /**
@@ -272,9 +375,11 @@ public class InGameSetupScreen extends Screen {
         if (lists.size() > MAX_VISIBLE_ITEMS) {
             if (scrollY > 0 && scrollOffset > 0) {
                 scrollOffset--;
+                updateScrollButtonStates();
                 return true;
             } else if (scrollY < 0 && scrollOffset + MAX_VISIBLE_ITEMS < lists.size()) {
                 scrollOffset++;
+                updateScrollButtonStates();
                 return true;
             }
         }

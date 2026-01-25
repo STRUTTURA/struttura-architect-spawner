@@ -70,7 +70,11 @@ public class InGameStorage {
             }
 
             if (json.has("listId") && !json.get("listId").isJsonNull()) {
-                state.setListId(json.get("listId").getAsLong());
+                // Handle both numeric and string IDs (virtual lists have alphanumeric IDs)
+                var listIdElement = json.get("listId");
+                if (listIdElement.isJsonPrimitive()) {
+                    state.setListId(listIdElement.getAsString());
+                }
             }
 
             if (json.has("listName") && !json.get("listName").isJsonNull()) {
@@ -161,8 +165,9 @@ public class InGameStorage {
 
     /**
      * Gets the selected list ID, or null if not initialized or declined.
+     * Can be numeric (e.g., "123") or alphanumeric (e.g., "most-popular" for virtual lists).
      */
-    public Long getSelectedListId() {
+    public String getSelectedListId() {
         return state.getListId();
     }
 

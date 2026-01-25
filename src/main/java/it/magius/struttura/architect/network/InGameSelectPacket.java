@@ -12,7 +12,7 @@ import net.minecraft.resources.Identifier;
  */
 public record InGameSelectPacket(
     Action action,         // The action the player chose
-    long listId,           // Selected list ID (only valid if action is SELECT)
+    String listId,         // Selected list ID (only valid if action is SELECT). Can be numeric or alphanumeric for virtual lists.
     String listName        // Selected list name (for logging)
 ) implements CustomPacketPayload {
 
@@ -35,33 +35,34 @@ public record InGameSelectPacket(
      * Create a packet for declining InGame mode permanently.
      */
     public static InGameSelectPacket decline() {
-        return new InGameSelectPacket(Action.DECLINE, 0, "");
+        return new InGameSelectPacket(Action.DECLINE, "", "");
     }
 
     /**
      * Create a packet for skipping InGame mode for now (retry later).
      */
     public static InGameSelectPacket skip() {
-        return new InGameSelectPacket(Action.SKIP, 0, "");
+        return new InGameSelectPacket(Action.SKIP, "", "");
     }
 
     /**
      * Create a packet for selecting a list.
+     * @param listId the list ID (can be numeric like "123" or alphanumeric like "most-popular")
      */
-    public static InGameSelectPacket select(long listId, String listName) {
+    public static InGameSelectPacket select(String listId, String listName) {
         return new InGameSelectPacket(Action.SELECT, listId, listName);
     }
 
     private static InGameSelectPacket read(FriendlyByteBuf buf) {
         Action action = buf.readEnum(Action.class);
-        long listId = buf.readLong();
+        String listId = buf.readUtf(64);  // List ID as string (max 64 chars)
         String listName = buf.readUtf(256);
         return new InGameSelectPacket(action, listId, listName);
     }
 
     private static void write(FriendlyByteBuf buf, InGameSelectPacket packet) {
         buf.writeEnum(packet.action);
-        buf.writeLong(packet.listId);
+        buf.writeUtf(packet.listId, 64);  // List ID as string (max 64 chars)
         buf.writeUtf(packet.listName, 256);
     }
 

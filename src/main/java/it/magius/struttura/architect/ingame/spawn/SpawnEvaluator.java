@@ -131,9 +131,9 @@ public class SpawnEvaluator {
      * Creates a seeded random generator for deterministic spawn decisions.
      * The same world seed + list ID + chunk position will always produce the same decisions.
      */
-    private static Random createSeededRandom(long worldSeed, Long listId, net.minecraft.world.level.ChunkPos chunkPos) {
+    private static Random createSeededRandom(long worldSeed, String listId, net.minecraft.world.level.ChunkPos chunkPos) {
         long seed = worldSeed;
-        seed ^= (listId != null ? listId * 31 : 0);
+        seed ^= (listId != null ? listId.hashCode() * 31L : 0);
         seed ^= (chunkPos.x * 341873128712L);
         seed ^= (chunkPos.z * 132897987541L);
         return new Random(seed);
