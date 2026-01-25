@@ -82,6 +82,11 @@ public class EntitySpawnHandler {
             return;
         }
 
+        // Ignora entità MARKER (sono usate internamente da Minecraft per template, non hanno senso in costruzioni)
+        if (entity.getType().toString().contains("marker")) {
+            return;
+        }
+
         // Accept all entity types (mobs, item frames, armor stands, paintings, etc.)
         // The previous LivingEntity filter was too restrictive
 

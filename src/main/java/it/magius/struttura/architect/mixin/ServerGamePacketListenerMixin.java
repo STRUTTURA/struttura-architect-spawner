@@ -239,6 +239,8 @@ public class ServerGamePacketListenerMixin {
                 // Remove from tracking and update indices for remaining entities
                 session.untrackEntity(entityId);
                 session.updateTrackingAfterRemoval(listIndex);
+                // Also untrack from construction's spawnedEntityUuids to prevent re-add on push
+                construction.untrackSpawnedEntity(entityId);
             }
 
             String targetName = formatTargetName(session);

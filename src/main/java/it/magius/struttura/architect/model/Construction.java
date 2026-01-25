@@ -426,34 +426,73 @@ public class Construction {
     }
 
     /**
-     * Refreshes all entities from the world.
+     * Refreshes tracked entities from the world.
      * This re-serializes each tracked entity to capture any modifications
-     * made in the world (like item rotation in item frames).
+     * made in the world (like item rotation in item frames, item content changes, etc.).
+     *
+     * IMPORTANT: This method only UPDATES existing entities in the list by matching
+     * world entity UUIDs to the tracked spawnedEntityUuids. It does NOT add new entities
+     * or remove entities from the list - those operations are handled by addEntity/removeEntity.
+     *
+     * The matching works by iterating through the entities list and finding the world entity
+     * that matches each EntityData by type and approximate position.
      *
      * @param level The ServerLevel to read entities from
      * @param registries The registry access for proper NBT serialization
      * @return Number of entities refreshed
      */
     public int refreshEntitiesFromWorld(net.minecraft.server.level.ServerLevel level, net.minecraft.core.HolderLookup.Provider registries) {
-        if (spawnedEntityUuids.isEmpty() || !bounds.isValid()) {
+        if (spawnedEntityUuids.isEmpty() || entities.isEmpty() || !bounds.isValid()) {
             return 0;
         }
 
-        int refreshed = 0;
-        List<EntityData> newEntities = new ArrayList<>();
+        int originX = bounds.getMinX();
+        int originY = bounds.getMinY();
+        int originZ = bounds.getMinZ();
 
-        for (UUID uuid : spawnedEntityUuids) {
-            net.minecraft.world.entity.Entity worldEntity = level.getEntity(uuid);
-            if (worldEntity != null && EntityData.shouldSaveEntity(worldEntity)) {
-                EntityData newData = EntityData.fromEntity(worldEntity, bounds, registries);
-                newEntities.add(newData);
-                refreshed++;
+        int refreshed = 0;
+
+        // For each tracked UUID, find the entity in the world
+        for (UUID entityUuid : spawnedEntityUuids) {
+            net.minecraft.world.entity.Entity worldEntity = level.getEntity(entityUuid);
+            if (worldEntity == null || !EntityData.shouldSaveEntity(worldEntity)) {
+                continue;
+            }
+
+            String entityType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
+                .getKey(worldEntity.getType()).toString();
+            double worldX = worldEntity.getX();
+            double worldY = worldEntity.getY();
+            double worldZ = worldEntity.getZ();
+
+            // Find matching EntityData by type and approximate position
+            for (int i = 0; i < entities.size(); i++) {
+                EntityData data = entities.get(i);
+
+                // Check type match
+                if (!data.getEntityType().equals(entityType)) {
+                    continue;
+                }
+
+                // Calculate expected world position from EntityData
+                double expectedX = originX + data.getRelativePos().x;
+                double expectedY = originY + data.getRelativePos().y;
+                double expectedZ = originZ + data.getRelativePos().z;
+
+                // Check position match (within 1 block tolerance)
+                double dx = Math.abs(worldX - expectedX);
+                double dy = Math.abs(worldY - expectedY);
+                double dz = Math.abs(worldZ - expectedZ);
+
+                if (dx < 1.0 && dy < 1.0 && dz < 1.0) {
+                    // Found matching EntityData - update it with fresh data from world
+                    EntityData newData = EntityData.fromEntity(worldEntity, bounds, registries);
+                    entities.set(i, newData);
+                    refreshed++;
+                    break; // Move to next tracked UUID
+                }
             }
         }
-
-        // Replace entities list with refreshed data
-        entities.clear();
-        entities.addAll(newEntities);
 
         return refreshed;
     }

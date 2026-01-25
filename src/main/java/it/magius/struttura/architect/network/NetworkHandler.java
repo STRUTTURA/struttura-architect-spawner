@@ -1660,8 +1660,9 @@ public class NetworkHandler {
 
             for (Entity entity : entitiesToDiscard) {
                 java.util.UUID uuid = entity.getUUID();
-                // Untrack the entity
+                // Untrack the entity from session and construction
                 session.untrackEntity(uuid);
+                construction.untrackSpawnedEntity(uuid);
                 it.magius.struttura.architect.entity.EntityFreezeHandler.getInstance().unfreezeEntity(uuid);
                 it.magius.struttura.architect.entity.EntitySpawnHandler.getInstance().unignoreEntity(uuid);
                 entity.discard();
