@@ -50,6 +50,15 @@
   "struttura.ingame.disabled": "§e[STRUTTURA]§f Modalità avventura disabilitata. Usa /struttura adventure init per riattivarla.",
   "struttura.ingame.skipped": "§e[STRUTTURA]§f Modalità avventura saltata. Riprova al prossimo avvio del mondo.",
 
+  "struttura.ingame.mods.required": "Richiesti Mod",
+  "struttura.ingame.mods.missing": "Mod mancanti",
+  "struttura.ingame.mods.detail.title": "Mod Richiesti",
+  "struttura.ingame.mods.warning": "Attenzione: Se un mod è mancante o obsoleto, i blocchi e le entità relative potrebbero non comparire",
+  "struttura.ingame.mods.continue": "Continua",
+  "struttura.ingame.mods.installed": "Installato",
+  "struttura.ingame.mods.not_installed": "Non installato",
+  "struttura.ingame.mods.download": "Scarica",
+
   "struttura.like.title": "Dettagli Creazione",
   "struttura.like.author": "di %s",
   "struttura.like.message": "Se ti è piaciuta questa creazione, lascia un like per supportare l'autore!",

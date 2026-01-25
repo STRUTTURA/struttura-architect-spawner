@@ -13,6 +13,7 @@ import net.minecraft.util.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -999,12 +1000,22 @@ public class MainPanel {
                 // Expand click area to full item height for easier clicking
                 if (mouseX >= linkX && mouseX < linkX + linkWidth &&
                     mouseY >= itemY && mouseY < itemY + itemHeight) {
-                    // Open URL in browser
-                    try {
-                        Util.getPlatform().openUri(new URI(mod.getDownloadUrl()));
-                    } catch (Exception e) {
-                        Architect.LOGGER.warn("Failed to open URL: {}", mod.getDownloadUrl(), e);
-                    }
+                    // Use ConfirmLinkScreen (standard Minecraft way) to warn user about leaving the game
+                    String downloadUrl = mod.getDownloadUrl();
+                    Minecraft.getInstance().setScreen(new ConfirmLinkScreen(
+                        confirmed -> {
+                            if (confirmed) {
+                                try {
+                                    Util.getPlatform().openUri(new URI(downloadUrl));
+                                } catch (Exception e) {
+                                    Architect.LOGGER.warn("Failed to open URL: {}", downloadUrl, e);
+                                }
+                            }
+                            Minecraft.getInstance().setScreen(null);
+                        },
+                        downloadUrl,
+                        true
+                    ));
                     return true;
                 }
             }

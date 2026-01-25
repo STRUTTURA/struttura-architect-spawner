@@ -1,6 +1,7 @@
 package it.magius.struttura.architect.ingame.model;
 
 import it.magius.struttura.architect.i18n.LanguageUtils;
+import it.magius.struttura.architect.model.ModInfo;
 
 import java.util.Map;
 
@@ -17,7 +18,8 @@ public record InGameListInfo(
     boolean isVirtual,  // True for system-generated lists like "Most Popular Buildings"
     boolean isOwn,      // True if the list belongs to the current user
     String icon,        // Minecraft item ID for display (e.g., "minecraft:bell")
-    String contentHash
+    String contentHash,
+    Map<String, ModInfo> mods  // Mods required by buildings in this list (null if vanilla only)
 ) {
     /**
      * Gets the localized name for the specified language.
@@ -35,6 +37,14 @@ public record InGameListInfo(
      */
     public String getLocalizedDescription(String langCode) {
         return LanguageUtils.getLocalizedText(descriptions, langCode, "");
+    }
+
+    /**
+     * Checks if this list requires any mods.
+     * @return true if the list has buildings that require mods
+     */
+    public boolean requiresMods() {
+        return mods != null && !mods.isEmpty();
     }
 
     @Override

@@ -2,9 +2,11 @@ package it.magius.struttura.architect.client;
 
 import it.magius.struttura.architect.model.ModInfo;
 import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.loader.api.ModContainer;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Utility class for validating mod requirements on client side.
@@ -74,5 +76,36 @@ public class ModValidator {
         return missingMods.values().stream()
             .mapToInt(ModInfo::getMobsCount)
             .sum();
+    }
+
+    /**
+     * Gets the installed version of a mod.
+     *
+     * @param modId the mod ID to check
+     * @return the version string, or null if not installed
+     */
+    public static String getInstalledVersion(String modId) {
+        Optional<ModContainer> container = FabricLoader.getInstance().getModContainer(modId);
+        return container.map(c -> c.getMetadata().getVersion().getFriendlyString()).orElse(null);
+    }
+
+    /**
+     * Gets a map of installed mod versions for the given required mods.
+     *
+     * @param requiredMods the mods required by the list
+     * @return map of modId -> installed version (null value if not installed)
+     */
+    public static Map<String, String> getInstalledVersions(Map<String, ModInfo> requiredMods) {
+        Map<String, String> versions = new HashMap<>();
+
+        if (requiredMods == null) {
+            return versions;
+        }
+
+        for (String modId : requiredMods.keySet()) {
+            versions.put(modId, getInstalledVersion(modId));
+        }
+
+        return versions;
     }
 }

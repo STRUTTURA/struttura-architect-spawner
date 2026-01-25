@@ -1845,7 +1845,33 @@ public class ApiClient {
                     String contentHash = listObj.has("contentHash") && !listObj.get("contentHash").isJsonNull()
                         ? listObj.get("contentHash").getAsString() : null;
 
-                    lists.add(new InGameListInfo(id, names, descriptions, buildingCount, isPublic, isVirtual, isOwn, icon, contentHash));
+                    // Parse mods map
+                    Map<String, ModInfo> mods = null;
+                    if (listObj.has("mods") && listObj.get("mods").isJsonObject()) {
+                        JsonObject modsObj = listObj.getAsJsonObject("mods");
+                        if (!modsObj.isEmpty()) {
+                            mods = new HashMap<>();
+                            for (Map.Entry<String, JsonElement> entry : modsObj.entrySet()) {
+                                String modId = entry.getKey();
+                                if (entry.getValue().isJsonObject()) {
+                                    JsonObject modObj = entry.getValue().getAsJsonObject();
+                                    String displayName = modObj.has("displayName") && !modObj.get("displayName").isJsonNull()
+                                        ? modObj.get("displayName").getAsString() : modId;
+                                    int blocksCount = modObj.has("blocksCount") ? modObj.get("blocksCount").getAsInt() : 0;
+                                    int mobsCount = modObj.has("mobsCount") ? modObj.get("mobsCount").getAsInt() : 0;
+                                    int commandBlocksCount = modObj.has("commandBlocksCount") ? modObj.get("commandBlocksCount").getAsInt() : 0;
+                                    String version = modObj.has("version") && !modObj.get("version").isJsonNull()
+                                        ? modObj.get("version").getAsString() : null;
+                                    String downloadUrl = modObj.has("downloadUrl") && !modObj.get("downloadUrl").isJsonNull()
+                                        ? modObj.get("downloadUrl").getAsString() : null;
+                                    // entitiesCount is 0 for list-level mods (buildings aggregate)
+                                    mods.put(modId, new ModInfo(modId, displayName, blocksCount, 0, mobsCount, commandBlocksCount, downloadUrl, version));
+                                }
+                            }
+                        }
+                    }
+
+                    lists.add(new InGameListInfo(id, names, descriptions, buildingCount, isPublic, isVirtual, isOwn, icon, contentHash, mods));
                 }
             }
 

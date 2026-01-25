@@ -50,6 +50,15 @@
   "struttura.ingame.disabled": "§e[STRUTTURA]§f Adventure mode disabled. Use /struttura adventure init to enable it.",
   "struttura.ingame.skipped": "§e[STRUTTURA]§f Adventure mode skipped. Will retry on next world load.",
 
+  "struttura.ingame.mods.required": "Mods Required",
+  "struttura.ingame.mods.missing": "Mods Missing",
+  "struttura.ingame.mods.detail.title": "Required Mods",
+  "struttura.ingame.mods.warning": "Warning: Missing or outdated mods may cause blocks and entities to not appear",
+  "struttura.ingame.mods.continue": "Continue",
+  "struttura.ingame.mods.installed": "Installed",
+  "struttura.ingame.mods.not_installed": "Not Installed",
+  "struttura.ingame.mods.download": "Download",
+
   "struttura.like.title": "Building Details",
   "struttura.like.author": "by %s",
   "struttura.like.message": "If you enjoyed this creation, give it a like to support the author!",

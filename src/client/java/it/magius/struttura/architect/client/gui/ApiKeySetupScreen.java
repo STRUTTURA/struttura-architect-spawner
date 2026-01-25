@@ -5,6 +5,7 @@ import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
@@ -111,22 +112,42 @@ public class ApiKeySetupScreen extends Screen {
     private void openWebsite() {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String www = getWwwUrl(config);
-        try {
-            Util.getPlatform().openUri(new URI(www));
-        } catch (Exception e) {
-            // Ignore URI parsing errors
-        }
+        // Use ConfirmLinkScreen (standard Minecraft way) to warn user about leaving the game
+        this.minecraft.setScreen(new ConfirmLinkScreen(
+            confirmed -> {
+                if (confirmed) {
+                    try {
+                        Util.getPlatform().openUri(new URI(www));
+                    } catch (Exception e) {
+                        // Ignore URI parsing errors
+                    }
+                }
+                this.minecraft.setScreen(this);
+            },
+            www,
+            true
+        ));
     }
 
     private void openDashboard() {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String www = getWwwUrl(config);
         String url = www + "/dashboard/api-keys";
-        try {
-            Util.getPlatform().openUri(new URI(url));
-        } catch (Exception e) {
-            // Ignore URI parsing errors
-        }
+        // Use ConfirmLinkScreen (standard Minecraft way) to warn user about leaving the game
+        this.minecraft.setScreen(new ConfirmLinkScreen(
+            confirmed -> {
+                if (confirmed) {
+                    try {
+                        Util.getPlatform().openUri(new URI(url));
+                    } catch (Exception e) {
+                        // Ignore URI parsing errors
+                    }
+                }
+                this.minecraft.setScreen(this);
+            },
+            url,
+            true
+        ));
     }
 
     private String getWwwUrl(ArchitectConfig config) {

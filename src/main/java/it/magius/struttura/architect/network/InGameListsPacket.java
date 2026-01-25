@@ -3,6 +3,7 @@ package it.magius.struttura.architect.network;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.i18n.LanguageUtils;
 import it.magius.struttura.architect.ingame.model.InGameListInfo;
+import it.magius.struttura.architect.model.ModInfo;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -32,7 +33,8 @@ public record InGameListsPacket(
         Map<String, String> names,        // Localized names
         Map<String, String> descriptions, // Localized descriptions
         int buildingCount,
-        String icon         // Minecraft item ID for display (e.g., "minecraft:bell")
+        String icon,         // Minecraft item ID for display (e.g., "minecraft:bell")
+        Map<String, ModInfo> mods  // Mods required by this list (null if vanilla only)
     ) {
         /**
          * Gets the localized name for the specified language.
@@ -46,6 +48,13 @@ public record InGameListsPacket(
          */
         public String getLocalizedDescription(String langCode) {
             return LanguageUtils.getLocalizedText(descriptions, langCode, "");
+        }
+
+        /**
+         * Checks if this list requires any mods.
+         */
+        public boolean requiresMods() {
+            return mods != null && !mods.isEmpty();
         }
     }
 
@@ -75,7 +84,7 @@ public record InGameListsPacket(
     public static InGameListsPacket fromListInfos(List<InGameListInfo> infos, boolean isNewWorld) {
         List<ListInfo> lists = new ArrayList<>();
         for (InGameListInfo info : infos) {
-            lists.add(new ListInfo(info.id(), info.names(), info.descriptions(), info.buildingCount(), info.icon()));
+            lists.add(new ListInfo(info.id(), info.names(), info.descriptions(), info.buildingCount(), info.icon(), info.mods()));
         }
         return new InGameListsPacket(lists, isNewWorld, false);
     }
@@ -106,7 +115,35 @@ public record InGameListsPacket(
 
             int buildingCount = buf.readVarInt();
             String icon = buf.readUtf(128);  // Minecraft item ID (e.g., "minecraft:bell")
-            lists.add(new ListInfo(id, names, descriptions, buildingCount, icon));
+
+            // Read mods map
+            int modsCount = buf.readVarInt();
+            Map<String, ModInfo> mods = null;
+            if (modsCount > 0) {
+                mods = new HashMap<>(modsCount);
+                for (int j = 0; j < modsCount; j++) {
+                    String modId = buf.readUtf(64);
+                    String displayName = buf.readUtf(128);
+                    int blocksCount = buf.readVarInt();
+                    int entitiesCount = buf.readVarInt();
+                    int mobsCount = buf.readVarInt();
+                    int commandBlocksCount = buf.readVarInt();
+                    String version = buf.readUtf(32);
+                    String downloadUrl = buf.readUtf(512);
+                    mods.put(modId, new ModInfo(
+                        modId,
+                        displayName.isEmpty() ? null : displayName,
+                        blocksCount,
+                        entitiesCount,
+                        mobsCount,
+                        commandBlocksCount,
+                        downloadUrl.isEmpty() ? null : downloadUrl,
+                        version.isEmpty() ? null : version
+                    ));
+                }
+            }
+
+            lists.add(new ListInfo(id, names, descriptions, buildingCount, icon, mods));
         }
         boolean isNewWorld = buf.readBoolean();
         boolean connectionError = buf.readBoolean();
@@ -136,6 +173,25 @@ public record InGameListsPacket(
 
             buf.writeVarInt(info.buildingCount);
             buf.writeUtf(info.icon != null ? info.icon : "", 128);  // Minecraft item ID
+
+            // Write mods map
+            Map<String, ModInfo> mods = info.mods;
+            if (mods == null || mods.isEmpty()) {
+                buf.writeVarInt(0);
+            } else {
+                buf.writeVarInt(mods.size());
+                for (Map.Entry<String, ModInfo> entry : mods.entrySet()) {
+                    ModInfo mod = entry.getValue();
+                    buf.writeUtf(entry.getKey(), 64);  // mod ID
+                    buf.writeUtf(mod.getDisplayName() != null ? mod.getDisplayName() : "", 128);
+                    buf.writeVarInt(mod.getBlockCount());
+                    buf.writeVarInt(mod.getEntitiesCount());
+                    buf.writeVarInt(mod.getMobsCount());
+                    buf.writeVarInt(mod.getCommandBlocksCount());
+                    buf.writeUtf(mod.getVersion() != null ? mod.getVersion() : "", 32);
+                    buf.writeUtf(mod.getDownloadUrl() != null ? mod.getDownloadUrl() : "", 512);
+                }
+            }
         }
         buf.writeBoolean(packet.isNewWorld);
         buf.writeBoolean(packet.connectionError);

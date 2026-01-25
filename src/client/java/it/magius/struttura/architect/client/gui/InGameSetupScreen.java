@@ -1,6 +1,8 @@
 package it.magius.struttura.architect.client.gui;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.client.ModValidator;
+import it.magius.struttura.architect.model.ModInfo;
 import it.magius.struttura.architect.network.InGameListsPacket;
 import it.magius.struttura.architect.network.InGameSelectPacket;
 import net.fabricmc.api.EnvType;
@@ -37,8 +39,15 @@ public class InGameSetupScreen extends Screen {
     // Default fallback icon
     private static final ItemStack DEFAULT_ICON = new ItemStack(Items.BOOK);
 
+    // Mod indicator icons
+    private static final ItemStack MODS_OK_ICON = new ItemStack(Items.SPRUCE_SIGN);       // All mods installed
+    private static final ItemStack MODS_MISSING_ICON = new ItemStack(Items.MANGROVE_SIGN); // Some mods missing
+
     // Cache for resolved ItemStacks from icon IDs
     private final Map<String, ItemStack> iconCache = new HashMap<>();
+
+    // Cache for mod validation results per list
+    private final Map<String, Boolean> modValidationCache = new HashMap<>();
 
     private final List<InGameListsPacket.ListInfo> lists;
     private final boolean isNewWorld;
@@ -158,7 +167,25 @@ public class InGameSetupScreen extends Screen {
         InGameListsPacket.ListInfo selected = lists.get(index);
         String langCode = this.minecraft != null ? this.minecraft.getLanguageManager().getSelected() : "en_us";
         String localizedName = selected.getLocalizedName(langCode);
-        Architect.LOGGER.info("Selected InGame list: {} (id={})", localizedName, selected.id());
+
+        // If the list requires mods, show the mods detail screen first
+        if (selected.requiresMods()) {
+            Architect.LOGGER.info("Showing mods detail for list: {} (id={})", localizedName, selected.id());
+            this.minecraft.setScreen(new ModsDetailScreen(this, selected));
+            return;
+        }
+
+        // No mods required - proceed with selection directly
+        confirmListSelection(selected);
+    }
+
+    /**
+     * Called when user confirms list selection (directly or from ModsDetailScreen).
+     */
+    public void confirmListSelection(InGameListsPacket.ListInfo selected) {
+        String langCode = this.minecraft != null ? this.minecraft.getLanguageManager().getSelected() : "en_us";
+        String localizedName = selected.getLocalizedName(langCode);
+        Architect.LOGGER.info("Confirmed InGame list: {} (id={})", localizedName, selected.id());
 
         // Send selection to server
         ClientPlayNetworking.send(InGameSelectPacket.select(selected.id(), localizedName));
@@ -299,6 +326,7 @@ public class InGameSetupScreen extends Screen {
         super.render(graphics, mouseX, mouseY, partialTick);
 
         // Render decoration icons for lists (at left and right edges of button)
+        int hoveredListIndex = -1;
         for (int i = 0; i < listButtons.size(); i++) {
             Button btn = listButtons.get(i);
             if (!btn.visible) continue;
@@ -320,9 +348,43 @@ public class InGameSetupScreen extends Screen {
             int leftIconX = btnX + 4;
             graphics.renderItem(icon, leftIconX, iconY);
 
-            // Render icon on the right edge (with small padding)
-            int rightIconX = btnX + btnWidth - ICON_SIZE - 4;
-            graphics.renderItem(icon, rightIconX, iconY);
+            // Check if this button is hovered for tooltip
+            if (btn.isHovered()) {
+                hoveredListIndex = i;
+            }
+
+            // If list requires mods, show mod indicator icon on the right
+            if (info.requiresMods()) {
+                // Get cached validation or compute it
+                boolean allModsPresent = modValidationCache.computeIfAbsent(info.id(), id ->
+                    ModValidator.hasAllMods(info.mods()));
+
+                ItemStack modIcon = allModsPresent ? MODS_OK_ICON : MODS_MISSING_ICON;
+
+                // Render mod icon on the right edge
+                int rightIconX = btnX + btnWidth - ICON_SIZE - 4;
+                graphics.renderItem(modIcon, rightIconX, iconY);
+            }
+        }
+
+        // Render tooltip for hovered list with mods
+        if (hoveredListIndex >= 0) {
+            InGameListsPacket.ListInfo info = lists.get(hoveredListIndex);
+            if (info.requiresMods()) {
+                boolean allModsPresent = modValidationCache.getOrDefault(info.id(),
+                    ModValidator.hasAllMods(info.mods()));
+                Component tooltip = allModsPresent
+                    ? Component.translatable("struttura.ingame.mods.required")
+                    : Component.translatable("struttura.ingame.mods.missing");
+                // Render simple tooltip as a colored box with text
+                int tooltipWidth = this.font.width(tooltip) + 8;
+                int tooltipHeight = 12;
+                int tooltipX = mouseX + 8;
+                int tooltipY = mouseY - 12;
+                int bgColor = allModsPresent ? 0xE0004400 : 0xE0440000;
+                graphics.fill(tooltipX - 2, tooltipY - 2, tooltipX + tooltipWidth + 2, tooltipY + tooltipHeight + 2, bgColor);
+                graphics.drawString(this.font, tooltip, tooltipX + 4, tooltipY + 2, 0xFFFFFFFF);
+            }
         }
     }
 
