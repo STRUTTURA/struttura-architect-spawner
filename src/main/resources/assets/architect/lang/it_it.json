@@ -46,7 +46,7 @@
   "struttura.ingame.setup.connection_error.url": "https://struttura.magius.it",
   "struttura.ingame.setup.connection_error.retry": "Le creazioni saranno caricate al prossimo avvio del mondo.",
 
-  "struttura.ingame.activated": "§a[STRUTTURA]§f Modalità InGame attivata! Lista: %s (%d creazioni)",
+  "struttura.ingame.activated": "§a[STRUTTURA]§f Modalità avventura attivata! Lista: %s (%d creazioni)",
   "struttura.ingame.disabled": "§e[STRUTTURA]§f Modalità avventura disabilitata. Usa /struttura adventure init per riattivarla.",
   "struttura.ingame.skipped": "§e[STRUTTURA]§f Modalità avventura saltata. Riprova al prossimo avvio del mondo.",
 

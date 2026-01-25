@@ -126,8 +126,6 @@ public record InGameListsPacket(
                     String displayName = buf.readUtf(128);
                     int blocksCount = buf.readVarInt();
                     int entitiesCount = buf.readVarInt();
-                    int mobsCount = buf.readVarInt();
-                    int commandBlocksCount = buf.readVarInt();
                     String version = buf.readUtf(32);
                     String downloadUrl = buf.readUtf(512);
                     mods.put(modId, new ModInfo(
@@ -135,8 +133,6 @@ public record InGameListsPacket(
                         displayName.isEmpty() ? null : displayName,
                         blocksCount,
                         entitiesCount,
-                        mobsCount,
-                        commandBlocksCount,
                         downloadUrl.isEmpty() ? null : downloadUrl,
                         version.isEmpty() ? null : version
                     ));
@@ -186,8 +182,6 @@ public record InGameListsPacket(
                     buf.writeUtf(mod.getDisplayName() != null ? mod.getDisplayName() : "", 128);
                     buf.writeVarInt(mod.getBlockCount());
                     buf.writeVarInt(mod.getEntitiesCount());
-                    buf.writeVarInt(mod.getMobsCount());
-                    buf.writeVarInt(mod.getCommandBlocksCount());
                     buf.writeUtf(mod.getVersion() != null ? mod.getVersion() : "", 32);
                     buf.writeUtf(mod.getDownloadUrl() != null ? mod.getDownloadUrl() : "", 512);
                 }

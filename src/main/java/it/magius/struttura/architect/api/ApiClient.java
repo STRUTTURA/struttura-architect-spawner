@@ -216,8 +216,6 @@ public class ApiClient {
             modJson.addProperty("displayName", mod.getDisplayName());
             modJson.addProperty("blocksCount", mod.getBlockCount());
             modJson.addProperty("entitiesCount", mod.getEntitiesCount());
-            modJson.addProperty("mobsCount", mod.getMobsCount());
-            modJson.addProperty("commandBlocksCount", mod.getCommandBlocksCount());
             if (mod.getVersion() != null) {
                 modJson.addProperty("version", mod.getVersion());
             }
@@ -1230,12 +1228,6 @@ public class ApiClient {
                     if (modJson.has("entitiesCount")) {
                         info.setEntitiesCount(modJson.get("entitiesCount").getAsInt());
                     }
-                    if (modJson.has("mobsCount")) {
-                        info.setMobsCount(modJson.get("mobsCount").getAsInt());
-                    }
-                    if (modJson.has("commandBlocksCount")) {
-                        info.setCommandBlocksCount(modJson.get("commandBlocksCount").getAsInt());
-                    }
                     if (modJson.has("version") && !modJson.get("version").isJsonNull()) {
                         info.setVersion(modJson.get("version").getAsString());
                     }
@@ -1247,7 +1239,7 @@ public class ApiClient {
             }
             construction.setRequiredMods(requiredMods);
 
-            // Parse i bounds dal metadata (necessari per denormalizzare le coordinate)
+            // Parse bounds from metadata (needed to denormalize coordinates)
             // bounds.x/y/z are the dimensions, min is always 0,0,0
             if (metadata.has("bounds") && metadata.get("bounds").isJsonObject()) {
                 JsonObject boundsObj = metadata.getAsJsonObject("bounds");
@@ -1623,12 +1615,6 @@ public class ApiClient {
                     if (modJson.has("entitiesCount")) {
                         info.setEntitiesCount(modJson.get("entitiesCount").getAsInt());
                     }
-                    if (modJson.has("mobsCount")) {
-                        info.setMobsCount(modJson.get("mobsCount").getAsInt());
-                    }
-                    if (modJson.has("commandBlocksCount")) {
-                        info.setCommandBlocksCount(modJson.get("commandBlocksCount").getAsInt());
-                    }
                     if (modJson.has("version") && !modJson.get("version").isJsonNull()) {
                         info.setVersion(modJson.get("version").getAsString());
                     }
@@ -1858,14 +1844,12 @@ public class ApiClient {
                                     String displayName = modObj.has("displayName") && !modObj.get("displayName").isJsonNull()
                                         ? modObj.get("displayName").getAsString() : modId;
                                     int blocksCount = modObj.has("blocksCount") ? modObj.get("blocksCount").getAsInt() : 0;
-                                    int mobsCount = modObj.has("mobsCount") ? modObj.get("mobsCount").getAsInt() : 0;
-                                    int commandBlocksCount = modObj.has("commandBlocksCount") ? modObj.get("commandBlocksCount").getAsInt() : 0;
+                                    int entitiesCount = modObj.has("entitiesCount") ? modObj.get("entitiesCount").getAsInt() : 0;
                                     String version = modObj.has("version") && !modObj.get("version").isJsonNull()
                                         ? modObj.get("version").getAsString() : null;
                                     String downloadUrl = modObj.has("downloadUrl") && !modObj.get("downloadUrl").isJsonNull()
                                         ? modObj.get("downloadUrl").getAsString() : null;
-                                    // entitiesCount is 0 for list-level mods (buildings aggregate)
-                                    mods.put(modId, new ModInfo(modId, displayName, blocksCount, 0, mobsCount, commandBlocksCount, downloadUrl, version));
+                                    mods.put(modId, new ModInfo(modId, displayName, blocksCount, entitiesCount, downloadUrl, version));
                                 }
                             }
                         }

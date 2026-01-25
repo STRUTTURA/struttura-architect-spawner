@@ -396,8 +396,6 @@ public class ConstructionStorage {
             modJson.addProperty("displayName", mod.getDisplayName());
             modJson.addProperty("blocksCount", mod.getBlockCount());
             modJson.addProperty("entitiesCount", mod.getEntitiesCount());
-            modJson.addProperty("mobsCount", mod.getMobsCount());
-            modJson.addProperty("commandBlocksCount", mod.getCommandBlocksCount());
             if (mod.getVersion() != null) {
                 modJson.addProperty("version", mod.getVersion());
             }
@@ -528,12 +526,6 @@ public class ConstructionStorage {
                     }
                     if (modJson.has("entitiesCount")) {
                         info.setEntitiesCount(modJson.get("entitiesCount").getAsInt());
-                    }
-                    if (modJson.has("mobsCount")) {
-                        info.setMobsCount(modJson.get("mobsCount").getAsInt());
-                    }
-                    if (modJson.has("commandBlocksCount")) {
-                        info.setCommandBlocksCount(modJson.get("commandBlocksCount").getAsInt());
                     }
                     if (modJson.has("version") && !modJson.get("version").isJsonNull()) {
                         info.setVersion(modJson.get("version").getAsString());

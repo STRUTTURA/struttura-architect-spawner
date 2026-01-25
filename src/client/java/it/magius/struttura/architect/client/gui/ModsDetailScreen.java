@@ -164,7 +164,7 @@ public class ModsDetailScreen extends Screen {
         graphics.drawString(this.font, "v" + requiredVersion, x + 8 + this.font.width(displayName) + 8, y + 4, 0xFFAAAAAA);
 
         // Blocks/Entities count
-        String counts = String.format("Blocks: %d, Mobs: %d", mod.getBlockCount(), mod.getMobsCount());
+        String counts = String.format("Blocks: %d, Entities: %d", mod.getBlockCount(), mod.getEntitiesCount());
         graphics.drawString(this.font, counts, x + 8, y + 16, 0xFF888888);
 
         // Installed status

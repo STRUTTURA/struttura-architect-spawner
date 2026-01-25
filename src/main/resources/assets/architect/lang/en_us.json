@@ -46,7 +46,7 @@
   "struttura.ingame.setup.connection_error.url": "https://struttura.magius.it",
   "struttura.ingame.setup.connection_error.retry": "Buildings will be loaded on the next world start.",
 
-  "struttura.ingame.activated": "§a[STRUTTURA]§f InGame mode activated! List: %s (%d buildings)",
+  "struttura.ingame.activated": "§a[STRUTTURA]§f Adventure mode activated! List: %s (%d buildings)",
   "struttura.ingame.disabled": "§e[STRUTTURA]§f Adventure mode disabled. Use /struttura adventure init to enable it.",
   "struttura.ingame.skipped": "§e[STRUTTURA]§f Adventure mode skipped. Will retry on next world load.",
 

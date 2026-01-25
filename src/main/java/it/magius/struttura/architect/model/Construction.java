@@ -861,11 +861,6 @@ public class Construction {
             if (!"minecraft".equals(namespace)) {
                 ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
                 info.incrementEntitiesCount();
-
-                // Also count mobs separately
-                if (isMobEntity(entityData.getEntityType())) {
-                    info.incrementMobsCount();
-                }
             }
         }
 
