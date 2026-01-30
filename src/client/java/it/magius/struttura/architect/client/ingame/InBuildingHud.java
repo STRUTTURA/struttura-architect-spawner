@@ -1,6 +1,7 @@
 package it.magius.struttura.architect.client.ingame;
 
 import it.magius.struttura.architect.config.ArchitectConfig;
+import org.joml.Matrix3x2fStack;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.Minecraft;
@@ -19,7 +20,8 @@ public class InBuildingHud {
     private static final int PANEL_BG_COLOR = 0xC0000000;  // Semi-transparent black
     private static final int PANEL_BORDER_COLOR = 0xFF505050;  // Gray border
     private static final int BUILDING_NAME_COLOR = 0xFFFFAA00;  // Yellow/gold
-    private static final int AUTHOR_COLOR = 0xFF88AAFF;  // Light blue
+    private static final int AUTHOR_COLOR = 0xB388AAFF;  // Light blue with 0.7 alpha (0xB3 = 179 = 255 * 0.7)
+    private static final float AUTHOR_SCALE = 0.8f;  // 80% size for author text
 
     /**
      * Renders the in-building HUD overlay.
@@ -55,12 +57,14 @@ public class InBuildingHud {
 
         // Calculate dimensions
         int textWidth1 = font.width(line1);
-        int textWidth2 = line2.isEmpty() ? 0 : font.width(line2);
+        // Author text is scaled to 80%, so calculate its effective width
+        int textWidth2 = line2.isEmpty() ? 0 : (int)(font.width(line2) * AUTHOR_SCALE);
         int maxTextWidth = Math.max(textWidth1, textWidth2);
 
         int panelWidth = maxTextWidth + PADDING * 2;
-        int lineCount = line2.isEmpty() ? 1 : 2;
-        int panelHeight = LINE_HEIGHT * lineCount + PADDING * 2 - 2;
+        // Adjust height for scaled author line
+        int authorLineHeight = line2.isEmpty() ? 0 : (int)(LINE_HEIGHT * AUTHOR_SCALE);
+        int panelHeight = LINE_HEIGHT + authorLineHeight + PADDING * 2 - 2;
 
         // Get position from config
         ArchitectConfig config = ArchitectConfig.getInstance();
@@ -85,9 +89,22 @@ public class InBuildingHud {
         graphics.drawCenteredString(font, line1, textCenterX, textY, BUILDING_NAME_COLOR);
         textY += LINE_HEIGHT;
 
-        // Author (centered in panel, blue)
+        // Author (right-aligned, scaled to 80%, with 0.7 alpha)
         if (!line2.isEmpty()) {
-            graphics.drawCenteredString(font, line2, textCenterX, textY, AUTHOR_COLOR);
+            Matrix3x2fStack pose = graphics.pose();
+            pose.pushMatrix();
+
+            // Calculate right-aligned position for scaled text
+            int authorTextWidth = font.width(line2);
+            int rightEdge = panelX + panelWidth - PADDING;
+            // Scale around the right edge: translate to right edge, scale, then draw
+            float scaledX = rightEdge / AUTHOR_SCALE - authorTextWidth;
+            float scaledY = textY / AUTHOR_SCALE;
+
+            pose.scale(AUTHOR_SCALE, AUTHOR_SCALE);
+            graphics.drawString(font, line2, (int)scaledX, (int)scaledY, AUTHOR_COLOR, false);
+
+            pose.popMatrix();
         }
 
         return true;

@@ -18,7 +18,8 @@ public record InGameBuildingPacket(
     boolean isOwner,            // True if current player owns this building (cannot like own buildings)
     String localizedName,       // Localized building name (empty if not available)
     String localizedDescription,// Localized building description (empty if not available)
-    String author               // Author nickname (from list or chunk data fallback)
+    String author,              // Author nickname (from list or chunk data fallback)
+    boolean showLikeTutorial    // True if like tutorial should be shown (first building entry in this world)
 ) implements CustomPacketPayload {
 
     public static final CustomPacketPayload.Type<InGameBuildingPacket> TYPE =
@@ -31,7 +32,7 @@ public record InGameBuildingPacket(
      * Create an empty packet (player is not in any building).
      */
     public static InGameBuildingPacket empty() {
-        return new InGameBuildingPacket(false, "", 0, false, false, "", "", "");
+        return new InGameBuildingPacket(false, "", 0, false, false, "", "", "", false);
     }
 
     /**
@@ -39,11 +40,12 @@ public record InGameBuildingPacket(
      */
     public static InGameBuildingPacket entered(String rdns, long pk, boolean hasLiked, boolean isOwner,
                                                String localizedName, String localizedDescription,
-                                               String author) {
+                                               String author, boolean showLikeTutorial) {
         return new InGameBuildingPacket(true, rdns, pk, hasLiked, isOwner,
             localizedName != null ? localizedName : "",
             localizedDescription != null ? localizedDescription : "",
-            author != null ? author : "");
+            author != null ? author : "",
+            showLikeTutorial);
     }
 
     private static InGameBuildingPacket read(FriendlyByteBuf buf) {
@@ -55,7 +57,8 @@ public record InGameBuildingPacket(
         String localizedName = buf.readUtf(256);
         String localizedDescription = buf.readUtf(2048);
         String author = buf.readUtf(128);
-        return new InGameBuildingPacket(inBuilding, rdns, pk, hasLiked, isOwner, localizedName, localizedDescription, author);
+        boolean showLikeTutorial = buf.readBoolean();
+        return new InGameBuildingPacket(inBuilding, rdns, pk, hasLiked, isOwner, localizedName, localizedDescription, author, showLikeTutorial);
     }
 
     private static void write(FriendlyByteBuf buf, InGameBuildingPacket packet) {
@@ -67,6 +70,7 @@ public record InGameBuildingPacket(
         buf.writeUtf(packet.localizedName, 256);
         buf.writeUtf(packet.localizedDescription, 2048);
         buf.writeUtf(packet.author, 128);
+        buf.writeBoolean(packet.showLikeTutorial);
     }
 
     @Override

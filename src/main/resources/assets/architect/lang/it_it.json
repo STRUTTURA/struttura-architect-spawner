@@ -64,5 +64,7 @@
   "struttura.like.message": "Se ti è piaciuta questa creazione, lascia un like per supportare l'autore!",
   "struttura.like.button": "Like",
   "struttura.like.default_description": "Questa creazione è stata costruita con passione dall'architetto per essere giocata da tutti i giocatori.",
-  "struttura.like.website_link": "Vai alla creazione sul sito STRUTTURA"
+  "struttura.like.website_link": "Vai alla creazione sul sito STRUTTURA",
+
+  "struttura.toast.like_tutorial": "Premi ESC per mettere like!"
 }

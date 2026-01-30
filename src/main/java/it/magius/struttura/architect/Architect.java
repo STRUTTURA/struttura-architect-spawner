@@ -131,6 +131,9 @@ public class Architect implements ModInitializer {
 			// Notify InGame manager that player joined (may show setup screen)
 			InGameManager.getInstance().onPlayerJoin(player);
 
+			// Schedule building proximity check for rejoined player
+			BuildingTracker.getInstance().onPlayerJoin(player);
+
 			// DevTest: execute test commands if enabled
 			if (DevTestHandler.isEnabled()) {
 				DevTestHandler.getInstance().onPlayerJoinWorld(player);

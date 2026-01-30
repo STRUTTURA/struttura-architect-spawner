@@ -101,6 +101,21 @@ public class InGameStorage {
                 state.setCurrentUserId(json.get("currentUserId").getAsLong());
             }
 
+            // Load tutorials shown map (new structure)
+            if (json.has("tutorialsShown") && json.get("tutorialsShown").isJsonObject()) {
+                JsonObject tutorialsObj = json.getAsJsonObject("tutorialsShown");
+                java.util.Map<String, Boolean> tutorialsMap = new java.util.HashMap<>();
+                for (String key : tutorialsObj.keySet()) {
+                    if (tutorialsObj.get(key).isJsonPrimitive()) {
+                        tutorialsMap.put(key, tutorialsObj.get(key).getAsBoolean());
+                    }
+                }
+                state.setTutorialsShown(tutorialsMap);
+            } else if (json.has("likeTutorialShown")) {
+                // Backward compatibility: migrate old format to new
+                state.setLikeTutorialShown(json.get("likeTutorialShown").getAsBoolean());
+            }
+
             Architect.LOGGER.info("Loaded InGame state: {}", state);
 
         } catch (Exception e) {
@@ -142,6 +157,13 @@ public class InGameStorage {
 
             json.addProperty("downloadsCompleted", state.isDownloadsCompleted());
             json.addProperty("currentUserId", state.getCurrentUserId());
+
+            // Save tutorials shown as nested object
+            JsonObject tutorialsObj = new JsonObject();
+            for (java.util.Map.Entry<String, Boolean> entry : state.getTutorialsShown().entrySet()) {
+                tutorialsObj.addProperty(entry.getKey(), entry.getValue());
+            }
+            json.add("tutorialsShown", tutorialsObj);
 
             try (Writer writer = Files.newBufferedWriter(filePath, StandardCharsets.UTF_8)) {
                 GSON.toJson(json, writer);

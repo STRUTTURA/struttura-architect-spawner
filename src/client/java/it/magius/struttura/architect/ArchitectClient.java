@@ -10,6 +10,7 @@ import it.magius.struttura.architect.client.gui.StrutturaHud;
 import it.magius.struttura.architect.client.gui.panel.MainPanel;
 import it.magius.struttura.architect.client.gui.InGameSetupScreen;
 import it.magius.struttura.architect.client.ingame.InGameClientState;
+import it.magius.struttura.architect.client.toast.StrutturaToast;
 import it.magius.struttura.architect.network.BlockListPacket;
 import it.magius.struttura.architect.network.BlockPositionsSyncPacket;
 import it.magius.struttura.architect.network.ConstructionListPacket;
@@ -195,11 +196,17 @@ public class ArchitectClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(InGameBuildingPacket.TYPE, (packet, context) -> {
             context.client().execute(() -> {
                 InGameClientState state = InGameClientState.getInstance();
+
                 if (packet.inBuilding()) {
                     state.enterBuilding(packet.rdns(), packet.pk(), packet.hasLiked(), packet.isOwner(),
                         packet.localizedName(), packet.localizedDescription(), packet.author());
                     Architect.LOGGER.debug("Entered building: {} (pk={}, name={}, author={}, isOwner={})",
                         packet.rdns(), packet.pk(), packet.localizedName(), packet.author(), packet.isOwner());
+
+                    // Show like tutorial toast if server says so (first building entry in this world)
+                    if (packet.showLikeTutorial()) {
+                        StrutturaToast.showLikeTutorial();
+                    }
 
                     // If LikeScreen is open and state changed (e.g., now isOwner), close it
                     if (context.client().screen instanceof it.magius.struttura.architect.client.gui.LikeScreen) {

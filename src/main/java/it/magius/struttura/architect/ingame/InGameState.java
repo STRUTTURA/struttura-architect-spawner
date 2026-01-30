@@ -2,11 +2,19 @@ package it.magius.struttura.architect.ingame;
 
 import it.magius.struttura.architect.ingame.model.SpawnableList;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Runtime state for the InGame spawner system.
  * Holds the current initialization status and selected list data.
  */
 public class InGameState {
+
+    /**
+     * Tutorial IDs for tracking which tutorials have been shown.
+     */
+    public static final String TUTORIAL_LIKE = "like";
 
     /**
      * Authentication type used for InGame mode.
@@ -25,6 +33,7 @@ public class InGameState {
     private String worldSeed = null;
     private boolean downloadsCompleted = false;  // Persisted: true when all buildings downloaded
     private long currentUserId = 0;  // Current authenticated user ID (0 if anonymous)
+    private Map<String, Boolean> tutorialsShown = new HashMap<>();  // Persisted: tracks which tutorials have been shown
 
     // Runtime data (not persisted)
     private SpawnableList spawnableList = null;
@@ -100,6 +109,7 @@ public class InGameState {
         this.worldSeed = null;
         this.downloadsCompleted = false;
         this.currentUserId = 0;
+        this.tutorialsShown.clear();
         this.spawnableList = null;
     }
 
@@ -115,6 +125,56 @@ public class InGameState {
      */
     public void setDownloadsCompleted(boolean completed) {
         this.downloadsCompleted = completed;
+    }
+
+    /**
+     * Checks if a specific tutorial has been shown in this world.
+     * @param tutorialId the tutorial identifier (e.g., TUTORIAL_LIKE)
+     * @return true if the tutorial has been shown
+     */
+    public boolean isTutorialShown(String tutorialId) {
+        return tutorialsShown.getOrDefault(tutorialId, false);
+    }
+
+    /**
+     * Marks a specific tutorial as shown.
+     * @param tutorialId the tutorial identifier (e.g., TUTORIAL_LIKE)
+     * @param shown true to mark as shown
+     */
+    public void setTutorialShown(String tutorialId, boolean shown) {
+        tutorialsShown.put(tutorialId, shown);
+    }
+
+    /**
+     * Gets the map of all tutorials shown status.
+     * @return the tutorials shown map
+     */
+    public Map<String, Boolean> getTutorialsShown() {
+        return tutorialsShown;
+    }
+
+    /**
+     * Sets the entire tutorials shown map.
+     * @param tutorialsShown the map to set
+     */
+    public void setTutorialsShown(Map<String, Boolean> tutorialsShown) {
+        this.tutorialsShown = tutorialsShown != null ? tutorialsShown : new HashMap<>();
+    }
+
+    /**
+     * Checks if the like tutorial has been shown in this world.
+     * Convenience method for the most common tutorial check.
+     */
+    public boolean isLikeTutorialShown() {
+        return isTutorialShown(TUTORIAL_LIKE);
+    }
+
+    /**
+     * Marks the like tutorial as shown.
+     * Convenience method for the most common tutorial.
+     */
+    public void setLikeTutorialShown(boolean shown) {
+        setTutorialShown(TUTORIAL_LIKE, shown);
     }
 
     // ===== Getters =====

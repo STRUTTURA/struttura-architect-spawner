@@ -2729,6 +2729,7 @@ public class NetworkHandler {
             String localizedDescription = "";
             String author = "";
             boolean isOwner = false;
+            boolean showLikeTutorial = false;
 
             it.magius.struttura.architect.ingame.InGameManager manager =
                 it.magius.struttura.architect.ingame.InGameManager.getInstance();
@@ -2753,6 +2754,15 @@ public class NetworkHandler {
                 }
             }
 
+            // Check if we should show the like tutorial (first building entry in this world)
+            if (manager.isReady() && !manager.getStorage().getState().isLikeTutorialShown()) {
+                showLikeTutorial = true;
+                // Mark as shown and save
+                manager.getStorage().getState().setLikeTutorialShown(true);
+                manager.getStorage().save();
+                Architect.LOGGER.debug("Like tutorial will be shown to {}", player.getName().getString());
+            }
+
             // Fallback to chunk data if building is not in list (was removed after spawning)
             if (localizedName.isEmpty() && buildingInfo.name() != null && !buildingInfo.name().isEmpty()) {
                 localizedName = buildingInfo.name();
@@ -2762,7 +2772,7 @@ public class NetworkHandler {
             }
 
             packet = InGameBuildingPacket.entered(buildingInfo.rdns(), buildingInfo.pk(), hasLiked, isOwner,
-                localizedName, localizedDescription, author);
+                localizedName, localizedDescription, author, showLikeTutorial);
         } else {
             packet = InGameBuildingPacket.empty();
         }

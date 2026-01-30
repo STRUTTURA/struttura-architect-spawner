@@ -64,5 +64,7 @@
   "struttura.like.message": "If you enjoyed this creation, give it a like to support the author!",
   "struttura.like.button": "Like",
   "struttura.like.default_description": "This creation was built with passion by the architect to be enjoyed by all players.",
-  "struttura.like.website_link": "View on STRUTTURA website"
+  "struttura.like.website_link": "View on STRUTTURA website",
+
+  "struttura.toast.like_tutorial": "Press ESC to like this building!"
 }
