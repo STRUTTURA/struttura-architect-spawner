@@ -2,6 +2,7 @@ package it.magius.struttura.architect.mixin;
 
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.network.NetworkHandler;
+import it.magius.struttura.architect.placement.BlockUtils;
 import it.magius.struttura.architect.session.EditingSession;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -20,6 +21,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.List;
+
 /**
  * Mixin per intercettare il piazzamento e la rottura dei blocchi.
  */
@@ -35,6 +38,8 @@ public class ServerPlayerGameModeMixin {
 
     /**
      * Intercetta la rottura di un blocco.
+     * NOTE: We capture multi-block positions BEFORE destruction because
+     * Minecraft automatically destroys both halves of doors, beds, etc.
      */
     @Inject(
         method = "destroyBlock",
@@ -44,9 +49,19 @@ public class ServerPlayerGameModeMixin {
         EditingSession session = EditingSession.getSession(player);
         if (session != null) {
             BlockState previousState = level.getBlockState(pos);
-            session.onBlockBroken(pos, previousState);
-            Architect.LOGGER.debug("Block broken at {}: {} (mode: {})",
-                pos, previousState, session.getMode());
+
+            // Get all positions for multi-block structures BEFORE destruction
+            List<BlockPos> allPositions = BlockUtils.getMultiBlockPositions(level, pos);
+
+            for (BlockPos blockPos : allPositions) {
+                BlockState state = level.getBlockState(blockPos);
+                if (!state.isAir()) {
+                    session.onBlockBroken(blockPos, state);
+                    Architect.LOGGER.debug("Block broken at {}: {} (mode: {})",
+                        blockPos, state, session.getMode());
+                }
+            }
+
             // Invia sync wireframe per aggiornare i bounds
             NetworkHandler.sendWireframeSync(player);
         }
@@ -81,9 +96,18 @@ public class ServerPlayerGameModeMixin {
 
             // Verifica che sia effettivamente un blocco piazzato (non aria)
             if (!placedState.isAir()) {
-                session.onBlockPlaced(placedPos, placedState);
-                Architect.LOGGER.debug("Block placed at {}: {} (mode: {})",
-                    placedPos, placedState, session.getMode());
+                // Get all positions for multi-block structures (doors, beds, tall plants, etc.)
+                List<BlockPos> allPositions = BlockUtils.getMultiBlockPositions(world, placedPos);
+
+                for (BlockPos pos : allPositions) {
+                    BlockState state = world.getBlockState(pos);
+                    if (!state.isAir()) {
+                        session.onBlockPlaced(pos, state);
+                        Architect.LOGGER.debug("Block placed at {}: {} (mode: {})",
+                            pos, state, session.getMode());
+                    }
+                }
+
                 // Invia sync wireframe per aggiornare i bounds
                 NetworkHandler.sendWireframeSync(player);
             }

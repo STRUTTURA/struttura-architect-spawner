@@ -2,6 +2,7 @@ package it.magius.struttura.architect.item;
 
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.network.NetworkHandler;
+import it.magius.struttura.architect.placement.BlockUtils;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
@@ -19,6 +20,7 @@ import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -71,7 +73,7 @@ public class ConstructionHammerItem extends Item {
             return handleClickOutsideEditing(player, clickedPos);
         } else {
             // In editing: gestione blocchi
-            return handleClickInEditing(player, clickedPos, clickedState, session);
+            return handleClickInEditing(player, level, clickedPos, clickedState, session);
         }
     }
 
@@ -92,7 +94,7 @@ public class ConstructionHammerItem extends Item {
         return InteractionResult.PASS;
     }
 
-    private InteractionResult handleClickInEditing(ServerPlayer player, BlockPos clickedPos,
+    private InteractionResult handleClickInEditing(ServerPlayer player, Level level, BlockPos clickedPos,
             BlockState clickedState, EditingSession session) {
 
         var currentConstruction = session.getConstruction();
@@ -109,13 +111,23 @@ public class ConstructionHammerItem extends Item {
 
         if (isInTarget) {
             // Blocco IN target corrente: RIMUOVI
-            if (isInRoom) {
-                var room = session.getCurrentRoomObject();
-                if (room != null) {
-                    room.removeBlockChange(clickedPos);
+            // Get all positions for multi-block structures (doors, beds, tall plants, etc.)
+            List<BlockPos> allPositions = BlockUtils.getMultiBlockPositions(level, clickedPos);
+            int removedCount = 0;
+
+            for (BlockPos pos : allPositions) {
+                if (isInRoom) {
+                    var room = session.getCurrentRoomObject();
+                    if (room != null && room.hasBlockChange(pos)) {
+                        room.removeBlockChange(pos);
+                        removedCount++;
+                    }
+                } else {
+                    if (currentConstruction.containsBlock(pos)) {
+                        currentConstruction.removeBlock(pos);
+                        removedCount++;
+                    }
                 }
-            } else {
-                currentConstruction.removeBlock(clickedPos);
             }
 
             // Messaggio con nome edificio/room, coordinate e totale
@@ -124,8 +136,9 @@ public class ConstructionHammerItem extends Item {
                 : currentConstruction.getBlockCount();
             String targetName = formatTargetName(session);
             String coords = String.format("§8[%d, %d, %d]", clickedPos.getX(), clickedPos.getY(), clickedPos.getZ());
+            String countSuffix = removedCount > 1 ? " (-" + removedCount + ")" : "";
             player.sendSystemMessage(Component.literal(targetName + ": §c" +
-                    I18n.tr(player, "block.removed") + " " + coords + " §7(" + totalBlocks + ")"));
+                    I18n.tr(player, "block.removed") + " " + coords + countSuffix + " §7(" + totalBlocks + ")"));
 
             NetworkHandler.sendWireframeSync(player);
             NetworkHandler.sendEditingInfo(player);
@@ -152,15 +165,25 @@ public class ConstructionHammerItem extends Item {
             } else {
                 // Blocco NON in nessuna costruzione: AGGIUNGI al target corrente
                 if (!clickedState.isAir()) {
-                    if (isInRoom) {
-                        var room = session.getCurrentRoomObject();
-                        if (room != null) {
-                            room.setBlockChange(clickedPos, clickedState);
-                            // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
-                            currentConstruction.getBounds().expandToInclude(clickedPos);
+                    // Get all positions for multi-block structures (doors, beds, tall plants, etc.)
+                    List<BlockPos> allPositions = BlockUtils.getMultiBlockPositions(level, clickedPos);
+                    int addedCount = 0;
+
+                    for (BlockPos pos : allPositions) {
+                        BlockState state = level.getBlockState(pos);
+                        if (!state.isAir()) {
+                            if (isInRoom) {
+                                var room = session.getCurrentRoomObject();
+                                if (room != null) {
+                                    room.setBlockChange(pos, state);
+                                    // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
+                                    currentConstruction.getBounds().expandToInclude(pos);
+                                }
+                            } else {
+                                currentConstruction.addBlock(pos, state);
+                            }
+                            addedCount++;
                         }
-                    } else {
-                        currentConstruction.addBlock(clickedPos, clickedState);
                     }
 
                     // Messaggio con nome edificio/room, coordinate e totale
@@ -169,8 +192,9 @@ public class ConstructionHammerItem extends Item {
                         : currentConstruction.getBlockCount();
                     String targetName = formatTargetName(session);
                     String coords = String.format("§8[%d, %d, %d]", clickedPos.getX(), clickedPos.getY(), clickedPos.getZ());
+                    String countSuffix = addedCount > 1 ? " (+" + addedCount + ")" : "";
                     player.sendSystemMessage(Component.literal(targetName + ": §a" +
-                            I18n.tr(player, "block.added") + " " + coords + " §7(" + totalBlocks + ")"));
+                            I18n.tr(player, "block.added") + " " + coords + countSuffix + " §7(" + totalBlocks + ")"));
 
                     NetworkHandler.sendWireframeSync(player);
                     NetworkHandler.sendEditingInfo(player);
