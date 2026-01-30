@@ -108,6 +108,8 @@ public class EditingSession {
             if (session.currentRoom != null) {
                 session.exitRoom();
             }
+            // Refresh block states from world (capture current state of doors, levers, etc.)
+            session.refreshBlockStatesFromWorld();
             // Cattura NBT dei block entities (casse, furnace, etc.)
             session.captureBlockEntityNbt();
             // NOTA: Non catturiamo più le entità automaticamente
@@ -281,6 +283,50 @@ public class EditingSession {
             capturedCount, construction.getId());
     }
 
+    /**
+     * Refreshes all block states from the world.
+     * This updates the construction's saved block states to match the current world state,
+     * capturing any changes like doors being opened/closed, levers being toggled, etc.
+     * Called automatically during save/exit.
+     */
+    public void refreshBlockStatesFromWorld() {
+        ServerLevel world = (ServerLevel) player.level();
+
+        int updatedCount = 0;
+
+        // Update base construction blocks
+        Map<BlockPos, BlockState> blocks = construction.getBlocks();
+        for (BlockPos pos : new ArrayList<>(blocks.keySet())) {
+            BlockState worldState = world.getBlockState(pos);
+            BlockState savedState = blocks.get(pos);
+
+            // Update if the state changed (comparing by identity is fine for BlockState)
+            if (worldState != savedState) {
+                blocks.put(pos, worldState);
+                updatedCount++;
+            }
+        }
+
+        // Update room blocks as well
+        for (Room room : construction.getRooms().values()) {
+            Map<BlockPos, BlockState> roomBlocks = room.getBlockChanges();
+            for (BlockPos pos : new ArrayList<>(roomBlocks.keySet())) {
+                BlockState worldState = world.getBlockState(pos);
+                BlockState savedState = roomBlocks.get(pos);
+
+                if (worldState != savedState) {
+                    roomBlocks.put(pos, worldState);
+                    updatedCount++;
+                }
+            }
+        }
+
+        if (updatedCount > 0) {
+            Architect.LOGGER.info("Refreshed {} block states from world for construction {}",
+                updatedCount, construction.getId());
+        }
+    }
+
     // ===== Room management =====
 
     /**
@@ -354,6 +400,9 @@ public class EditingSession {
         Room room = construction.getRoom(currentRoom);
 
         if (room != null) {
+            // Refresh block states from world (capture current state of doors, levers, etc.)
+            refreshRoomBlockStatesFromWorld(world, room);
+
             // Cattura gli NBT dei block entity della room
             captureRoomBlockEntityNbt(world, room);
 
@@ -414,6 +463,31 @@ public class EditingSession {
         }
 
         Architect.LOGGER.debug("Captured {} block entity NBTs for room '{}'", capturedCount, room.getId());
+    }
+
+    /**
+     * Refreshes room block states from the world.
+     * This updates the saved block states to match the current world state,
+     * capturing any changes like doors being opened/closed, levers being toggled, etc.
+     */
+    private void refreshRoomBlockStatesFromWorld(ServerLevel world, Room room) {
+        int updatedCount = 0;
+
+        Map<BlockPos, BlockState> roomBlocks = room.getBlockChanges();
+        for (BlockPos pos : new ArrayList<>(roomBlocks.keySet())) {
+            BlockState worldState = world.getBlockState(pos);
+            BlockState savedState = roomBlocks.get(pos);
+
+            if (worldState != savedState) {
+                roomBlocks.put(pos, worldState);
+                updatedCount++;
+            }
+        }
+
+        if (updatedCount > 0) {
+            Architect.LOGGER.debug("Refreshed {} block states from world for room '{}'",
+                updatedCount, room.getId());
+        }
     }
 
     /**
