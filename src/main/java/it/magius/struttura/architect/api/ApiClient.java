@@ -1875,10 +1875,11 @@ public class ApiClient {
      * Fetches the full spawnable list with buildings from the server asynchronously.
      *
      * @param listId the list ID to fetch (can be numeric or alphanumeric for virtual lists)
+     * @param worldSeed the Minecraft world seed (used for download event tracking)
      * @param onComplete callback called on completion
      */
-    public static void fetchSpawnableList(String listId, Consumer<SpawnableListResponse> onComplete) {
-        fetchSpawnableList(listId, null, onComplete);
+    public static void fetchSpawnableList(String listId, String worldSeed, Consumer<SpawnableListResponse> onComplete) {
+        fetchSpawnableList(listId, null, worldSeed, onComplete);
     }
 
     /**
@@ -1887,12 +1888,13 @@ public class ApiClient {
      *
      * @param listId the list ID to fetch (can be numeric or alphanumeric for virtual lists)
      * @param currentHash the current list hash for cache validation (null to always fetch)
+     * @param worldSeed the Minecraft world seed (used for download event tracking)
      * @param onComplete callback called on completion
      */
-    public static void fetchSpawnableList(String listId, String currentHash, Consumer<SpawnableListResponse> onComplete) {
+    public static void fetchSpawnableList(String listId, String currentHash, String worldSeed, Consumer<SpawnableListResponse> onComplete) {
         CompletableFuture.supplyAsync(() -> {
             try {
-                return executeFetchSpawnableList(listId, currentHash);
+                return executeFetchSpawnableList(listId, currentHash, worldSeed);
             } catch (Exception e) {
                 Architect.LOGGER.error("Failed to fetch spawnable list {}", listId, e);
                 return new SpawnableListResponse(0, "Error: " + e.getMessage(), false, null, 0);
@@ -1900,17 +1902,24 @@ public class ApiClient {
         }).thenAccept(onComplete);
     }
 
-    private static SpawnableListResponse executeFetchSpawnableList(String listId) throws Exception {
-        return executeFetchSpawnableList(listId, null);
-    }
-
-    private static SpawnableListResponse executeFetchSpawnableList(String listId, String currentHash) throws Exception {
+    private static SpawnableListResponse executeFetchSpawnableList(String listId, String currentHash, String worldSeed) throws Exception {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String endpoint = config.getEndpoint();
-        String url = endpoint + "/lists/" + listId + "/export";
+
+        // Build URL with query parameters
+        StringBuilder urlBuilder = new StringBuilder(endpoint + "/lists/" + listId + "/export");
+        boolean hasParams = false;
+
         if (currentHash != null && !currentHash.isEmpty()) {
-            url += "?hash=" + currentHash;
+            urlBuilder.append("?hash=").append(currentHash);
+            hasParams = true;
         }
+
+        if (worldSeed != null && !worldSeed.isEmpty()) {
+            urlBuilder.append(hasParams ? "&" : "?").append("worldSeed=").append(worldSeed);
+        }
+
+        String url = urlBuilder.toString();
 
         Architect.LOGGER.info("Fetching spawnable list {} from {}", listId, url);
 

@@ -2858,7 +2858,8 @@ public class NetworkHandler {
 
                 // Fetch the spawnable list data
                 var server = ((ServerLevel) player.level()).getServer();
-                it.magius.struttura.architect.api.ApiClient.fetchSpawnableList(packet.listId(), response -> {
+                String worldSeed = String.valueOf(server.overworld().getSeed());
+                it.magius.struttura.architect.api.ApiClient.fetchSpawnableList(packet.listId(), worldSeed, response -> {
                     if (response != null && response.success() && response.spawnableList() != null) {
                         server.execute(() -> {
                             manager.setSpawnableList(response.spawnableList());

@@ -144,7 +144,7 @@ public class InGameManager {
             // Fallback: try to fetch from API (backwards compatibility for existing worlds)
             String listId = storage.getState().getListId();
             if (listId != null) {
-                ApiClient.fetchSpawnableList(listId, response -> {
+                ApiClient.fetchSpawnableList(listId, getWorldSeed(), response -> {
                     if (response != null && response.success() && response.spawnableList() != null && server != null) {
                         server.execute(() -> {
                             // Update user ID if received
@@ -217,7 +217,7 @@ public class InGameManager {
 
         if (configListId != null) {
             // Fetch list from API and initialize
-            ApiClient.fetchSpawnableList(configListId, response -> {
+            ApiClient.fetchSpawnableList(configListId, getWorldSeed(), response -> {
                 if (response != null && response.success() && response.spawnableList() != null) {
                     server.execute(() -> {
                         // Update user ID if received
@@ -439,6 +439,14 @@ public class InGameManager {
     }
 
     /**
+     * Gets the current world seed as a string.
+     * @return the world seed, or "unknown" if server is not available
+     */
+    public String getWorldSeed() {
+        return server != null ? String.valueOf(server.overworld().getSeed()) : "unknown";
+    }
+
+    /**
      * Marks InGame mode as declined.
      */
     public void decline() {
@@ -623,7 +631,7 @@ public class InGameManager {
         String currentHash = currentList.getListHash();
         listRefreshInProgress = true;
 
-        ApiClient.fetchSpawnableList(listId, currentHash, response -> {
+        ApiClient.fetchSpawnableList(listId, currentHash, getWorldSeed(), response -> {
             if (server != null) {
                 server.execute(() -> handleListRefreshResponse(response, currentList));
             } else {
