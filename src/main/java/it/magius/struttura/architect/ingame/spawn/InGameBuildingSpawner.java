@@ -9,10 +9,14 @@ import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.placement.ConstructionOperations;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.AABB;
+
+import java.util.List;
 
 /**
  * Handles the actual spawning of buildings in the world.
@@ -159,15 +163,16 @@ public class InGameBuildingSpawner {
     }
 
     /**
-     * Clears all blocks in the specified bounds by filling with air.
+     * Clears all blocks and entities in the specified bounds.
      * Used when ensureBounds is set to "air" to clear terrain before placing a building.
+     * Blocks are removed without drops, entities are discarded without death loot.
      *
      * @param level the server level
      * @param bounds the world-space bounding box to clear
      */
     private static void preClearBounds(ServerLevel level, AABB bounds) {
-        // Silent placement flags - same as used in ConstructionOperations
-        int flags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
+        // Silent removal flags - UPDATE_SUPPRESS_DROPS prevents block drops (seeds, saplings, etc.)
+        int flags = Block.UPDATE_CLIENTS | Block.UPDATE_SUPPRESS_DROPS;
 
         int minX = (int) Math.floor(bounds.minX);
         int minY = (int) Math.floor(bounds.minY);
@@ -176,10 +181,25 @@ public class InGameBuildingSpawner {
         int maxY = (int) Math.floor(bounds.maxY);
         int maxZ = (int) Math.floor(bounds.maxZ);
 
+        // Phase 1: Remove all entities in the area (except players)
+        // This prevents mobs from dying and dropping loot when blocks are placed on them
+        List<Entity> entitiesToRemove = level.getEntitiesOfClass(Entity.class, bounds,
+            e -> !(e instanceof Player));
+
+        int entitiesRemoved = 0;
+        for (Entity entity : entitiesToRemove) {
+            entity.discard();  // Remove without death effects or drops
+            entitiesRemoved++;
+        }
+
+        // Phase 2: Clear all blocks without drops
+        // IMPORTANT: Iterate from TOP to BOTTOM (Y descending) to remove plants/grass
+        // before removing the ground blocks they sit on. This prevents plants from
+        // breaking naturally and dropping items when their support block is removed.
         int clearedCount = 0;
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
-        for (int y = minY; y <= maxY; y++) {
+        for (int y = maxY; y >= minY; y--) {
             for (int x = minX; x <= maxX; x++) {
                 for (int z = minZ; z <= maxZ; z++) {
                     pos.set(x, y, z);
@@ -191,6 +211,9 @@ public class InGameBuildingSpawner {
             }
         }
 
+        if (entitiesRemoved > 0 || clearedCount > 0) {
+            Architect.LOGGER.debug("Pre-clear: removed {} blocks, {} entities", clearedCount, entitiesRemoved);
+        }
     }
 
 }

@@ -1225,7 +1225,8 @@ public class NetworkHandler {
         // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
         // UPDATE_SKIP_ON_PLACE previene che onPlace() venga chiamato, evitando che le rotaie
         // si auto-connettano ai vicini durante il piazzamento
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
+        // UPDATE_SUPPRESS_DROPS previene che i blocchi sostituiti droppino item
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE | Block.UPDATE_SUPPRESS_DROPS;
 
         java.util.Map<BlockPos, BlockState> newBlocks = new java.util.HashMap<>();
         int placedCount = 0;
@@ -1362,7 +1363,8 @@ public class NetworkHandler {
 
         // Piazza i blocchi nelle loro posizioni originali
         // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
+        // UPDATE_SUPPRESS_DROPS previene che i blocchi sostituiti droppino item
+        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE | Block.UPDATE_SUPPRESS_DROPS;
         int placedCount = 0;
         int blockEntityCount = 0;
 

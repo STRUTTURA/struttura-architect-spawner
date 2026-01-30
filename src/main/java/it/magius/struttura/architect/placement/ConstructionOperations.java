@@ -37,12 +37,14 @@ import java.util.*;
  */
 public class ConstructionOperations {
 
-    // Flags for silent block placement (no physics, no onPlace callbacks)
+    // Flags for silent block placement (no physics, no onPlace callbacks, no drops from replaced blocks)
     // UPDATE_SKIP_ON_PLACE prevents rails from auto-orienting based on neighbors
-    private static final int SILENT_PLACE_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE;
+    // UPDATE_SUPPRESS_DROPS prevents replaced blocks from dropping items (grass seeds, saplings, etc.)
+    private static final int SILENT_PLACE_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE | Block.UPDATE_SUPPRESS_DROPS;
 
     // Flags for silent block removal (no drops, no cascading updates)
-    private static final int SILENT_REMOVE_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
+    // UPDATE_SUPPRESS_DROPS prevents blocks from dropping items when destroyed
+    private static final int SILENT_REMOVE_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
 
     // ============== PLACEMENT OPERATIONS ==============
 
@@ -669,9 +671,12 @@ public class ConstructionOperations {
         }
 
         // Phase 3: Remove all blocks (no drops, no physics)
+        // IMPORTANT: Iterate from TOP to BOTTOM (Y descending) to remove plants/grass
+        // before removing the ground blocks they sit on. This prevents plants from
+        // breaking naturally and dropping items when their support block is removed.
         int blocksRemoved = 0;
-        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) {
-            for (int y = bounds.getMinY(); y <= bounds.getMaxY(); y++) {
+        for (int y = bounds.getMaxY(); y >= bounds.getMinY(); y--) {
+            for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) {
                 for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState currentState = level.getBlockState(pos);
