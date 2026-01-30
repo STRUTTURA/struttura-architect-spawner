@@ -2220,8 +2220,8 @@ public class NetworkHandler {
                         statsMobCount++;
                     }
                 }
-                // Rooms don't have their own bounds, so show N/A
-                statsBoundsStr = "N/A";
+                // Calculate room bounds from its block changes and entities
+                statsBoundsStr = room.getBoundsString(bounds);
             }
         }
 

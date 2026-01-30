@@ -329,6 +329,60 @@ public class Room {
         return copy;
     }
 
+    /**
+     * Calculates the bounding box dimensions string for this room's block changes and entities.
+     * Block positions are absolute world coordinates, entity positions are relative to construction bounds.
+     * Returns "WxHxD" format (e.g., "10x5x8") or "0x0x0" if no blocks and no entities.
+     *
+     * @param constructionBounds The construction bounds to normalize block positions
+     */
+    public String getBoundsString(ConstructionBounds constructionBounds) {
+        if (blockChanges.isEmpty() && entities.isEmpty()) {
+            return "0x0x0";
+        }
+
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+
+        // Block positions are absolute world coordinates, convert to relative
+        int boundsMinX = constructionBounds.isValid() ? constructionBounds.getMinX() : 0;
+        int boundsMinY = constructionBounds.isValid() ? constructionBounds.getMinY() : 0;
+        int boundsMinZ = constructionBounds.isValid() ? constructionBounds.getMinZ() : 0;
+
+        for (BlockPos pos : blockChanges.keySet()) {
+            int relX = pos.getX() - boundsMinX;
+            int relY = pos.getY() - boundsMinY;
+            int relZ = pos.getZ() - boundsMinZ;
+            minX = Math.min(minX, relX);
+            minY = Math.min(minY, relY);
+            minZ = Math.min(minZ, relZ);
+            maxX = Math.max(maxX, relX);
+            maxY = Math.max(maxY, relY);
+            maxZ = Math.max(maxZ, relZ);
+        }
+
+        // Entity positions are already relative to construction bounds
+        for (EntityData entity : entities) {
+            var pos = entity.getRelativePos();
+            int ex = (int) Math.floor(pos.x);
+            int ey = (int) Math.floor(pos.y);
+            int ez = (int) Math.floor(pos.z);
+            minX = Math.min(minX, ex);
+            minY = Math.min(minY, ey);
+            minZ = Math.min(minZ, ez);
+            maxX = Math.max(maxX, ex);
+            maxY = Math.max(maxY, ey);
+            maxZ = Math.max(maxZ, ez);
+        }
+
+        // Size is the span from min to max (inclusive)
+        int sizeX = maxX - minX + 1;
+        int sizeY = maxY - minY + 1;
+        int sizeZ = maxZ - minZ + 1;
+
+        return sizeX + "x" + sizeY + "x" + sizeZ;
+    }
+
     @Override
     public String toString() {
         return "Room{id='" + id + "', name='" + name + "', blocks=" + blockChanges.size() +
