@@ -5,6 +5,7 @@ import it.magius.struttura.architect.ingame.model.SpawnRule;
 import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -72,8 +73,8 @@ public class OnGroundValidator implements PositionValidator {
             int worldX = chunkPos.getBlockX(localX);
             int worldZ = chunkPos.getBlockZ(localZ);
 
-            // Get surface height
-            int surfaceY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, worldX, worldZ);
+            // Get surface height, ignoring trees (logs and leaves)
+            int surfaceY = getGroundHeight(level, worldX, worldZ);
 
             // Check Y range
             if (surfaceY < rule.getY1() || surfaceY > rule.getY2()) {
@@ -168,17 +169,61 @@ public class OnGroundValidator implements PositionValidator {
             int cx = buildingOriginX + cornerXOffsets[i];
             int cz = buildingOriginZ + cornerZOffsets[i];
 
-            int cornerY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, cx, cz);
+            int cornerY = getGroundHeight(level, cx, cz);
 
-            // Check ground block is solid
+            // Check ground block is solid (and not a tree log)
             BlockPos groundPos = new BlockPos(cx, cornerY - 1, cz);
             BlockState groundState = level.getBlockState(groundPos);
             if (!groundState.isSolid()) {
                 return String.format("Corner %s ground not solid at %s (block: %s)",
                     cornerNames[i], groundPos.toShortString(), groundState.getBlock().getName().getString());
             }
+            if (isTreeBlock(groundState)) {
+                return String.format("Corner %s ground is tree at %s (block: %s)",
+                    cornerNames[i], groundPos.toShortString(), groundState.getBlock().getName().getString());
+            }
         }
 
         return null; // Valid placement
+    }
+
+    /**
+     * Gets the ground height at the given position, ignoring tree blocks (logs and leaves).
+     * Starts from the heightmap and descends until finding actual ground.
+     */
+    private int getGroundHeight(ServerLevel level, int x, int z) {
+        // Start from heightmap (ignores leaves)
+        int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+
+        // Descend through tree logs until we hit actual ground
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(x, y - 1, z);
+        while (pos.getY() > level.getMinY()) {
+            BlockState state = level.getBlockState(pos);
+
+            if (state.isAir()) {
+                // Air block, continue descending
+                pos.setY(pos.getY() - 1);
+                continue;
+            }
+
+            if (isTreeBlock(state)) {
+                // Tree block (log, wood, leaves), continue descending
+                pos.setY(pos.getY() - 1);
+                continue;
+            }
+
+            // Found actual ground - return Y above this block
+            return pos.getY() + 1;
+        }
+
+        // Reached world bottom, return original height
+        return y;
+    }
+
+    /**
+     * Checks if a block is part of a tree (logs, wood, or leaves).
+     */
+    private boolean isTreeBlock(BlockState state) {
+        return state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES);
     }
 }
