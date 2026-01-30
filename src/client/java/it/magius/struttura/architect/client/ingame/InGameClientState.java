@@ -16,6 +16,7 @@ public class InGameClientState {
     private String rdns = "";
     private long pk = 0;
     private boolean hasLiked = false;
+    private boolean isOwner = false;  // True if current player owns this building
 
     // Cached display values
     private String buildingName = "";
@@ -36,17 +37,19 @@ public class InGameClientState {
      * @param rdns the building RDNS
      * @param pk the building primary key
      * @param hasLiked whether the player has already liked this building
+     * @param isOwner whether the current player owns this building
      * @param localizedName the localized name (from server, may be empty)
      * @param localizedDescription the localized description (from server, may be empty)
      * @param authorNickname the author nickname (from server, may be empty)
      */
-    public void enterBuilding(String rdns, long pk, boolean hasLiked,
+    public void enterBuilding(String rdns, long pk, boolean hasLiked, boolean isOwner,
                               String localizedName, String localizedDescription,
                               String authorNickname) {
         this.inBuilding = true;
         this.rdns = rdns;
         this.pk = pk;
         this.hasLiked = hasLiked;
+        this.isOwner = isOwner;
 
         // Use localized name if available, otherwise parse from RDNS
         if (localizedName != null && !localizedName.isEmpty()) {
@@ -74,6 +77,7 @@ public class InGameClientState {
         this.rdns = "";
         this.pk = 0;
         this.hasLiked = false;
+        this.isOwner = false;
         this.buildingName = "";
         this.description = "";
         this.author = "";
@@ -109,6 +113,22 @@ public class InGameClientState {
 
     public boolean hasLiked() {
         return hasLiked;
+    }
+
+    /**
+     * Checks if the current player owns this building.
+     * Owners cannot like their own buildings.
+     */
+    public boolean isOwner() {
+        return isOwner;
+    }
+
+    /**
+     * Checks if the player can like this building.
+     * Cannot like if already liked or if owner.
+     */
+    public boolean canLike() {
+        return inBuilding && !hasLiked && !isOwner;
     }
 
     public String getBuildingName() {

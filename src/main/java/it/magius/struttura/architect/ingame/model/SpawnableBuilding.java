@@ -15,6 +15,7 @@ public class SpawnableBuilding {
 
     private final String rdns;              // Reverse DNS identifier (e.g., "it.magius.pip.home")
     private final long pk;                  // Primary key from the database
+    private final long ownerUserId;         // Owner user ID from the database (for ownership check)
     private final String hash;              // Content hash (SHA256) for cache validation
     private final String author;            // Author nickname
     private final BlockPos entrance;        // Entrance anchor position (normalized coordinates)
@@ -30,11 +31,12 @@ public class SpawnableBuilding {
     private int spawnedCount = 0;
     private boolean downloadFailed = false;  // True if NBT download failed, applies 20% penalty
 
-    public SpawnableBuilding(String rdns, long pk, String hash, String author, BlockPos entrance, float entranceYaw,
+    public SpawnableBuilding(String rdns, long pk, long ownerUserId, String hash, String author, BlockPos entrance, float entranceYaw,
                              int xWorld, List<SpawnRule> rules, AABB bounds,
                              Map<String, String> names, Map<String, String> descriptions, String ensureBounds) {
         this.rdns = rdns;
         this.pk = pk;
+        this.ownerUserId = ownerUserId;
         this.hash = hash;
         this.author = author != null ? author : "";
         this.entrance = entrance;
@@ -59,6 +61,14 @@ public class SpawnableBuilding {
      */
     public long getPk() {
         return pk;
+    }
+
+    /**
+     * Gets the owner user ID from the database.
+     * Used to check if the current player owns this building.
+     */
+    public long getOwnerUserId() {
+        return ownerUserId;
     }
 
     /**

@@ -97,6 +97,10 @@ public class InGameStorage {
                 state.setDownloadsCompleted(json.get("downloadsCompleted").getAsBoolean());
             }
 
+            if (json.has("currentUserId")) {
+                state.setCurrentUserId(json.get("currentUserId").getAsLong());
+            }
+
             Architect.LOGGER.info("Loaded InGame state: {}", state);
 
         } catch (Exception e) {
@@ -137,6 +141,7 @@ public class InGameStorage {
             }
 
             json.addProperty("downloadsCompleted", state.isDownloadsCompleted());
+            json.addProperty("currentUserId", state.getCurrentUserId());
 
             try (Writer writer = Files.newBufferedWriter(filePath, StandardCharsets.UTF_8)) {
                 GSON.toJson(json, writer);

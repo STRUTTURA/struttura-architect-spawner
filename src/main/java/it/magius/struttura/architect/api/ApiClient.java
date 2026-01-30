@@ -1734,13 +1734,14 @@ public class ApiClient {
      * Response for InGame lists fetch.
      */
     public record InGameListsResponse(int statusCode, String message, boolean success,
-                                       List<InGameListInfo> lists, boolean authenticated) {}
+                                       List<InGameListInfo> lists, boolean authenticated, long userId) {}
 
     /**
      * Response for spawnable list export fetch.
+     * userId is the current authenticated user ID (0 if anonymous) - used by mod to check building ownership.
      */
     public record SpawnableListResponse(int statusCode, String message, boolean success,
-                                         SpawnableList spawnableList) {}
+                                         SpawnableList spawnableList, long userId) {}
 
     /**
      * Fetches available InGame lists from the server asynchronously.
@@ -1754,7 +1755,7 @@ public class ApiClient {
                 return executeFetchInGameLists();
             } catch (Exception e) {
                 Architect.LOGGER.error("Failed to fetch InGame lists", e);
-                return new InGameListsResponse(0, "Error: " + e.getMessage(), false, null, false);
+                return new InGameListsResponse(0, "Error: " + e.getMessage(), false, null, false, 0);
             }
         }).thenAccept(onComplete);
     }
@@ -1786,7 +1787,7 @@ public class ApiClient {
 
             if (statusCode < 200 || statusCode >= 300) {
                 String message = parseResponseMessage(responseBody, statusCode);
-                return new InGameListsResponse(statusCode, message, false, null, false);
+                return new InGameListsResponse(statusCode, message, false, null, false, 0);
             }
 
             // Parse response
@@ -1860,8 +1861,10 @@ public class ApiClient {
             }
 
             boolean authenticated = json.has("authenticated") && json.get("authenticated").getAsBoolean();
+            long userId = json.has("userId") && !json.get("userId").isJsonNull()
+                ? json.get("userId").getAsLong() : 0;
 
-            return new InGameListsResponse(statusCode, "Success", true, lists, authenticated);
+            return new InGameListsResponse(statusCode, "Success", true, lists, authenticated, userId);
 
         } finally {
             conn.disconnect();
@@ -1892,7 +1895,7 @@ public class ApiClient {
                 return executeFetchSpawnableList(listId, currentHash);
             } catch (Exception e) {
                 Architect.LOGGER.error("Failed to fetch spawnable list {}", listId, e);
-                return new SpawnableListResponse(0, "Error: " + e.getMessage(), false, null);
+                return new SpawnableListResponse(0, "Error: " + e.getMessage(), false, null, 0);
             }
         }).thenAccept(onComplete);
     }
@@ -1929,7 +1932,7 @@ public class ApiClient {
             // Handle 204 No Content - list hasn't changed
             if (statusCode == 204) {
                 Architect.LOGGER.info("Spawnable list {} unchanged (hash match)", listId);
-                return new SpawnableListResponse(statusCode, "Not Modified", true, null);
+                return new SpawnableListResponse(statusCode, "Not Modified", true, null, 0);
             }
 
             String responseBody = readResponse(conn);
@@ -1938,14 +1941,18 @@ public class ApiClient {
 
             if (statusCode < 200 || statusCode >= 300) {
                 String message = parseResponseMessage(responseBody, statusCode);
-                return new SpawnableListResponse(statusCode, message, false, null);
+                return new SpawnableListResponse(statusCode, message, false, null, 0);
             }
 
             // Parse response
             JsonObject json = GSON.fromJson(responseBody, JsonObject.class);
             SpawnableList spawnableList = parseSpawnableList(json);
 
-            return new SpawnableListResponse(statusCode, "Success", true, spawnableList);
+            // Extract userId for ownership check
+            long userId = json.has("userId") && !json.get("userId").isJsonNull()
+                ? json.get("userId").getAsLong() : 0;
+
+            return new SpawnableListResponse(statusCode, "Success", true, spawnableList, userId);
 
         } finally {
             conn.disconnect();
@@ -1969,6 +1976,8 @@ public class ApiClient {
 
                 String rdns = bldgObj.get("rdns").getAsString();
                 long pk = bldgObj.get("pk").getAsLong();
+                long ownerUserId = bldgObj.has("ownerUserId") && !bldgObj.get("ownerUserId").isJsonNull()
+                    ? bldgObj.get("ownerUserId").getAsLong() : 0;
                 String hash = bldgObj.has("hash") && !bldgObj.get("hash").isJsonNull()
                     ? bldgObj.get("hash").getAsString() : null;
                 String author = bldgObj.has("author") && !bldgObj.get("author").isJsonNull()
@@ -2066,7 +2075,7 @@ public class ApiClient {
                 String ensureBounds = bldgObj.has("ensureBounds") && !bldgObj.get("ensureBounds").isJsonNull()
                     ? bldgObj.get("ensureBounds").getAsString() : "none";
 
-                buildings.add(new SpawnableBuilding(rdns, pk, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions, ensureBounds));
+                buildings.add(new SpawnableBuilding(rdns, pk, ownerUserId, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions, ensureBounds));
             }
         }
 
@@ -2074,5 +2083,71 @@ public class ApiClient {
             buildings.size(), spawningPercentage * 100, listHash);
 
         return new SpawnableList(listHash, spawningPercentage, buildings);
+    }
+
+    // ===== API Key Validation =====
+
+    /**
+     * Response for API key validation.
+     */
+    public record ValidateApiKeyResponse(int statusCode, String message, boolean success, long userId) {}
+
+    /**
+     * Validates an API key and returns the user ID.
+     * Used when the user changes API key in config to update cached userId.
+     *
+     * @param onComplete callback called on completion
+     */
+    public static void validateApiKey(Consumer<ValidateApiKeyResponse> onComplete) {
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return executeValidateApiKey();
+            } catch (Exception e) {
+                Architect.LOGGER.error("Failed to validate API key", e);
+                return new ValidateApiKeyResponse(0, "Error: " + e.getMessage(), false, 0);
+            }
+        }).thenAccept(onComplete);
+    }
+
+    private static ValidateApiKeyResponse executeValidateApiKey() throws Exception {
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String endpoint = config.getEndpoint();
+        String url = endpoint + "/api-keys/validate";
+
+        String apiKey = config.getApikey();
+        if (apiKey == null || apiKey.isEmpty()) {
+            return new ValidateApiKeyResponse(401, "No API key configured", false, 0);
+        }
+
+        Architect.LOGGER.debug("Validating API key at {}", url);
+
+        HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        try {
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(config.getRequestTimeout() * 1000);
+            conn.setReadTimeout(config.getRequestTimeout() * 1000);
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("X-Api-Key", apiKey);
+
+            int statusCode = conn.getResponseCode();
+            String responseBody = readResponse(conn);
+
+            Architect.LOGGER.debug("Validate API key response: {} - {}", statusCode, responseBody);
+
+            if (statusCode < 200 || statusCode >= 300) {
+                String message = parseResponseMessage(responseBody, statusCode);
+                return new ValidateApiKeyResponse(statusCode, message, false, 0);
+            }
+
+            // Parse response to get userId
+            JsonObject json = GSON.fromJson(responseBody, JsonObject.class);
+            long userId = json.has("userId") && !json.get("userId").isJsonNull()
+                ? json.get("userId").getAsLong() : 0;
+
+            return new ValidateApiKeyResponse(statusCode, "Success", true, userId);
+
+        } finally {
+            conn.disconnect();
+        }
     }
 }

@@ -24,6 +24,7 @@ public class InGameState {
     private AuthType authType = null;
     private String worldSeed = null;
     private boolean downloadsCompleted = false;  // Persisted: true when all buildings downloaded
+    private long currentUserId = 0;  // Current authenticated user ID (0 if anonymous)
 
     // Runtime data (not persisted)
     private SpawnableList spawnableList = null;
@@ -98,6 +99,7 @@ public class InGameState {
         this.authType = null;
         this.worldSeed = null;
         this.downloadsCompleted = false;
+        this.currentUserId = 0;
         this.spawnableList = null;
     }
 
@@ -137,6 +139,14 @@ public class InGameState {
         return spawnableList;
     }
 
+    /**
+     * Gets the current authenticated user ID.
+     * @return the user ID, or 0 if anonymous
+     */
+    public long getCurrentUserId() {
+        return currentUserId;
+    }
+
     // ===== Setters =====
 
     public void setInitialized(boolean initialized) {
@@ -169,6 +179,10 @@ public class InGameState {
 
     public void setSpawnableList(SpawnableList spawnableList) {
         this.spawnableList = spawnableList;
+    }
+
+    public void setCurrentUserId(long currentUserId) {
+        this.currentUserId = currentUserId;
     }
 
     @Override

@@ -46,16 +46,17 @@ public abstract class PauseScreenMixin extends Screen {
         // The button shows the current like state but opens a detail screen on click
         InGameClientState state = InGameClientState.getInstance();
         boolean alreadyLiked = state.hasLiked();
+        boolean canLike = state.canLike();  // False if owner or already liked
 
         architect$likeButton = LikeButton.create(
                 this.width,
                 buildingName,
                 alreadyLiked,
-                true, // Always allow clicking to open the screen
+                canLike,  // Shows withered heart if owner
                 button -> architect$openLikeScreen()
         );
 
-        // Make button always active (clickable) to open the like screen
+        // Make button always active (clickable) to open the like screen for more info
         architect$likeButton.getButton().active = true;
 
         this.addRenderableWidget(architect$likeButton.getButton());

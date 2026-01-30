@@ -196,10 +196,15 @@ public class ArchitectClient implements ClientModInitializer {
             context.client().execute(() -> {
                 InGameClientState state = InGameClientState.getInstance();
                 if (packet.inBuilding()) {
-                    state.enterBuilding(packet.rdns(), packet.pk(), packet.hasLiked(),
+                    state.enterBuilding(packet.rdns(), packet.pk(), packet.hasLiked(), packet.isOwner(),
                         packet.localizedName(), packet.localizedDescription(), packet.author());
-                    Architect.LOGGER.debug("Entered building: {} (pk={}, name={}, author={})",
-                        packet.rdns(), packet.pk(), packet.localizedName(), packet.author());
+                    Architect.LOGGER.debug("Entered building: {} (pk={}, name={}, author={}, isOwner={})",
+                        packet.rdns(), packet.pk(), packet.localizedName(), packet.author(), packet.isOwner());
+
+                    // If LikeScreen is open and state changed (e.g., now isOwner), close it
+                    if (context.client().screen instanceof it.magius.struttura.architect.client.gui.LikeScreen) {
+                        context.client().screen.onClose();
+                    }
                 } else {
                     state.exitBuilding();
                     Architect.LOGGER.debug("Exited building");

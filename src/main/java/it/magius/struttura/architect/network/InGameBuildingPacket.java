@@ -15,6 +15,7 @@ public record InGameBuildingPacket(
     String rdns,                // Building RDNS identifier (empty if not in building)
     long pk,                    // Building primary key (0 if not in building)
     boolean hasLiked,           // True if player has already liked this building
+    boolean isOwner,            // True if current player owns this building (cannot like own buildings)
     String localizedName,       // Localized building name (empty if not available)
     String localizedDescription,// Localized building description (empty if not available)
     String author               // Author nickname (from list or chunk data fallback)
@@ -30,16 +31,16 @@ public record InGameBuildingPacket(
      * Create an empty packet (player is not in any building).
      */
     public static InGameBuildingPacket empty() {
-        return new InGameBuildingPacket(false, "", 0, false, "", "", "");
+        return new InGameBuildingPacket(false, "", 0, false, false, "", "", "");
     }
 
     /**
      * Create a packet for when player enters a building.
      */
-    public static InGameBuildingPacket entered(String rdns, long pk, boolean hasLiked,
+    public static InGameBuildingPacket entered(String rdns, long pk, boolean hasLiked, boolean isOwner,
                                                String localizedName, String localizedDescription,
                                                String author) {
-        return new InGameBuildingPacket(true, rdns, pk, hasLiked,
+        return new InGameBuildingPacket(true, rdns, pk, hasLiked, isOwner,
             localizedName != null ? localizedName : "",
             localizedDescription != null ? localizedDescription : "",
             author != null ? author : "");
@@ -50,10 +51,11 @@ public record InGameBuildingPacket(
         String rdns = buf.readUtf(512);
         long pk = buf.readLong();
         boolean hasLiked = buf.readBoolean();
+        boolean isOwner = buf.readBoolean();
         String localizedName = buf.readUtf(256);
         String localizedDescription = buf.readUtf(2048);
         String author = buf.readUtf(128);
-        return new InGameBuildingPacket(inBuilding, rdns, pk, hasLiked, localizedName, localizedDescription, author);
+        return new InGameBuildingPacket(inBuilding, rdns, pk, hasLiked, isOwner, localizedName, localizedDescription, author);
     }
 
     private static void write(FriendlyByteBuf buf, InGameBuildingPacket packet) {
@@ -61,6 +63,7 @@ public record InGameBuildingPacket(
         buf.writeUtf(packet.rdns, 512);
         buf.writeLong(packet.pk);
         buf.writeBoolean(packet.hasLiked);
+        buf.writeBoolean(packet.isOwner);
         buf.writeUtf(packet.localizedName, 256);
         buf.writeUtf(packet.localizedDescription, 2048);
         buf.writeUtf(packet.author, 128);

@@ -3,6 +3,8 @@ package it.magius.struttura.architect.config;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.api.ApiClient;
+import it.magius.struttura.architect.ingame.InGameManager;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.*;
@@ -85,9 +87,9 @@ public class ArchitectConfig {
             }
         }
 
-        // Crea config con defaults e salvala
+        // Crea config con defaults e salvala (senza validazione API key al primo avvio)
         ArchitectConfig config = new ArchitectConfig();
-        config.save();
+        config.saveInternal(false);
         return config;
     }
 
@@ -95,6 +97,14 @@ public class ArchitectConfig {
      * Salva la configurazione su file.
      */
     public void save() {
+        saveInternal(true);
+    }
+
+    /**
+     * Internal save method with optional API key validation.
+     * @param validateApiKey whether to validate API key and update userId
+     */
+    private void saveInternal(boolean validateApiKey) {
         Path configPath = getConfigPath();
 
         try {
@@ -103,9 +113,36 @@ public class ArchitectConfig {
                 GSON.toJson(this, writer);
                 Architect.LOGGER.info("Saved config to {}", configPath);
             }
+
+            // Validate API key and update cached userId if in a game
+            if (validateApiKey && apikey != null && !apikey.isEmpty()) {
+                validateApiKeyAndUpdateUserId();
+            }
         } catch (IOException e) {
             Architect.LOGGER.error("Failed to save config", e);
         }
+    }
+
+    /**
+     * Validates the API key with the server and updates cached userId.
+     * Called when config is saved to ensure userId is current.
+     */
+    private void validateApiKeyAndUpdateUserId() {
+        ApiClient.validateApiKey(response -> {
+            if (response.success() && response.userId() > 0) {
+                InGameManager manager = InGameManager.getInstance();
+                if (manager != null && manager.isReady()) {
+                    long currentUserId = manager.getCurrentUserId();
+                    if (currentUserId != response.userId()) {
+                        manager.getStorage().getState().setCurrentUserId(response.userId());
+                        manager.getStorage().save();
+                        Architect.LOGGER.info("Config saved: userId updated to {}", response.userId());
+                    }
+                }
+            } else if (!response.success()) {
+                Architect.LOGGER.warn("API key validation failed: {}", response.message());
+            }
+        });
     }
 
     /**

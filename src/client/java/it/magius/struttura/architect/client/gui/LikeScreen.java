@@ -74,7 +74,7 @@ public class LikeScreen extends Screen {
         this.rdns = state.getRdns();
         this.pk = state.getPk();
         this.alreadyLiked = state.hasLiked();
-        this.canLike = state.isInBuilding();
+        this.canLike = state.canLike();  // Uses new method that checks isOwner
         this.liked = alreadyLiked;
 
         // Get localized description from server

@@ -47,6 +47,7 @@ public class InGameManager {
     private List<InGameListInfo> cachedLists = null;
     private boolean listsLoading = false;
     private boolean connectionError = false;
+    private long cachedUserId = 0;  // Current user ID from API (for ownership checks)
 
     // Track which players have been shown the setup screen
     private final ConcurrentHashMap<UUID, Boolean> playerSetupPending = new ConcurrentHashMap<>();
@@ -146,6 +147,11 @@ public class InGameManager {
                 ApiClient.fetchSpawnableList(listId, response -> {
                     if (response != null && response.success() && response.spawnableList() != null && server != null) {
                         server.execute(() -> {
+                            // Update user ID if received
+                            if (response.userId() > 0) {
+                                cachedUserId = response.userId();
+                                storage.getState().setCurrentUserId(cachedUserId);
+                            }
                             // Save to disk for future loads
                             listStorage.save(response.spawnableList());
                             activateSpawnableList(response.spawnableList(), false);
@@ -214,6 +220,10 @@ public class InGameManager {
             ApiClient.fetchSpawnableList(configListId, response -> {
                 if (response != null && response.success() && response.spawnableList() != null) {
                     server.execute(() -> {
+                        // Update user ID if received
+                        if (response.userId() > 0) {
+                            cachedUserId = response.userId();
+                        }
                         initialize(configListId, "Config List", InGameState.AuthType.API_KEY);
                         setSpawnableList(response.spawnableList());
                     });
@@ -236,6 +246,7 @@ public class InGameManager {
             if (response != null && response.success() && response.lists() != null) {
                 connectionError = false;
                 cachedLists = response.lists();
+                cachedUserId = response.userId();  // Save user ID for ownership checks
 
                 // Send to any players waiting for setup
                 if (server != null) {
@@ -412,7 +423,19 @@ public class InGameManager {
             String.valueOf(server.overworld().getSeed()) : "unknown";
 
         storage.getState().initialize(listId, listName, authType, worldSeed);
+        storage.getState().setCurrentUserId(cachedUserId);  // Save user ID for ownership checks
         storage.save();
+    }
+
+    /**
+     * Gets the current authenticated user ID.
+     * @return the user ID, or 0 if anonymous
+     */
+    public long getCurrentUserId() {
+        if (storage != null) {
+            return storage.getState().getCurrentUserId();
+        }
+        return cachedUserId;
     }
 
     /**
@@ -647,6 +670,14 @@ public class InGameManager {
         SpawnableList newList = response.spawnableList();
         if (newList == null) {
             return;
+        }
+
+        // Update cached user ID from response (in case API key was added/changed)
+        if (response.userId() > 0) {
+            cachedUserId = response.userId();
+            if (storage != null) {
+                storage.getState().setCurrentUserId(cachedUserId);
+            }
         }
 
         // Find buildings with changed hashes and invalidate their NBT cache

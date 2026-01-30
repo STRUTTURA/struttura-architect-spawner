@@ -2728,6 +2728,7 @@ public class NetworkHandler {
             String localizedName = "";
             String localizedDescription = "";
             String author = "";
+            boolean isOwner = false;
 
             it.magius.struttura.architect.ingame.InGameManager manager =
                 it.magius.struttura.architect.ingame.InGameManager.getInstance();
@@ -2743,6 +2744,12 @@ public class NetworkHandler {
                     localizedName = building.getLocalizedName(langCode);
                     localizedDescription = building.getLocalizedDescription(langCode);
                     author = building.getAuthor();
+
+                    // Check if current user owns this building
+                    long currentUserId = manager.getCurrentUserId();
+                    if (currentUserId > 0 && building.getOwnerUserId() == currentUserId) {
+                        isOwner = true;
+                    }
                 }
             }
 
@@ -2754,14 +2761,14 @@ public class NetworkHandler {
                 author = buildingInfo.author();
             }
 
-            packet = InGameBuildingPacket.entered(buildingInfo.rdns(), buildingInfo.pk(), hasLiked,
+            packet = InGameBuildingPacket.entered(buildingInfo.rdns(), buildingInfo.pk(), hasLiked, isOwner,
                 localizedName, localizedDescription, author);
         } else {
             packet = InGameBuildingPacket.empty();
         }
         ServerPlayNetworking.send(player, packet);
-        Architect.LOGGER.debug("Sent in-game building state to {}: inBuilding={}, rdns={}, name={}, author={}",
-            player.getName().getString(), packet.inBuilding(), packet.rdns(), packet.localizedName(), packet.author());
+        Architect.LOGGER.debug("Sent in-game building state to {}: inBuilding={}, rdns={}, name={}, author={}, isOwner={}",
+            player.getName().getString(), packet.inBuilding(), packet.rdns(), packet.localizedName(), packet.author(), packet.isOwner());
     }
 
     /**
@@ -2774,20 +2781,30 @@ public class NetworkHandler {
         Architect.LOGGER.debug("Received like request from {}: rdns={}, pk={}",
             player.getName().getString(), packet.rdns(), packet.pk());
 
-        // Send the like via LikeManager
+        // Send the like via LikeManager with callback to send updated state to client
         it.magius.struttura.architect.ingame.LikeManager.getInstance()
-            .likeBuilding(player, packet.rdns(), packet.pk());
+            .likeBuilding(player, packet.rdns(), packet.pk(), result -> {
+                // This callback runs on a background thread, so we need to execute on server thread
+                net.minecraft.server.MinecraftServer server = ((net.minecraft.server.level.ServerLevel) player.level()).getServer();
+                if (server != null) {
+                    server.execute(() -> {
+                        // Check if player is still online and in the same building
+                        if (!player.hasDisconnected()) {
+                            it.magius.struttura.architect.ingame.tracker.PlayerBuildingState state =
+                                it.magius.struttura.architect.ingame.tracker.PlayerBuildingState.getInstance();
+                            it.magius.struttura.architect.ingame.model.SpawnedBuildingInfo currentBuilding =
+                                state.getCurrentBuilding(player);
 
-        // Send updated state back to client (now liked)
-        it.magius.struttura.architect.ingame.tracker.PlayerBuildingState state =
-            it.magius.struttura.architect.ingame.tracker.PlayerBuildingState.getInstance();
-        it.magius.struttura.architect.ingame.model.SpawnedBuildingInfo currentBuilding =
-            state.getCurrentBuilding(player);
-
-        if (currentBuilding != null && currentBuilding.pk() == packet.pk()) {
-            // Player is still in the building they liked, send update
-            sendInGameBuildingState(player, currentBuilding, true);
-        }
+                            if (currentBuilding != null && currentBuilding.pk() == packet.pk()) {
+                                // Player is still in the building they tried to like
+                                // Send updated state with correct hasLiked and isOwner values
+                                // Note: sendInGameBuildingState will recalculate isOwner from currentUserId
+                                sendInGameBuildingState(player, currentBuilding, result.success());
+                            }
+                        }
+                    });
+                }
+            });
     }
 
     /**
