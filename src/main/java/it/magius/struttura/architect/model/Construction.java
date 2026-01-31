@@ -72,10 +72,6 @@ public class Construction {
     // Anchor points for the construction (only for base, not rooms)
     private final Anchors anchors = new Anchors();
 
-    // Pre-spawn bounds fill mode: "none" (default) or "air"
-    // When set to "air", clears all blocks in bounds area before spawning
-    private String ensureBounds = "none";
-
     public Construction(String id, UUID authorId, String authorName) {
         this.id = id;
         this.authorId = authorId;
@@ -362,24 +358,6 @@ public class Construction {
     public Map<BlockPos, BlockState> getBlocks() { return blocks; }
     public ConstructionBounds getBounds() { return bounds; }
     public Anchors getAnchors() { return anchors; }
-
-    /**
-     * Gets the pre-spawn bounds fill mode.
-     * @return "none" (default) or "air"
-     */
-    public String getEnsureBounds() { return ensureBounds; }
-
-    /**
-     * Sets the pre-spawn bounds fill mode.
-     * @param mode "none" or "air"
-     */
-    public void setEnsureBounds(String mode) {
-        if (mode != null && (mode.equals("none") || mode.equals("air"))) {
-            this.ensureBounds = mode;
-        } else {
-            this.ensureBounds = "none";
-        }
-    }
 
     // ===== Entity management =====
 
@@ -818,9 +796,6 @@ public class Construction {
         if (this.anchors.hasEntrance()) {
             copy.getAnchors().setEntrance(this.anchors.getEntrance(), this.anchors.getEntranceYaw());
         }
-
-        // Copy ensureBounds setting
-        copy.setEnsureBounds(this.ensureBounds);
 
         return copy;
     }

@@ -60,9 +60,6 @@ public class PanelManager {
     private int[] entrance = null;  // [x, y, z] absolute coordinates, or null
     private float entranceYaw = 0f; // yaw rotation in degrees
 
-    // Pre-spawn bounds fill mode ("none" or "air")
-    private String ensureBounds = "none";
-
     /**
      * Info about a block type in the construction.
      */
@@ -133,8 +130,7 @@ public class PanelManager {
                                    int solidBlockCount, int airBlockCount, int entityCount,
                                    int mobCount, String bounds, String mode, String shortDesc,
                                    boolean inRoom, String currentRoomId, String currentRoomName,
-                                   int roomCount, int roomBlockChanges, List<RoomInfo> roomList,
-                                   String ensureBounds) {
+                                   int roomCount, int roomBlockChanges, List<RoomInfo> roomList) {
         this.editingConstructionId = constructionId;
         this.editingTitle = title;
         this.blockCount = blockCount;
@@ -151,7 +147,6 @@ public class PanelManager {
         this.roomCount = roomCount;
         this.roomBlockChanges = roomBlockChanges;
         this.roomList = roomList != null ? new ArrayList<>(roomList) : new ArrayList<>();
-        this.ensureBounds = ensureBounds != null ? ensureBounds : "none";
         this.isEditing = true;
         // Update EditingPanel with shortDesc
         if (editingPanel != null) {
@@ -231,10 +226,6 @@ public class PanelManager {
 
     public String getShortDesc() {
         return shortDesc;
-    }
-
-    public String getEnsureBounds() {
-        return ensureBounds;
     }
 
     // Room getters

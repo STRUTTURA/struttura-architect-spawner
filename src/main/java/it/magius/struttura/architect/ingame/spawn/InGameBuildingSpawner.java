@@ -4,6 +4,8 @@ import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.ingame.ChunkDataManager;
 import it.magius.struttura.architect.ingame.cache.BuildingCache;
+import it.magius.struttura.architect.ingame.model.PositionType;
+import it.magius.struttura.architect.ingame.model.SpawnRule;
 import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.placement.ConstructionOperations;
@@ -13,6 +15,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.AABB;
 
@@ -111,12 +114,16 @@ public class InGameBuildingSpawner {
             construction.getAnchors().setEntrance(entrance, building.getEntranceYaw());
         }
 
-        // Pre-clear bounds if ensureBounds is "air"
-        if ("air".equals(building.getEnsureBounds())) {
+        // Pre-clear bounds if rule has ensureBounds enabled
+        SpawnRule rule = position.rule();
+        if (rule != null && rule.isEnsureBounds()) {
             // Calculate world-space bounds for clearing using SpawnableBuilding metadata
             // This correctly handles the entrance-to-origin transformation with rotation
             AABB clearBounds = BoundsCalculator.calculate(building, position);
-            preClearBounds(level, clearBounds);
+            // Use water for water positions, air otherwise
+            boolean useWater = rule.getType() == PositionType.BOTTOM_WATER ||
+                               rule.getType() == PositionType.ON_WATER;
+            preClearBounds(level, clearBounds, useWater);
         }
 
         // Calculate seed for room selection based on world seed + spawn position
@@ -164,13 +171,14 @@ public class InGameBuildingSpawner {
 
     /**
      * Clears all blocks and entities in the specified bounds.
-     * Used when ensureBounds is set to "air" to clear terrain before placing a building.
-     * Blocks are removed without drops, entities are discarded without death loot.
+     * Used when ensureBounds is enabled to prepare terrain before placing a building.
+     * Blocks are replaced with air or water (depending on useWater), entities are discarded without death loot.
      *
      * @param level the server level
      * @param bounds the world-space bounding box to clear
+     * @param useWater if true, fill with water instead of air (for water positions)
      */
-    private static void preClearBounds(ServerLevel level, AABB bounds) {
+    private static void preClearBounds(ServerLevel level, AABB bounds, boolean useWater) {
         // Silent removal flags - UPDATE_SUPPRESS_DROPS prevents block drops (seeds, saplings, etc.)
         int flags = Block.UPDATE_CLIENTS | Block.UPDATE_SUPPRESS_DROPS;
 
@@ -198,13 +206,16 @@ public class InGameBuildingSpawner {
         // breaking naturally and dropping items when their support block is removed.
         int clearedCount = 0;
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        BlockState fillBlock = useWater ? Blocks.WATER.defaultBlockState() : Blocks.AIR.defaultBlockState();
 
         for (int y = maxY; y >= minY; y--) {
             for (int x = minX; x <= maxX; x++) {
                 for (int z = minZ; z <= maxZ; z++) {
                     pos.set(x, y, z);
-                    if (!level.getBlockState(pos).isAir()) {
-                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), flags);
+                    BlockState currentState = level.getBlockState(pos);
+                    // Replace if not already the target block type
+                    if (currentState.getBlock() != fillBlock.getBlock()) {
+                        level.setBlock(pos, fillBlock, flags);
                         clearedCount++;
                     }
                 }
@@ -212,7 +223,8 @@ public class InGameBuildingSpawner {
         }
 
         if (entitiesRemoved > 0 || clearedCount > 0) {
-            Architect.LOGGER.debug("Pre-clear: removed {} blocks, {} entities", clearedCount, entitiesRemoved);
+            Architect.LOGGER.debug("Pre-clear: {} {} blocks, {} entities",
+                useWater ? "flooded" : "cleared", clearedCount, entitiesRemoved);
         }
     }
 

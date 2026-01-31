@@ -104,8 +104,7 @@ public class ArchitectClient implements ClientModInitializer {
                             packet.currentRoomName(),
                             packet.roomCount(),
                             packet.roomBlockChanges(),
-                            roomList,
-                            packet.ensureBounds()
+                            roomList
                     );
                     // Update entrance anchor data
                     if (packet.hasEntrance()) {

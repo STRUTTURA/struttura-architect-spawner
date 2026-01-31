@@ -168,7 +168,7 @@ public class OnAirValidator extends AbstractPositionValidator {
                     // Validate all blocks are air
                     PlacementResult result = validateAtY(ctx, y);
                     if (result.valid()) {
-                        return FindResult.success(SpawnPosition.at(entrancePos, rotation));
+                        return FindResult.success(SpawnPosition.at(entrancePos, rotation, rule));
                     } else {
                         failureReasons.add(String.format("Pos %s rot %d°: %s",
                             entrancePos.toShortString(), rotation, result.reason()));

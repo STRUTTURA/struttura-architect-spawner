@@ -37,9 +37,7 @@ public record EditingInfoPacket(
     int entranceX,          // Absolute X coordinate (or 0 if not set)
     int entranceY,          // Absolute Y coordinate (or 0 if not set)
     int entranceZ,          // Absolute Z coordinate (or 0 if not set)
-    float entranceYaw,      // Player yaw rotation in degrees (or 0 if not set)
-    // Pre-spawn bounds fill mode
-    String ensureBounds     // "none" or "air"
+    float entranceYaw       // Player yaw rotation in degrees (or 0 if not set)
 ) implements CustomPacketPayload {
 
     /**
@@ -59,7 +57,7 @@ public record EditingInfoPacket(
     public static EditingInfoPacket empty() {
         return new EditingInfoPacket(false, "", "", 0, 0, 0, 0, 0, "", "ADD", "",
             false, "", "", 0, 0, List.of(),
-            false, 0, 0, 0, 0f, "none");
+            false, 0, 0, 0, 0f);
     }
 
     private static EditingInfoPacket read(FriendlyByteBuf buf) {
@@ -96,11 +94,9 @@ public record EditingInfoPacket(
         int entranceY = buf.readVarInt();
         int entranceZ = buf.readVarInt();
         float entranceYaw = buf.readFloat();
-        // Pre-spawn bounds fill mode
-        String ensureBounds = buf.readUtf(16);
         return new EditingInfoPacket(isEditing, constructionId, title, blockCount, solidBlockCount, airBlockCount, entityCount, mobCount, bounds, mode, shortDesc,
             inRoom, currentRoomId, currentRoomName, roomCount, roomBlockChanges, roomList,
-            hasEntrance, entranceX, entranceY, entranceZ, entranceYaw, ensureBounds);
+            hasEntrance, entranceX, entranceY, entranceZ, entranceYaw);
     }
 
     private static void write(FriendlyByteBuf buf, EditingInfoPacket packet) {
@@ -135,8 +131,6 @@ public record EditingInfoPacket(
         buf.writeVarInt(packet.entranceY);
         buf.writeVarInt(packet.entranceZ);
         buf.writeFloat(packet.entranceYaw);
-        // Pre-spawn bounds fill mode
-        buf.writeUtf(packet.ensureBounds, 16);
     }
 
     @Override

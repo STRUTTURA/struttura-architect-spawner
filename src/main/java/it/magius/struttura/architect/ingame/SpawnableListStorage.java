@@ -187,9 +187,6 @@ public class SpawnableListStorage {
         }
         json.add("descriptions", descriptionsJson);
 
-        // Pre-spawn bounds fill mode
-        json.addProperty("ensureBounds", building.getEnsureBounds());
-
         return json;
     }
 
@@ -200,6 +197,7 @@ public class SpawnableListStorage {
         json.addProperty("y1", rule.getY1());
         json.addProperty("y2", rule.getY2());
         json.addProperty("margin", rule.getMargin());
+        json.addProperty("ensureBounds", rule.isEnsureBounds());
 
         JsonArray biomesArray = new JsonArray();
         for (String biome : rule.getBiomes()) {
@@ -305,11 +303,7 @@ public class SpawnableListStorage {
                 }
             }
 
-            // Pre-spawn bounds fill mode
-            String ensureBounds = json.has("ensureBounds") && !json.get("ensureBounds").isJsonNull()
-                ? json.get("ensureBounds").getAsString() : "none";
-
-            return new SpawnableBuilding(rdns, pk, ownerUserId, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions, ensureBounds);
+            return new SpawnableBuilding(rdns, pk, ownerUserId, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to deserialize building", e);
@@ -326,6 +320,7 @@ public class SpawnableListStorage {
             int y1 = json.has("y1") ? json.get("y1").getAsInt() : 60;
             int y2 = json.has("y2") ? json.get("y2").getAsInt() : 100;
             int margin = json.has("margin") ? json.get("margin").getAsInt() : 5;
+            boolean ensureBounds = json.has("ensureBounds") && json.get("ensureBounds").getAsBoolean();
 
             List<String> biomes = new ArrayList<>();
             if (json.has("biomes") && json.get("biomes").isJsonArray()) {
@@ -335,7 +330,7 @@ public class SpawnableListStorage {
                 }
             }
 
-            return new SpawnRule(biomes, percentage, type, y1, y2, margin);
+            return new SpawnRule(biomes, percentage, type, y1, y2, margin, ensureBounds);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to deserialize spawn rule", e);

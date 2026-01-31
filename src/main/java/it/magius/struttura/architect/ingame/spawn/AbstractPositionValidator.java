@@ -125,7 +125,7 @@ public abstract class AbstractPositionValidator implements PositionValidator {
                 // Type-specific validation
                 PlacementResult result = validatePlacement(ctx);
                 if (result.valid()) {
-                    return FindResult.success(SpawnPosition.at(entrancePos, rotation));
+                    return FindResult.success(SpawnPosition.at(entrancePos, rotation, rule));
                 } else {
                     failureReasons.add(String.format("Pos %s rot %d°: %s",
                         entrancePos.toShortString(), rotation, result.reason()));
