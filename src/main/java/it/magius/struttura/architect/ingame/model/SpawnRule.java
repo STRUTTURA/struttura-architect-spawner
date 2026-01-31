@@ -83,6 +83,9 @@ public class SpawnRule {
 
     /**
      * Checks if this rule applies to the given biome.
+     * Supports both real biomes (e.g., "minecraft:plains") and virtual biomes
+     * (e.g., "struttura:all", "struttura:overworld_all").
+     *
      * @param biomeId the biome resource location (e.g., "minecraft:plains")
      * @return true if this rule applies to the biome
      */
@@ -91,7 +94,22 @@ public class SpawnRule {
             // Empty biome list means this rule applies to all biomes
             return true;
         }
-        return biomes.contains(biomeId);
+
+        for (String ruleBiome : biomes) {
+            // Check if it's a virtual biome that expands to multiple real biomes
+            if (VirtualBiomes.isVirtual(ruleBiome)) {
+                if (VirtualBiomes.matches(ruleBiome, biomeId)) {
+                    return true;
+                }
+            } else {
+                // Direct match with real biome
+                if (ruleBiome.equals(biomeId)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     @Override
