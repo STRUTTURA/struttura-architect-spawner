@@ -615,6 +615,7 @@ public class NetworkHandler {
             case "room_exit_nomob" -> handleGuiRoomExit(player, false);  // Exit room without saving entities
             case "set_entrance" -> handleGuiSetEntrance(player);
             case "tp_entrance" -> handleGuiTpEntrance(player);
+            case "adjust_entrance_y" -> handleGuiAdjustEntranceY(player, targetId);  // targetId = delta (e.g., "1" or "-1")
             case "set_ensure_bounds" -> handleGuiSetEnsureBounds(player, extraData);  // extraData = "none" or "air"
             default -> Architect.LOGGER.warn("Unknown GUI action: {}", action);
         }
@@ -2010,6 +2011,81 @@ public class NetworkHandler {
         BlockPos pos = teleportToConstruction(player, construction);
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "entrance.tp", pos.getX(), pos.getY(), pos.getZ())));
+    }
+
+    /**
+     * Handles adjust_entrance_y action via GUI.
+     * Adjusts the entrance anchor Y coordinate by the given delta.
+     */
+    private static void handleGuiAdjustEntranceY(ServerPlayer player, String deltaStr) {
+        if (!EditingSession.hasSession(player)) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "command.not_editing")));
+            return;
+        }
+
+        EditingSession session = EditingSession.getSession(player);
+
+        // Entrance can only be adjusted for base construction, not rooms
+        if (session.isInRoom()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.not_in_room")));
+            return;
+        }
+
+        Construction construction = session.getConstruction();
+
+        if (!construction.getAnchors().hasEntrance()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.not_set")));
+            return;
+        }
+
+        ConstructionBounds bounds = construction.getBounds();
+        if (!bounds.isValid()) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.no_bounds")));
+            return;
+        }
+
+        // Parse delta
+        int delta;
+        try {
+            delta = Integer.parseInt(deltaStr);
+        } catch (NumberFormatException e) {
+            Architect.LOGGER.warn("Invalid delta for adjust_entrance_y: {}", deltaStr);
+            return;
+        }
+
+        // Get current entrance (normalized coordinates)
+        BlockPos currentEntrance = construction.getAnchors().getEntrance();
+        float currentYaw = construction.getAnchors().getEntranceYaw();
+
+        // Calculate new Y (still normalized)
+        int newY = currentEntrance.getY() + delta;
+
+        // Check bounds (normalized Y must be within 0 to maxY of the construction)
+        int maxY = bounds.getMaxY() - bounds.getMinY();
+        if (newY < 0 || newY > maxY) {
+            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                    I18n.tr(player, "entrance.y_out_of_bounds")));
+            return;
+        }
+
+        // Set new entrance position
+        BlockPos newEntrance = new BlockPos(currentEntrance.getX(), newY, currentEntrance.getZ());
+        construction.getAnchors().setEntrance(newEntrance, currentYaw);
+
+        // Save construction
+        ConstructionRegistry.getInstance().register(construction);
+
+        // Calculate world coordinates for message
+        int worldY = newY + bounds.getMinY();
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
+                I18n.tr(player, "entrance.y_adjusted", worldY)));
+
+        // Update client
+        sendEditingInfo(player);
     }
 
     /**

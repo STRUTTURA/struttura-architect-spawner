@@ -931,25 +931,59 @@ public class EditingPanel {
             int homeIconWidth = font.width(homeIcon);
             graphics.drawString(font, homeIcon, x + PADDING, currentY + 4, 0xFF808080, false);
 
-            // Coordinates display (x, y, z, yaw)
+            // Coordinates display (x, y, z, yaw) - scaled to 80% for compact display
             int coordsX = x + PADDING + homeIconWidth + 4;
             String coordsText;
             if (pm.hasEntrance()) {
                 int[] entrance = pm.getEntrance();
                 int yawInt = Math.round(pm.getEntranceYaw());
-                coordsText = entrance[0] + ", " + entrance[1] + ", " + entrance[2] + ", " + yawInt + "\u00B0";
+                coordsText = entrance[0] + "," + entrance[1] + "," + entrance[2] + " " + yawInt + "\u00B0";
             } else {
                 coordsText = "- - -";
             }
-            int coordsWidth = font.width(coordsText);
-            graphics.drawString(font, coordsText, coordsX, currentY + 4, pm.hasEntrance() ? 0xFFCCCCCC : 0xFF666666, false);
+            // Draw with 80% scale using Matrix3x2fStack
+            float coordsScale = 0.8f;
+            org.joml.Matrix3x2fStack pose = graphics.pose();
+            pose.pushMatrix();
+            float scaledCoordsX = coordsX / coordsScale;
+            float scaledCoordsY = (currentY + 5) / coordsScale;
+            pose.scale(coordsScale, coordsScale);
+            graphics.drawString(font, coordsText, (int)scaledCoordsX, (int)scaledCoordsY, pm.hasEntrance() ? 0xFF999999 : 0xFF666666, false);
+            pose.popMatrix();
 
-            // SET and TP buttons (right-aligned)
-            int setBtnWidth = 24;
-            int tpBtnWidth = 20;
+            // Buttons: Y- Y+ SET TP (right-aligned, compact)
+            int yBtnWidth = 14;  // Y- and Y+ buttons
+            int setBtnWidth = 22;
+            int tpBtnWidth = 18;
             int gap = 2;
+
             int tpBtnX = x + WIDTH - PADDING - tpBtnWidth;
             int setBtnX = tpBtnX - gap - setBtnWidth;
+            int yPlusBtnX = setBtnX - gap - yBtnWidth;
+            int yMinusBtnX = yPlusBtnX - gap - yBtnWidth;
+
+            // Y- button (decrease Y, disabled if no entrance)
+            boolean yAdjustDisabled = !pm.hasEntrance();
+            boolean yMinusHovered = !yAdjustDisabled && effectiveMouseX >= yMinusBtnX && effectiveMouseX < yMinusBtnX + yBtnWidth &&
+                                   effectiveMouseY >= currentY && effectiveMouseY < currentY + BUTTON_HEIGHT;
+            int yMinusBgColor = yAdjustDisabled ? 0xFF202020 : (yMinusHovered ? 0xFF504050 : 0xFF403040);
+            int yMinusTextColor = yAdjustDisabled ? 0xFF606060 : 0xFFCCAACC;
+            int yMinusBorderColor = yAdjustDisabled ? 0xFF404040 : 0xFF605060;
+            graphics.fill(yMinusBtnX, currentY, yMinusBtnX + yBtnWidth, currentY + BUTTON_HEIGHT, yMinusBgColor);
+            graphics.renderOutline(yMinusBtnX, currentY, yBtnWidth, BUTTON_HEIGHT, yMinusBorderColor);
+            int yMinusTextWidth = font.width("-");
+            graphics.drawString(font, "-", yMinusBtnX + (yBtnWidth - yMinusTextWidth) / 2, currentY + 4, yMinusTextColor, false);
+
+            // Y+ button (increase Y, disabled if no entrance)
+            boolean yPlusHovered = !yAdjustDisabled && effectiveMouseX >= yPlusBtnX && effectiveMouseX < yPlusBtnX + yBtnWidth &&
+                                  effectiveMouseY >= currentY && effectiveMouseY < currentY + BUTTON_HEIGHT;
+            int yPlusBgColor = yAdjustDisabled ? 0xFF202020 : (yPlusHovered ? 0xFF504050 : 0xFF403040);
+            int yPlusTextColor = yAdjustDisabled ? 0xFF606060 : 0xFFCCAACC;
+            int yPlusBorderColor = yAdjustDisabled ? 0xFF404040 : 0xFF605060;
+            graphics.fill(yPlusBtnX, currentY, yPlusBtnX + yBtnWidth, currentY + BUTTON_HEIGHT, yPlusBgColor);
+            graphics.renderOutline(yPlusBtnX, currentY, yBtnWidth, BUTTON_HEIGHT, yPlusBorderColor);
+            int yPlusTextWidth = font.width("+");
+            graphics.drawString(font, "+", yPlusBtnX + (yBtnWidth - yPlusTextWidth) / 2, currentY + 4, yPlusTextColor, false);
 
             // SET button (always enabled)
             boolean setHovered = effectiveMouseX >= setBtnX && effectiveMouseX < setBtnX + setBtnWidth &&
@@ -2039,12 +2073,32 @@ public class EditingPanel {
         if (!inRoomEditing) {
             currentY += BUTTON_HEIGHT + PADDING;
 
-            // SET and TP buttons (right-aligned, same layout as render)
-            int setBtnWidth = 24;
-            int tpBtnWidth = 20;
+            // Buttons layout: Y- Y+ SET TP (same as render)
+            int yBtnWidth = 14;
+            int setBtnWidth = 22;
+            int tpBtnWidth = 18;
             int gap = 2;
+
             int tpBtnX = x + WIDTH - PADDING - tpBtnWidth;
             int setBtnX = tpBtnX - gap - setBtnWidth;
+            int yPlusBtnX = setBtnX - gap - yBtnWidth;
+            int yMinusBtnX = yPlusBtnX - gap - yBtnWidth;
+
+            // Y- button click (decrease Y, only if entrance exists)
+            if (pm.hasEntrance() &&
+                mouseX >= yMinusBtnX && mouseX < yMinusBtnX + yBtnWidth &&
+                mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
+                ClientPlayNetworking.send(new GuiActionPacket("adjust_entrance_y", "-1", ""));
+                return true;
+            }
+
+            // Y+ button click (increase Y, only if entrance exists)
+            if (pm.hasEntrance() &&
+                mouseX >= yPlusBtnX && mouseX < yPlusBtnX + yBtnWidth &&
+                mouseY >= currentY && mouseY < currentY + BUTTON_HEIGHT) {
+                ClientPlayNetworking.send(new GuiActionPacket("adjust_entrance_y", "1", ""));
+                return true;
+            }
 
             // SET button click (always enabled)
             if (mouseX >= setBtnX && mouseX < setBtnX + setBtnWidth &&
