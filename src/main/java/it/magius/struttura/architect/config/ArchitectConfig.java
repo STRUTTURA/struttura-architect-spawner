@@ -29,9 +29,9 @@ public class ArchitectConfig {
     private static ArchitectConfig instance;
 
     // Proprietà di configurazione
-    private String endpoint = "http://localhost:8881/struttura/v1";
-    private String auth = "Bearer au-ak_21c2e6dda17ac3f34ddce58fc4ec0a11ee8193cf12e71d114fba6ebaa269e0b431e17de77ea8e959ffbe4e0d2866b8442ed4e8d75ecee1adf162f1ac2270cb59";
-    private String apikey = "us-ak_385b96c7595ed54693f6367e5d1765a585e45d2bbd940ad3a40154510975440edc42c016dcc76cbce19e7e16a613e550b093c918f141cd66f9032f9523a347c8";
+    private String endpoint = "https://api-struttura.magius.it/v1";
+    private String auth = "Bearer us-ak_bba6abf3c975833465bf8ac99d9ce3ddcd70be0d6c61fcb04f4a9b5043159d63078908460af3cac585aacdc916cff934785e1709e11b7b94e7d7d46382612a0d";
+    private String apikey = "";
     private int requestTimeout = 60;
 
     // Wireframe rendering settings
