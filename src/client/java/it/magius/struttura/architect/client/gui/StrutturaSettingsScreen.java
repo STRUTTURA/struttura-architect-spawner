@@ -14,6 +14,9 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * STRUTTURA mod settings screen.
  * Contains settings for API key and timeout.
@@ -45,6 +48,9 @@ public class StrutturaSettingsScreen extends Screen {
     private Button overlayPositionBtn;
     private Button requestApiKeyBtn;
 
+    // Pre-wrapped disclaimer lines
+    private List<String> disclaimerWrapped = new ArrayList<>();
+
     public StrutturaSettingsScreen(Screen parentScreen) {
         super(Component.translatable("struttura.settings.title"));
         this.parentScreen = parentScreen;
@@ -60,10 +66,10 @@ public class StrutturaSettingsScreen extends Screen {
         int centerX = this.width / 2;
         int contentLeft = centerX - CONTENT_WIDTH / 2;
 
-        // Calculate disclaimer height (multiline support)
+        // Calculate disclaimer height (word-wrapped to fit screen width)
         String disclaimer = getDisclaimerText();
-        String[] disclaimerLines = disclaimer.split("\n");
-        int disclaimerHeight = disclaimerLines.length * (LINE_HEIGHT + 2);
+        disclaimerWrapped = wrapText(disclaimer, this.width - 20);
+        int disclaimerHeight = disclaimerWrapped.size() * (LINE_HEIGHT + 2);
 
         int currentY = 30 + disclaimerHeight + 10; // Start below title and disclaimer
 
@@ -160,16 +166,14 @@ public class StrutturaSettingsScreen extends Screen {
         // Draw title centered at top
         graphics.drawCenteredString(this.font, this.title, centerX, 10, 0xFFFFFFFF);
 
-        // Draw disclaimer from config (multiline support with centered alignment)
-        String disclaimer = getDisclaimerText();
-        String[] disclaimerLines = disclaimer.split("\n");
+        // Draw disclaimer from config (word-wrapped with centered alignment)
         int disclaimerY = 26;
-        for (String line : disclaimerLines) {
-            graphics.drawCenteredString(this.font, line.trim(), centerX, disclaimerY, 0xFFAAAAAA);
+        for (String line : disclaimerWrapped) {
+            graphics.drawCenteredString(this.font, line, centerX, disclaimerY, 0xFFAAAAAA);
             disclaimerY += LINE_HEIGHT + 2;
         }
 
-        int currentY = 30 + disclaimerLines.length * (LINE_HEIGHT + 2) + 10;
+        int currentY = 30 + disclaimerWrapped.size() * (LINE_HEIGHT + 2) + 10;
 
         // === API Key (label + field on same line) ===
         graphics.drawString(this.font, Component.translatable("struttura.settings.apikey").getString(), contentLeft, currentY + 4, 0xFFFFFFFF, false);
@@ -331,6 +335,44 @@ public class StrutturaSettingsScreen extends Screen {
         int offsetX = config.getOverlayOffsetX();
         int offsetY = config.getOverlayOffsetY();
         return baseLabel + ": " + anchorV + "/" + anchorH + " " + offsetX + "%," + offsetY + "%";
+    }
+
+    /**
+     * Wraps text to fit within maxWidth pixels, respecting explicit newlines.
+     */
+    private List<String> wrapText(String text, int maxWidth) {
+        List<String> result = new ArrayList<>();
+        String[] paragraphs = text.split("\n");
+
+        for (String paragraph : paragraphs) {
+            if (paragraph.trim().isEmpty()) {
+                result.add("");
+                continue;
+            }
+
+            String[] words = paragraph.split(" ");
+            StringBuilder currentLine = new StringBuilder();
+
+            for (String word : words) {
+                if (currentLine.isEmpty()) {
+                    currentLine.append(word);
+                } else {
+                    String test = currentLine + " " + word;
+                    if (this.font.width(test) <= maxWidth) {
+                        currentLine.append(" ").append(word);
+                    } else {
+                        result.add(currentLine.toString());
+                        currentLine = new StringBuilder(word);
+                    }
+                }
+            }
+
+            if (!currentLine.isEmpty()) {
+                result.add(currentLine.toString());
+            }
+        }
+
+        return result;
     }
 
 }

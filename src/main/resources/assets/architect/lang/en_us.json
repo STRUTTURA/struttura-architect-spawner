@@ -16,7 +16,7 @@
   "key.struttura.select_applyall": "Selection Apply All",
 
   "struttura.settings.title": "STRUTTURA Settings",
-  "struttura.settings.disclaimer.default": "Welcome to STRUTTURA! Share your Minecraft creations with the world. Visit https://struttura.magius.it for more info.",
+  "struttura.settings.disclaimer.default": "Set up your personal key (API Key) to customize your experience and use the cloud.",
   "struttura.settings.apikey": "API Key",
   "struttura.settings.timeout": "Request Timeout (sec)",
   "struttura.settings.overlay": "Visiting Building Frame Position",
@@ -66,5 +66,11 @@
   "struttura.like.default_description": "This creation was built with passion by the architect to be enjoyed by all players.",
   "struttura.like.website_link": "View on STRUTTURA website",
 
-  "struttura.toast.like_tutorial": "Press ESC to like this building!"
+  "struttura.toast.like_tutorial": "Press ESC to like this building!",
+
+  "struttura.welcome.title": "Welcome to STRUTTURA!",
+  "struttura.welcome.btn.website": "Visit STRUTTURA Website",
+  "struttura.welcome.btn.setup": "Set Up Personal Key",
+  "struttura.welcome.btn.close": "Close",
+  "struttura.welcome.default_message": "STRUTTURA is active and ready to use in free mode!\nWhether you are an Explorer or an Architect, there is something for you.\n\nExplorer: Enjoy the most popular community buildings spawning in your world for endless adventures. Register for free on the STRUTTURA website to create your own custom lists and play the adventure your way!\n\nArchitect: Save your creations to the cloud for free! Organize them into lists and let other explorers play them. Receive likes, build your reputation, and use the cloud as a backup for your builds.\n\nWe recommend creating a free account on the STRUTTURA website to unlock all these features and get huge advantages over anonymous access."
 }

@@ -16,7 +16,7 @@
   "key.struttura.select_applyall": "Selezione Applica Tutto",
 
   "struttura.settings.title": "Impostazioni STRUTTURA",
-  "struttura.settings.disclaimer.default": "Benvenuto in STRUTTURA! Condividi le tue creazioni Minecraft con il mondo. Visita https://struttura.magius.it per maggiori informazioni.",
+  "struttura.settings.disclaimer.default": "Configura la tua chiave personale (API Key) per personalizzare le tue esperienze e usufruire del cloud.",
   "struttura.settings.apikey": "Chiave API",
   "struttura.settings.timeout": "Timeout Richieste (sec)",
   "struttura.settings.overlay": "Posizione Frame Creazione in Visita",
@@ -66,5 +66,11 @@
   "struttura.like.default_description": "Questa creazione è stata costruita con passione dall'architetto per essere giocata da tutti i giocatori.",
   "struttura.like.website_link": "Vai alla creazione sul sito STRUTTURA",
 
-  "struttura.toast.like_tutorial": "Premi ESC per mettere like!"
+  "struttura.toast.like_tutorial": "Premi ESC per mettere like!",
+
+  "struttura.welcome.title": "Benvenuto su STRUTTURA!",
+  "struttura.welcome.btn.website": "Vai sul sito di STRUTTURA",
+  "struttura.welcome.btn.setup": "Imposta la chiave personale",
+  "struttura.welcome.btn.close": "Chiudi",
+  "struttura.welcome.default_message": "STRUTTURA è attivo e pronto all'uso in modalità gratuita!\nChe tu sia un Esploratore o un Architetto, c'è qualcosa per te.\n\nEsploratore: Goditi le costruzioni più popolari della community che spawneranno nel tuo mondo per avventure infinite. Registrati gratuitamente sul sito di STRUTTURA per creare le tue liste personalizzate e giocare l'avventura secondo il tuo stile!\n\nArchitetto: Salva le tue creazioni sul cloud gratuitamente! Organizzale in liste e falle giocare agli altri esploratori. Ricevi like, costruisci la tua reputazione e usa il cloud come backup per le tue opere.\n\nTi consigliamo di creare un account gratuito sul sito di STRUTTURA per sbloccare tutte queste funzionalità e ottenere enormi vantaggi rispetto all'accesso anonimo."
 }

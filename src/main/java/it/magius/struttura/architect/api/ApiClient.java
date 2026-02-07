@@ -1677,7 +1677,7 @@ public class ApiClient {
                         }
                     }
 
-                    // Update disclaimer if present
+                    // Update disclaimer if present (empty object = use mod fallback)
                     if (json.has("modOptionsDisclaimer") && json.get("modOptionsDisclaimer").isJsonObject()) {
                         JsonObject disclaimerJson = json.getAsJsonObject("modOptionsDisclaimer");
                         Map<String, String> disclaimer = new HashMap<>();
@@ -1688,11 +1688,25 @@ public class ApiClient {
                             }
                         }
 
-                        if (!disclaimer.isEmpty()) {
-                            config.setModOptionsDisclaimer(disclaimer);
-                            Architect.LOGGER.info("Mod settings: {} disclaimer languages loaded", disclaimer.size());
-                            updated = true;
+                        config.setModOptionsDisclaimer(disclaimer);
+                        Architect.LOGGER.info("Mod settings: {} disclaimer languages loaded", disclaimer.size());
+                        updated = true;
+                    }
+
+                    // Update welcome message if present (empty object = use mod fallback)
+                    if (json.has("welcomeMessage") && json.get("welcomeMessage").isJsonObject()) {
+                        JsonObject welcomeJson = json.getAsJsonObject("welcomeMessage");
+                        Map<String, String> welcome = new HashMap<>();
+
+                        for (var entry : welcomeJson.entrySet()) {
+                            if (entry.getValue().isJsonPrimitive()) {
+                                welcome.put(entry.getKey(), entry.getValue().getAsString());
+                            }
                         }
+
+                        config.setWelcomeMessage(welcome);
+                        Architect.LOGGER.info("Mod settings: {} welcome message languages loaded", welcome.size());
+                        updated = true;
                     }
 
                     if (updated) {

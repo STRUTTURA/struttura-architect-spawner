@@ -2,6 +2,8 @@ package it.magius.struttura.architect.mixin.client;
 
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.client.gui.GuiAssets;
+import it.magius.struttura.architect.client.gui.WelcomeScreen;
+import it.magius.struttura.architect.config.ArchitectConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -29,16 +31,31 @@ public abstract class TitleScreenMixin extends Screen {
     @Unique
     private static boolean architect$autoLoadAttempted = false;
 
+    @Unique
+    private static boolean architect$welcomeChecked = false;
+
     protected TitleScreenMixin(Component title) {
         super(title);
     }
 
     /**
      * Injects at the end of TitleScreen.init() to auto-load the dev world
-     * when -Dstruttura.devtest=true system property is set.
+     * when -Dstruttura.devtest=true system property is set, and to show the
+     * welcome screen on first launch.
      */
     @Inject(method = "init", at = @At("RETURN"))
     private void architect$onInit(CallbackInfo ci) {
+        // Show welcome screen once per Minecraft home (if not yet shown)
+        if (!architect$welcomeChecked) {
+            architect$welcomeChecked = true;
+            ArchitectConfig config = ArchitectConfig.getInstance();
+            if (!config.isWelcomeMessageShown()) {
+                Architect.LOGGER.info("Showing welcome screen for the first time");
+                Minecraft.getInstance().setScreen(new WelcomeScreen((Screen)(Object)this));
+                return;
+            }
+        }
+
         if (architect$autoLoadAttempted) {
             return;
         }
