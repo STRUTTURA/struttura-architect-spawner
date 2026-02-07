@@ -61,7 +61,7 @@ The **adventure engine**. As you explore your survival world, player-made buildi
 
 | Platform | Link |
 |:--------:|:----:|
-| **GitHub Releases** | [Download from Releases](https://github.com/magius-team/struttura-mod/releases) |
+| **GitHub Releases** | [Download from Releases](https://github.com/STRUTTURA/struttura-architect-spawner/releases) |
 | **Modrinth** | [Download from Modrinth](https://modrinth.com) |
 | **CurseForge** | [Download from CurseForge](https://www.curseforge.com) |
 | **Struttura Website** | [struttura.magius.it](https://struttura.magius.it) |
@@ -103,8 +103,8 @@ Join the **Struttura Discord** to chat with other builders, share your creations
 
 ### Bug Reports
 
-- **Mod issues** — Use the [Issues](https://github.com/magius-team/struttura-mod/issues) tab on this repository
-- **Website issues** — Report them on the [Website Issues repo](https://github.com/magius-team/struttura-web/issues)
+- **Mod issues** — Use the [Issues](https://github.com/STRUTTURA/struttura-architect-spawner/issues) tab on this repository
+- **Website issues** — Report them on the [Website Issues repo](https://github.com/STRUTTURA/struttura-website/issues)
 
 ---
 
