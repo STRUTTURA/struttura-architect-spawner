@@ -12,6 +12,7 @@
   <img src="https://img.shields.io/badge/Minecraft-1.21.11-62B47A?style=for-the-badge&logo=modrinth" alt="Minecraft Version">
   <img src="https://img.shields.io/badge/Fabric-0.18.2-DBB06C?style=for-the-badge" alt="Fabric Loader">
   <img src="https://img.shields.io/badge/Java-21+-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white" alt="Java Version">
+  <img src="https://img.shields.io/badge/Status-Alpha-orange?style=for-the-badge" alt="Alpha">
   <img src="https://img.shields.io/badge/License-CC0_1.0-blue?style=for-the-badge" alt="License">
 </p>
 
@@ -79,15 +80,15 @@ The **adventure engine**. As you explore your survival world, player-made buildi
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/building-list.jpg" alt="Building List" width="420">
-  <img src="screenshots/building-editor.jpg" alt="Building Editor" width="420">
+  <img src="screenshots/building-list.jpg" alt="Building List" width="410">
+  <img src="screenshots/building-editor.jpg" alt="Building Editor" width="410">
 </p>
 <p align="center">
-  <img src="screenshots/spawner-hud.jpg" alt="Spawner HUD" width="420">
-  <img src="screenshots/settings.jpg" alt="Settings" width="420">
+  <img src="screenshots/spawner-hud.jpg" alt="Spawner HUD" width="410">
+  <img src="screenshots/settings.jpg" alt="Settings" width="410">
 </p>
 <p align="center">
-  <img src="screenshots/mod-menu.jpg" alt="Mod Menu Integration" width="420">
+  <img src="screenshots/mod-menu.jpg" alt="Mod Menu Integration" width="410">
 </p>
 
 ---
