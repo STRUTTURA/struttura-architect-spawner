@@ -1,0 +1,77 @@
+name: "\U0001F680 Website - Feature Request"
+description: Suggest a new feature or improvement for the Struttura website
+labels: ["enhancement", "website"]
+title: "[Website Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Feature Request
+        Please search [existing issues](https://github.com/STRUTTURA/struttura-architect-spawner/issues?q=is%3Aissue+label%3Awebsite+label%3Aenhancement) before submitting to avoid duplicates.
+
+  - type: checkboxes
+    id: duplicate-check
+    attributes:
+      label: Duplicate Check
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+
+  - type: dropdown
+    id: feature-area
+    attributes:
+      label: Area
+      description: Which area of the website does this relate to?
+      options:
+        - Authentication / Login
+        - Building Gallery / Browsing
+        - Building Details Page
+        - Lists / Collections
+        - User Profile
+        - Search
+        - Navigation / Layout
+        - New Functionality
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: What problem does this feature solve? Is it related to a frustration?
+      placeholder: "I'm always frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions or workarounds you've considered.
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Mockups / Screenshots
+      description: If applicable, add mockups, sketches, or screenshots to illustrate your idea.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context about the feature request.
+    validations:
+      required: false

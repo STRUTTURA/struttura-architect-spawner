@@ -1,0 +1,112 @@
+name: "\U0001F41B Website - Bug Report"
+description: Report a bug on the Struttura website
+labels: ["bug", "website"]
+title: "[Website Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Thanks for reporting a bug!
+        Please search [existing issues](https://github.com/STRUTTURA/struttura-architect-spawner/issues?q=is%3Aissue+label%3Awebsite+label%3Abug) before submitting to avoid duplicates.
+
+  - type: checkboxes
+    id: duplicate-check
+    attributes:
+      label: Duplicate Check
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+
+  - type: dropdown
+    id: bug-area
+    attributes:
+      label: Area
+      description: Which area of the website is affected?
+      options:
+        - Authentication / Login
+        - Building Gallery / Browsing
+        - Building Details Page
+        - Lists / Collections
+        - User Profile
+        - Search
+        - Navigation / Layout
+        - Performance
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      description: Which browser are you using?
+      placeholder: "e.g. Chrome 130, Firefox 135, Safari 18"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      description: What device are you using?
+      options:
+        - Desktop
+        - Tablet
+        - Mobile
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: Page URL
+      description: The URL of the page where the bug occurs (if applicable).
+      placeholder: "e.g. https://struttura.app/buildings/..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of the bug.
+      placeholder: Describe what happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this bug?
+      placeholder: |
+        1. Go to...
+        2. Click on...
+        3. Scroll down to...
+        4. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain the problem.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, console errors, or details that might help.
+    validations:
+      required: false

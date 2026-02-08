@@ -1,0 +1,128 @@
+name: "\U0001F41B Mod - Bug Report"
+description: Report a bug or crash in the Struttura mod
+labels: ["bug", "mod"]
+title: "[Mod Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Thanks for reporting a bug!
+        Please search [existing issues](https://github.com/STRUTTURA/struttura-architect-spawner/issues?q=is%3Aissue+label%3Amod+label%3Abug) before submitting to avoid duplicates.
+
+  - type: checkboxes
+    id: duplicate-check
+    attributes:
+      label: Duplicate Check
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+
+  - type: input
+    id: mod-version
+    attributes:
+      label: Mod Version
+      description: The version of the Struttura mod you are using.
+      placeholder: "e.g. 1.2.0"
+    validations:
+      required: true
+
+  - type: input
+    id: minecraft-version
+    attributes:
+      label: Minecraft Version
+      description: The Minecraft version you are running.
+      placeholder: "e.g. 1.21.11"
+    validations:
+      required: true
+
+  - type: input
+    id: fabric-loader-version
+    attributes:
+      label: Fabric Loader Version
+      description: The Fabric Loader version (check in Mod Menu or launcher).
+      placeholder: "e.g. 0.18.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      description: Which mode of the mod were you using?
+      options:
+        - Architect (building creation/editing)
+        - Adventure (spawner)
+        - Both / Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bug-area
+    attributes:
+      label: Area
+      description: Which area of the mod is affected?
+      options:
+        - Building Creation/Editing
+        - Push/Pull (Cloud Sync)
+        - Spawner Engine
+        - GUI/Screens
+        - Commands
+        - Rendering
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of the bug.
+      placeholder: Describe what happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this bug?
+      placeholder: |
+        1. Open the game...
+        2. Use command...
+        3. Click on...
+        4. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Crash Log / Error Log
+      description: Paste any relevant logs from `logs/latest.log` or crash reports.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain the problem.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other mods installed, system info, or context that might help.
+    validations:
+      required: false
