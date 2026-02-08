@@ -104,7 +104,7 @@ Join the **Struttura Discord** to chat with other builders, share your creations
 ### Bug Reports
 
 - **Mod issues** — Use the [Issues](https://github.com/STRUTTURA/struttura-architect-spawner/issues) tab on this repository
-- **Website issues** — Report them on the [Website Issues repo](https://github.com/STRUTTURA/struttura-website/issues)
+- **Website issues** — Report them on the [Issues](https://github.com/STRUTTURA/struttura-architect-spawner/issues) tab on this repository
 
 ---
 

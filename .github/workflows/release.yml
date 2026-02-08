@@ -90,7 +90,7 @@ jobs:
         run: |
           JAR_BASE64=$(base64 -w 0 "${{ steps.jar.outputs.path }}")
           CHANGELOG=$(gh release view "${GITHUB_REF_NAME}" --json body -q .body 2>/dev/null || echo "Release ${GITHUB_REF_NAME}")
-          curl -sf -X POST https://api-struttura.magius.it/struttura/v1/mod/releases \
+          curl -sf -X POST https://api-struttura.magius.it/v1/mod/releases \
             -H "Authorization: Bearer $STRUTTURA_BEARER_TOKEN" \
             -H "Content-Type: application/json" \
             -d @- <<EOF
