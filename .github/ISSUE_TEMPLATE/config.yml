@@ -3,6 +3,6 @@ contact_links:
   - name: Search existing issues
     url: https://github.com/STRUTTURA/struttura-architect-spawner/issues?q=is%3Aissue
     about: Please search existing issues before opening a new one to avoid duplicates.
-  - name: Discussions
-    url: https://github.com/STRUTTURA/struttura-architect-spawner/discussions
-    about: For questions, ideas, and general discussion.
+  - name: Discord Community
+    url: https://discord.gg/yraGFKtPRX
+    about: For questions, ideas, support, and general discussion join our Discord server.
