@@ -100,7 +100,8 @@ jobs:
             "mod_version": "${{ steps.version.outputs.version }}",
             "jar_filename": "${{ steps.jar.outputs.name }}",
             "jar_data": "${JAR_BASE64}",
-            "changelog": $(echo "$CHANGELOG" | jq -Rs .)
+            "changelog": $(echo "$CHANGELOG" | jq -Rs .),
+            "disable_announcement": true
           }
           EOF
         env:
