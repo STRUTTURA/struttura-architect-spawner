@@ -99,7 +99,7 @@ The **adventure engine**. As you explore your survival world, player-made buildi
 
 Join the **Struttura Discord** to chat with other builders, share your creations, suggest features, and get help:
 
-**[Join our Discord Server](https://discord.gg/sq9Ah3Ch)**
+**[Join our Discord Server](https://discord.gg/V26Adu6wcR)**
 
 ### Bug Reports
 
@@ -133,5 +133,5 @@ flowchart LR
   <br>
   <i>Made with blocks and love.</i>
   <br><br>
-  <a href="https://struttura.magius.it">Website</a> · <a href="https://discord.gg/sq9Ah3Ch">Discord</a> · <a href="https://modrinth.com">Modrinth</a> · <a href="https://www.curseforge.com">CurseForge</a>
+  <a href="https://struttura.magius.it">Website</a> · <a href="https://discord.gg/V26Adu6wcR">Discord</a> · <a href="https://modrinth.com">Modrinth</a> · <a href="https://www.curseforge.com">CurseForge</a>
 </p>
