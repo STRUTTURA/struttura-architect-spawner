@@ -106,6 +106,11 @@ Join the **Struttura Discord** to chat with other builders, share your creations
 - **Mod issues** — Use the [Issues](https://github.com/STRUTTURA/struttura-architect-spawner/issues) tab on this repository
 - **Website issues** — Report them on the [Issues](https://github.com/STRUTTURA/struttura-architect-spawner/issues) tab on this repository
 
+### Support Us
+
+- **PayPal** — [Donate via PayPal](https://www.paypal.com/pool/9mu3UFMhD3)
+- **Patreon** — Coming soon
+
 ---
 
 ## How It Works
