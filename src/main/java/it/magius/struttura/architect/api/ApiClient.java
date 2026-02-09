@@ -46,7 +46,7 @@ public class ApiClient {
     /**
      * Risultato di una richiesta API.
      */
-    public record ApiResponse(int statusCode, String message, boolean success) {}
+    public record ApiResponse(int statusCode, String message, boolean success, int version) {}
 
     /**
      * Risultato di una richiesta pull con i dati della costruzione.
@@ -89,7 +89,7 @@ public class ApiClient {
                 return executePush(construction, purge);
             } catch (Exception e) {
                 Architect.LOGGER.error("Push request failed", e);
-                return new ApiResponse(0, "Error: " + e.getMessage(), false);
+                return new ApiResponse(0, "Error: " + e.getMessage(), false, 0);
             } finally {
                 REQUEST_IN_PROGRESS.set(false);
             }
@@ -145,9 +145,10 @@ public class ApiClient {
 
             // Parse risposta JSON se possibile
             String message = parseResponseMessage(responseBody, statusCode);
+            int version = parseResponseVersion(responseBody);
             boolean success = statusCode >= 200 && statusCode < 300;
 
-            return new ApiResponse(statusCode, message, success);
+            return new ApiResponse(statusCode, message, success, version);
 
         } finally {
             conn.disconnect();
@@ -595,6 +596,25 @@ public class ApiClient {
         return getDefaultMessage(statusCode);
     }
 
+    /**
+     * Extracts the version number from the response JSON body.
+     * Returns 0 if parsing fails or version is not present.
+     */
+    private static int parseResponseVersion(String responseBody) {
+        if (responseBody == null || responseBody.isEmpty()) {
+            return 0;
+        }
+        try {
+            JsonObject json = GSON.fromJson(responseBody, JsonObject.class);
+            if (json.has("version") && !json.get("version").isJsonNull()) {
+                return json.get("version").getAsInt();
+            }
+        } catch (Exception e) {
+            // Not valid JSON or no version field
+        }
+        return 0;
+    }
+
     private static String getDefaultMessage(int statusCode) {
         return switch (statusCode) {
             case 200, 201 -> "Success";
@@ -647,7 +667,7 @@ public class ApiClient {
                 return executeUploadScreenshot(constructionId, imageData, filename, title, purge);
             } catch (Exception e) {
                 Architect.LOGGER.error("Screenshot upload failed", e);
-                return new ApiResponse(0, "Error: " + e.getMessage(), false);
+                return new ApiResponse(0, "Error: " + e.getMessage(), false, 0);
             } finally {
                 REQUEST_IN_PROGRESS.set(false);
             }
@@ -713,7 +733,7 @@ public class ApiClient {
             String message = parseResponseMessage(responseBody, statusCode);
             boolean success = statusCode >= 200 && statusCode < 300;
 
-            return new ApiResponse(statusCode, message, success);
+            return new ApiResponse(statusCode, message, success, 0);
 
         } finally {
             conn.disconnect();

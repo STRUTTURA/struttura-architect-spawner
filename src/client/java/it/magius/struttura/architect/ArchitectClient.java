@@ -18,10 +18,12 @@ import it.magius.struttura.architect.network.EditingInfoPacket;
 import it.magius.struttura.architect.network.InGameBuildingPacket;
 import it.magius.struttura.architect.network.InGameListsPacket;
 import it.magius.struttura.architect.network.ModRequirementsPacket;
+import it.magius.struttura.architect.network.FirstPushDisclaimerPacket;
 import it.magius.struttura.architect.network.OpenOptionsPacket;
 import it.magius.struttura.architect.network.ScreenshotRequestPacket;
 import it.magius.struttura.architect.network.TranslationsPacket;
 import it.magius.struttura.architect.network.WireframeSyncPacket;
+import it.magius.struttura.architect.client.gui.FirstPushDisclaimerScreen;
 import it.magius.struttura.architect.client.gui.StrutturaSettingsScreen;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
@@ -233,6 +235,13 @@ public class ArchitectClient implements ClientModInitializer {
             context.client().execute(() -> {
                 Architect.LOGGER.debug("Opening settings screen via packet");
                 context.client().setScreen(new StrutturaSettingsScreen(null));
+            });
+        });
+
+        ClientPlayNetworking.registerGlobalReceiver(FirstPushDisclaimerPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                Architect.LOGGER.debug("Showing first push disclaimer screen");
+                context.client().setScreen(new FirstPushDisclaimerScreen());
             });
         });
 

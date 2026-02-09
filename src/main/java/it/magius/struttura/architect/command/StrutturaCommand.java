@@ -18,6 +18,7 @@ import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EditMode;
 import it.magius.struttura.architect.model.Room;
+import it.magius.struttura.architect.network.FirstPushDisclaimerPacket;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.placement.ConstructionOperations;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
@@ -27,6 +28,7 @@ import it.magius.struttura.architect.session.EditingSession;
 import it.magius.struttura.architect.vanilla.VanillaBatchPushState;
 import it.magius.struttura.architect.vanilla.VanillaStructureLoader;
 import net.minecraft.commands.CommandSourceStack;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.commands.Commands;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.commands.SharedSuggestionProvider;
@@ -1103,6 +1105,10 @@ public class StrutturaCommand {
                         player.sendSystemMessage(Component.literal(
                             I18n.tr(player, "push.success", id, response.statusCode(), response.message())
                         ));
+                        // Show first-push disclaimer dialog when version is 1
+                        if (response.version() == 1) {
+                            ServerPlayNetworking.send(player, new FirstPushDisclaimerPacket());
+                        }
                         Architect.LOGGER.info("Push successful for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     } else {

@@ -78,6 +78,8 @@ public class NetworkHandler {
         PayloadTypeRegistry.playC2S().register(InGameSelectPacket.TYPE, InGameSelectPacket.STREAM_CODEC);
         // Open options screen packet (for /struttura options command)
         PayloadTypeRegistry.playS2C().register(OpenOptionsPacket.TYPE, OpenOptionsPacket.STREAM_CODEC);
+        // First push disclaimer screen packet
+        PayloadTypeRegistry.playS2C().register(FirstPushDisclaimerPacket.TYPE, FirstPushDisclaimerPacket.STREAM_CODEC);
 
         // Registra il receiver per i dati dello screenshot
         ServerPlayNetworking.registerGlobalReceiver(ScreenshotDataPacket.TYPE, NetworkHandler::handleScreenshotData);
@@ -1050,6 +1052,10 @@ public class NetworkHandler {
                         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                             I18n.tr(player, "push.success", id, response.statusCode(), response.message())
                         ));
+                        // Show first-push disclaimer dialog when version is 1
+                        if (response.version() == 1) {
+                            ServerPlayNetworking.send(player, new FirstPushDisclaimerPacket());
+                        }
                         Architect.LOGGER.info("Push successful for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     } else {
