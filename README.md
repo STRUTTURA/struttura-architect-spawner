@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Fabric-0.18.2-DBB06C?style=for-the-badge" alt="Fabric Loader">
   <img src="https://img.shields.io/badge/Java-21+-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white" alt="Java Version">
   <img src="https://img.shields.io/badge/Status-Alpha-orange?style=for-the-badge" alt="Alpha">
-  <img src="https://img.shields.io/badge/License-CC0_1.0-blue?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/License-GPL_v3-blue?style=for-the-badge" alt="License">
 </p>
 
 ---
