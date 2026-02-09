@@ -109,7 +109,7 @@ Join the **Struttura Discord** to chat with other builders, share your creations
 ### Support Us
 
 - **PayPal** — [Donate via PayPal](https://www.paypal.com/pool/9mu3UFMhD3)
-- **Patreon** — Coming soon
+- **Patreon** — [Support on Patreon](https://www.patreon.com/cw/STRUTTURA)
 
 ---
 
