@@ -55,7 +55,28 @@ jobs:
           files: ${{ steps.jar.outputs.path }}
           generate_release_notes: true
 
+      # --- Fetch changelog from GitHub Release ---
+      - name: Fetch changelog
+        id: changelog
+        run: echo "body<<GHEOF" >> "$GITHUB_OUTPUT" && gh release view "${GITHUB_REF_NAME}" --json body -q .body >> "$GITHUB_OUTPUT" && echo "GHEOF" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       # --- Modrinth (optional: skipped if MODRINTH_TOKEN or MODRINTH_PROJECT_ID is missing) ---
+      - name: Delete existing Modrinth version (if re-tagging)
+        if: env.MODRINTH_TOKEN != '' && env.MODRINTH_PROJECT_ID != ''
+        run: |
+          VERSION_ID=$(curl -s -H "Authorization: $MODRINTH_TOKEN" \
+            "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT_ID/version" \
+            | jq -r --arg v "${{ steps.version.outputs.version }}" '.[] | select(.version_number == $v) | .id' | head -1)
+          if [ -n "$VERSION_ID" ] && [ "$VERSION_ID" != "null" ]; then
+            echo "Deleting existing Modrinth version $VERSION_ID"
+            curl -sf -X DELETE -H "Authorization: $MODRINTH_TOKEN" \
+              "https://api.modrinth.com/v2/version/$VERSION_ID"
+          else
+            echo "No existing version found, proceeding"
+          fi
+
       - name: Publish to Modrinth
         if: env.MODRINTH_TOKEN != '' && env.MODRINTH_PROJECT_ID != ''
         uses: Kir-Antipov/mc-publish@v3.3
@@ -68,6 +89,7 @@ jobs:
           version-type: alpha
           loaders: fabric
           game-versions: 1.21.11
+          changelog: ${{ steps.changelog.outputs.body }}
           dependencies: |
             fabric-api | depends
 
@@ -84,6 +106,7 @@ jobs:
           version-type: alpha
           loaders: fabric
           game-versions: 1.21.11
+          changelog: ${{ steps.changelog.outputs.body }}
           dependencies: |
             fabric-api | depends
 
