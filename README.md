@@ -62,8 +62,8 @@ The **adventure engine**. As you explore your survival world, player-made buildi
 | Platform | Link |
 |:--------:|:----:|
 | **GitHub Releases** | [Download from Releases](https://github.com/STRUTTURA/struttura-architect-spawner/releases) |
-| **Modrinth** | [Download from Modrinth](https://modrinth.com) |
-| **CurseForge** | [Download from CurseForge](https://www.curseforge.com) |
+| **Modrinth** | [Download from Modrinth](https://modrinth.com/mod/struttura) |
+| **CurseForge** | [Download from CurseForge](https://www.curseforge.com/minecraft/mc-mods/struttura) |
 | **Struttura Website** | [struttura.magius.it](https://struttura.magius.it) |
 
 </p>
@@ -138,5 +138,5 @@ flowchart LR
   <br>
   <i>Made with blocks and love.</i>
   <br><br>
-  <a href="https://struttura.magius.it">Website</a> · <a href="https://discord.gg/V26Adu6wcR">Discord</a> · <a href="https://modrinth.com">Modrinth</a> · <a href="https://www.curseforge.com">CurseForge</a>
+  <a href="https://struttura.magius.it">Website</a> · <a href="https://discord.gg/V26Adu6wcR">Discord</a> · <a href="https://modrinth.com/mod/struttura">Modrinth</a> · <a href="https://www.curseforge.com/minecraft/mc-mods/struttura">CurseForge</a>
 </p>
