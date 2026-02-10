@@ -5,6 +5,7 @@ import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.registry.ModItems;
 import it.magius.struttura.architect.session.EditingSession;
+import it.magius.struttura.architect.ChatMessages;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -63,15 +64,13 @@ public class TapeAttackHandler {
 
         // Check if in editing mode
         if (session == null) {
-            serverPlayer.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(serverPlayer, "tape.error.not_editing")));
+            ChatMessages.send(serverPlayer, ChatMessages.Level.ERROR, "tape.error.not_editing");
             return InteractionResult.FAIL;
         }
 
         // Check if editing a room - tape only works on base construction
         if (session.isInRoom()) {
-            serverPlayer.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(serverPlayer, "tape.error.not_in_room")));
+            ChatMessages.send(serverPlayer, ChatMessages.Level.ERROR, "tape.error.not_in_room");
             return InteractionResult.FAIL;
         }
 
@@ -80,8 +79,7 @@ public class TapeAttackHandler {
         boolean isInConstruction = construction.containsBlock(pos);
 
         if (!isInConstruction) {
-            serverPlayer.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(serverPlayer, "tape.error.not_in_construction")));
+            ChatMessages.send(serverPlayer, ChatMessages.Level.ERROR, "tape.error.not_in_construction");
             return InteractionResult.FAIL;
         }
 

@@ -6,6 +6,7 @@ import it.magius.struttura.architect.placement.BlockUtils;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
 import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
+import it.magius.struttura.architect.ChatMessages;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -134,11 +135,11 @@ public class ConstructionHammerItem extends Item {
             int totalBlocks = isInRoom && session.getCurrentRoomObject() != null
                 ? session.getCurrentRoomObject().getChangedBlockCount()
                 : currentConstruction.getBlockCount();
-            String targetName = formatTargetName(session);
+            String targetName = ChatMessages.formatTargetName(player, session);
             String coords = String.format("§8[%d, %d, %d]", clickedPos.getX(), clickedPos.getY(), clickedPos.getZ());
             String countSuffix = removedCount > 1 ? " (-" + removedCount + ")" : "";
-            player.sendSystemMessage(Component.literal(targetName + ": §c" +
-                    I18n.tr(player, "block.removed") + " " + coords + countSuffix + " §7(" + totalBlocks + ")"));
+            ChatMessages.sendTarget(player, targetName, ChatMessages.Level.ERROR,
+                    I18n.tr(player, "block.removed") + " " + coords + countSuffix + " §7(" + totalBlocks + ")");
 
             NetworkHandler.sendWireframeSync(player);
             NetworkHandler.sendEditingInfo(player);
@@ -190,11 +191,11 @@ public class ConstructionHammerItem extends Item {
                     int totalBlocks = isInRoom && session.getCurrentRoomObject() != null
                         ? session.getCurrentRoomObject().getChangedBlockCount()
                         : currentConstruction.getBlockCount();
-                    String targetName = formatTargetName(session);
+                    String targetName = ChatMessages.formatTargetName(player, session);
                     String coords = String.format("§8[%d, %d, %d]", clickedPos.getX(), clickedPos.getY(), clickedPos.getZ());
                     String countSuffix = addedCount > 1 ? " (+" + addedCount + ")" : "";
-                    player.sendSystemMessage(Component.literal(targetName + ": §a" +
-                            I18n.tr(player, "block.added") + " " + coords + countSuffix + " §7(" + totalBlocks + ")"));
+                    ChatMessages.sendTarget(player, targetName, ChatMessages.Level.INFO,
+                            I18n.tr(player, "block.added") + " " + coords + countSuffix + " §7(" + totalBlocks + ")");
 
                     NetworkHandler.sendWireframeSync(player);
                     NetworkHandler.sendEditingInfo(player);
@@ -209,21 +210,6 @@ public class ConstructionHammerItem extends Item {
     /**
      * Formatta il nome del target corrente (edificio o edificio/stanza) con colori.
      */
-    private String formatTargetName(EditingSession session) {
-        String constructionId = session.getConstruction().getId();
-        // Estrai solo l'ultima parte dell'ID (dopo l'ultimo punto)
-        String shortName = constructionId.contains(".")
-            ? constructionId.substring(constructionId.lastIndexOf('.') + 1)
-            : constructionId;
-
-        if (session.isInRoom()) {
-            var room = session.getCurrentRoomObject();
-            String roomName = room != null ? room.getName() : session.getCurrentRoom();
-            return "§d" + shortName + "§7/§e" + roomName;
-        } else {
-            return "§d" + shortName;
-        }
-    }
 
     private void exitAndEnterConstruction(ServerPlayer player, EditingSession currentSession, String newConstructionId) {
         // enterConstruction ora gestisce automaticamente l'exit dalla sessione corrente
@@ -235,8 +221,7 @@ public class ConstructionHammerItem extends Item {
         var construction = registry.get(id);
 
         if (construction == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "error.construction_not_found", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "error.construction_not_found", id);
             return;
         }
 
@@ -258,8 +243,7 @@ public class ConstructionHammerItem extends Item {
         NetworkHandler.sendWireframeSync(player);
         NetworkHandler.sendEditingInfo(player);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "enter.success", id)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "enter.success", id);
     }
 
     /**

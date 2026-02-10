@@ -3,6 +3,7 @@ package it.magius.struttura.architect.item;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.session.EditingSession;
+import it.magius.struttura.architect.ChatMessages;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -56,15 +57,13 @@ public class MeasuringTapeItem extends Item {
 
         // Check if in editing mode
         if (session == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "tape.error.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "tape.error.not_editing");
             return InteractionResult.FAIL;
         }
 
         // Check if editing a room - tape only works on base construction
         if (session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "tape.error.not_in_room")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "tape.error.not_in_room");
             return InteractionResult.FAIL;
         }
 
@@ -73,8 +72,7 @@ public class MeasuringTapeItem extends Item {
         boolean isInConstruction = construction.containsBlock(clickedPos);
 
         if (!isInConstruction) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "tape.error.not_in_construction")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "tape.error.not_in_construction");
             return InteractionResult.FAIL;
         }
 

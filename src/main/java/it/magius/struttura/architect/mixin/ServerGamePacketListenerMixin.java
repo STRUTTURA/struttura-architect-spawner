@@ -8,6 +8,7 @@ import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.session.EditingSession;
+import it.magius.struttura.architect.ChatMessages;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.server.level.ServerLevel;
@@ -107,8 +108,7 @@ public class ServerGamePacketListenerMixin {
                 });
                 if (isAttack.get()) {
                     // Block the attack - entity is protected
-                    player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                            I18n.tr(player, "entity.protected")));
+                    ChatMessages.send(player, ChatMessages.Level.ERROR, "entity.protected");
                     ci.cancel();
                 }
             }
@@ -122,16 +122,14 @@ public class ServerGamePacketListenerMixin {
 
         // For tape, show error if not in editing mode
         if (holdingTape && session == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "tape.error.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "tape.error.not_editing");
             ci.cancel();
             return;
         }
 
         // For tape, show error if editing a room (tape only works on base construction)
         if (holdingTape && session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "tape.error.not_in_room")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "tape.error.not_in_room");
             ci.cancel();
             return;
         }
@@ -243,10 +241,10 @@ public class ServerGamePacketListenerMixin {
                 construction.untrackSpawnedEntity(entityId);
             }
 
-            String targetName = formatTargetName(session);
+            String targetName = ChatMessages.formatTargetName(player, session);
             int entityCount = inRoom && room != null ? room.getEntityCount() : construction.getEntityCount();
-            player.sendSystemMessage(Component.literal(targetName + ": §c" +
-                    I18n.tr(player, "entity.removed") + " §7(" + entityCount + ")"));
+            ChatMessages.sendTarget(player, targetName, ChatMessages.Level.ERROR,
+                    I18n.tr(player, "entity.removed") + " §7(" + entityCount + ")");
         } else {
             // Add the entity
             EntityData data = EntityData.fromEntity(entity, construction.getBounds(), level.registryAccess());
@@ -264,10 +262,10 @@ public class ServerGamePacketListenerMixin {
             net.minecraft.core.BlockPos entityBlockPos = entity.blockPosition();
             construction.getBounds().expandToInclude(entityBlockPos);
 
-            String targetName = formatTargetName(session);
+            String targetName = ChatMessages.formatTargetName(player, session);
             int entityCount = inRoom && room != null ? room.getEntityCount() : construction.getEntityCount();
-            player.sendSystemMessage(Component.literal(targetName + ": §a" +
-                    I18n.tr(player, "entity.added") + " §7(" + entityCount + ")"));
+            ChatMessages.sendTarget(player, targetName, ChatMessages.Level.INFO,
+                    I18n.tr(player, "entity.added") + " §7(" + entityCount + ")");
         }
 
         // Update UI
@@ -288,14 +286,12 @@ public class ServerGamePacketListenerMixin {
         boolean isTracked = session.isEntityTracked(entityId);
 
         if (!isTracked) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "tape.error.not_in_construction")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "tape.error.not_in_construction");
             return;
         }
 
         // Entity is in construction but tape has no action on entities yet
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "tape.entity.no_action")));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "tape.entity.no_action");
     }
 
     /**
@@ -311,14 +307,12 @@ public class ServerGamePacketListenerMixin {
         boolean isTracked = session.isEntityTracked(entityId);
 
         if (!isTracked) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "tape.error.not_in_construction")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "tape.error.not_in_construction");
             return;
         }
 
         // Entity is in construction but tape has no action on entities yet
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "tape.entity.no_action")));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "tape.entity.no_action");
     }
 
     /**
@@ -335,34 +329,13 @@ public class ServerGamePacketListenerMixin {
 
         if (isTracked) {
             // Entity is included: prevent killing
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entity.protected")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entity.protected");
         } else {
             // Entity not included: kill without drops
             // Use discard() to remove without effects
             entity.discard();
 
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entity.killed")));
-        }
-    }
-
-    /**
-     * Formatta il nome del target corrente (edificio o edificio/stanza) con colori.
-     */
-    @Unique
-    private String formatTargetName(EditingSession session) {
-        String constructionId = session.getConstruction().getId();
-        String shortName = constructionId.contains(".")
-            ? constructionId.substring(constructionId.lastIndexOf('.') + 1)
-            : constructionId;
-
-        if (session.isInRoom()) {
-            Room room = session.getCurrentRoomObject();
-            String roomName = room != null ? room.getName() : session.getCurrentRoom();
-            return "§d" + shortName + "§7/§e" + roomName;
-        } else {
-            return "§d" + shortName;
+            ChatMessages.send(player, ChatMessages.Level.INFO, "entity.killed");
         }
     }
 

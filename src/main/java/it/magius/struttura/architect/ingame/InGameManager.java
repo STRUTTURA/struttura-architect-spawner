@@ -1,6 +1,7 @@
 package it.magius.struttura.architect.ingame;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.ChatMessages;
 import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.ingame.cache.BuildingCache;
@@ -543,10 +544,7 @@ public class InGameManager {
 
         // Notify players
         if (server != null) {
-            for (net.minecraft.server.level.ServerPlayer player : server.getPlayerList().getPlayers()) {
-                player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                    "§a[Struttura] §f Spawner activated with " + list.getBuildingCount() + " buildings"));
-            }
+            ChatMessages.broadcastRaw(server, ChatMessages.Level.INFO, "Spawner activated with " + list.getBuildingCount() + " buildings");
         }
     }
 

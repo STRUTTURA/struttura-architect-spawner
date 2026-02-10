@@ -673,10 +673,8 @@ public class MainPanel {
     private void executeAction(String action, String targetId) {
         Architect.LOGGER.debug("GUI action: {} on {}", action, targetId);
 
-        // Chiudi GUI per azioni che spostano il player
-        if (action.equals("tp")) {
-            Minecraft.getInstance().setScreen(null);
-        }
+        // Close the screen so the player can see server response messages in chat
+        Minecraft.getInstance().setScreen(null);
 
         ClientPlayNetworking.send(new GuiActionPacket(action, targetId != null ? targetId : "", ""));
     }

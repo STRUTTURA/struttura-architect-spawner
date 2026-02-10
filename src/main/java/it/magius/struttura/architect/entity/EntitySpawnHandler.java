@@ -1,6 +1,7 @@
 package it.magius.struttura.architect.entity;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.ChatMessages;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.EntityData;
@@ -178,10 +179,10 @@ public class EntitySpawnHandler {
         construction.getBounds().expandToInclude(entity.blockPosition());
 
         // Notify the player
-        String targetName = formatTargetName(session);
+        String targetName = ChatMessages.formatTargetName(player, session);
         int entityCount = inRoom && room != null ? room.getEntityCount() : construction.getEntityCount();
-        player.sendSystemMessage(Component.literal(targetName + ": §a" +
-                I18n.tr(player, "entity.added") + " §7(" + entityCount + ")"));
+        ChatMessages.sendTarget(player, targetName, ChatMessages.Level.INFO,
+                I18n.tr(player, "entity.added") + " §7(" + entityCount + ")");
 
         // Update UI
         NetworkHandler.sendWireframeSync(player);
@@ -191,21 +192,4 @@ public class EntitySpawnHandler {
             entity.getType().getDescriptionId(), construction.getId(), inRoom ? room.getId() : "base");
     }
 
-    /**
-     * Formatta il nome del target corrente (edificio o edificio/stanza) con colori.
-     */
-    private String formatTargetName(EditingSession session) {
-        String constructionId = session.getConstruction().getId();
-        String shortName = constructionId.contains(".")
-            ? constructionId.substring(constructionId.lastIndexOf('.') + 1)
-            : constructionId;
-
-        if (session.isInRoom()) {
-            Room room = session.getCurrentRoomObject();
-            String roomName = room != null ? room.getName() : session.getCurrentRoom();
-            return "§d" + shortName + "§7/§e" + roomName;
-        } else {
-            return "§d" + shortName;
-        }
-    }
 }

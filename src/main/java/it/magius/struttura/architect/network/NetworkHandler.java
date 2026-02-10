@@ -16,6 +16,7 @@ import it.magius.struttura.architect.selection.SelectionManager;
 import it.magius.struttura.architect.session.EditingSession;
 import it.magius.struttura.architect.vanilla.VanillaBatchPushState;
 import it.magius.struttura.architect.command.StrutturaCommand;
+import it.magius.struttura.architect.ChatMessages;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
@@ -330,9 +331,7 @@ public class NetworkHandler {
         String filename = "screenshot_" + System.currentTimeMillis() + ".jpg";
 
         // Messaggio di caricamento
-        player.sendSystemMessage(Component.literal(
-            I18n.tr(player, "shot.sending", constructionId)
-        ));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "shot.sending", constructionId);
 
         // Cattura il server per il callback sul main thread
         var server = ((ServerLevel) player.level()).getServer();
@@ -342,15 +341,11 @@ public class NetworkHandler {
             // Callback eseguito su thread async, schedula sul main thread
             server.execute(() -> {
                 if (response.success()) {
-                    player.sendSystemMessage(Component.literal(
-                        I18n.tr(player, "shot.success", constructionId, response.message())
-                    ));
+                    ChatMessages.send(player, ChatMessages.Level.INFO, "shot.success", constructionId, response.message());
                     Architect.LOGGER.info("Screenshot upload successful for {}: {} - {}",
                         constructionId, response.statusCode(), response.message());
                 } else {
-                    player.sendSystemMessage(Component.literal(
-                        I18n.tr(player, "shot.failed", constructionId, response.message())
-                    ));
+                    ChatMessages.send(player, ChatMessages.Level.ERROR, "shot.failed", constructionId, response.message());
                     Architect.LOGGER.warn("Screenshot upload failed for {}: {} - {}",
                         constructionId, response.statusCode(), response.message());
                 }
@@ -358,9 +353,7 @@ public class NetworkHandler {
         });
 
         if (!started) {
-            player.sendSystemMessage(Component.literal(
-                I18n.tr(player, "push.request_in_progress")
-            ));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
         }
     }
 
@@ -374,8 +367,7 @@ public class NetworkHandler {
         // Controlla se è in editing
         EditingSession session = EditingSession.getSession(player.getUUID());
         if (session == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "error.not_in_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "error.not_in_editing");
             return;
         }
 
@@ -394,8 +386,7 @@ public class NetworkHandler {
         EditMode newMode = currentMode == EditMode.ADD ? EditMode.REMOVE : EditMode.ADD;
         session.setMode(newMode);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "mode.changed", newMode.name())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "mode.changed", newMode.name());
 
         // Update wireframe preview and editing info
         sendWireframeSync(player);
@@ -406,8 +397,7 @@ public class NetworkHandler {
         // Usa le coordinate precise del giocatore, funziona anche in spectator mode
         BlockPos targetPos = BlockPos.containing(player.getX(), player.getY(), player.getZ());
         SelectionManager.getInstance().setPos1(player, targetPos);
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "selection.pos1_set", targetPos.getX(), targetPos.getY(), targetPos.getZ())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "selection.pos1_set", targetPos.getX(), targetPos.getY(), targetPos.getZ());
         sendWireframeSync(player);
     }
 
@@ -415,15 +405,13 @@ public class NetworkHandler {
         // Usa le coordinate precise del giocatore, funziona anche in spectator mode
         BlockPos targetPos = BlockPos.containing(player.getX(), player.getY(), player.getZ());
         SelectionManager.getInstance().setPos2(player, targetPos);
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "selection.pos2_set", targetPos.getX(), targetPos.getY(), targetPos.getZ())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "selection.pos2_set", targetPos.getX(), targetPos.getY(), targetPos.getZ());
         sendWireframeSync(player);
     }
 
     private static void handleClear(ServerPlayer player) {
         SelectionManager.getInstance().clearSelection(player);
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "selection.cleared")));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "selection.cleared");
         sendWireframeSync(player);
     }
 
@@ -431,8 +419,7 @@ public class NetworkHandler {
         // Controlla se ha una selezione completa
         SelectionManager.Selection selection = SelectionManager.getInstance().getSelection(player);
         if (selection == null || !selection.isComplete()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "error.selection_incomplete")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "error.selection_incomplete");
             return;
         }
 
@@ -529,8 +516,7 @@ public class NetworkHandler {
 
             int totalBlocks = inRoom && room != null ? room.getChangedBlockCount() : construction.getBlockCount();
             String entityMsg = entitiesAdded > 0 ? " +" + entitiesAdded + " entities" : "";
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "select.apply.add_success", addedCount, skippedAir, totalBlocks) + entityMsg));
+            ChatMessages.sendRaw(player, ChatMessages.Level.INFO, I18n.tr(player, "select.apply.add_success", addedCount, skippedAir, totalBlocks) + entityMsg);
         } else {
             // Mode REMOVE: rimuovi i blocchi dalla costruzione o stanza
             int removedCount = 0;
@@ -567,8 +553,7 @@ public class NetworkHandler {
             sendBlockList(player);
 
             int totalBlocks = inRoom && room != null ? room.getChangedBlockCount() : construction.getBlockCount();
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "select.apply.remove_success", removedCount, skippedNotInTarget, totalBlocks)));
+            ChatMessages.send(player, ChatMessages.Level.INFO, "select.apply.remove_success", removedCount, skippedNotInTarget, totalBlocks);
         }
     }
 
@@ -626,27 +611,23 @@ public class NetworkHandler {
         ConstructionRegistry registry = ConstructionRegistry.getInstance();
 
         if (!registry.exists(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "show.not_found", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "show.not_found", id);
             return;
         }
 
         if (isConstructionBeingEdited(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "show.in_editing", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "show.in_editing", id);
             return;
         }
 
         if (VISIBLE_CONSTRUCTIONS.contains(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "show.already_visible", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "show.already_visible", id);
             return;
         }
 
         Construction construction = registry.get(id);
         if (construction == null || construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "show.empty", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "show.empty", id);
             return;
         }
 
@@ -662,29 +643,25 @@ public class NetworkHandler {
 
         VISIBLE_CONSTRUCTIONS.add(id);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "show.success", id, result.blocksPlaced())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "show.success", id, result.blocksPlaced());
     }
 
     private static void handleGuiHide(ServerPlayer player, String id) {
         ConstructionRegistry registry = ConstructionRegistry.getInstance();
 
         if (!registry.exists(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "hide.not_found", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "hide.not_found", id);
             return;
         }
 
         if (isConstructionBeingEdited(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "hide.in_editing", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "hide.in_editing", id);
             return;
         }
 
         Construction construction = registry.get(id);
         if (construction == null || construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "hide.not_found", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "hide.not_found", id);
             return;
         }
 
@@ -701,28 +678,24 @@ public class NetworkHandler {
 
         VISIBLE_CONSTRUCTIONS.remove(id);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "hide.success", id, result.blocksRemoved())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "hide.success", id, result.blocksRemoved());
     }
 
     private static void handleGuiTp(ServerPlayer player, String id) {
         Construction construction = getConstructionIncludingEditing(id);
         if (construction == null || !construction.getBounds().isValid()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "tp.not_found", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "tp.not_found", id);
             return;
         }
 
         BlockPos pos = teleportToConstruction(player, construction);
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "tp.success_self", id, pos.getX(), pos.getY(), pos.getZ())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "tp.success_self", id, pos.getX(), pos.getY(), pos.getZ());
     }
 
     private static void handleGuiEdit(ServerPlayer player, String id) {
         // Valida formato ID
         if (!Construction.isValidId(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "edit.invalid_id", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "edit.invalid_id", id);
             return;
         }
 
@@ -732,8 +705,7 @@ public class NetworkHandler {
             // Solo blocca se un ALTRO giocatore sta modificando questa costruzione
             if (existingSession != null && !existingSession.getPlayer().getUUID().equals(player.getUUID())) {
                 String otherPlayerName = existingSession.getPlayer().getName().getString();
-                player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                        I18n.tr(player, "edit.already_in_use", id, otherPlayerName)));
+                ChatMessages.send(player, ChatMessages.Level.ERROR, "edit.already_in_use", id, otherPlayerName);
                 return;
             }
         }
@@ -770,14 +742,12 @@ public class NetworkHandler {
         sendEditingInfo(player);
         sendConstructionList(player);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "edit.success", id)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "edit.success", id);
     }
 
     private static void handleGuiDone(ServerPlayer player, boolean saveEntities) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -804,19 +774,16 @@ public class NetworkHandler {
         sendEditingInfoEmpty(player);
         sendConstructionList(player);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "done.success", construction.getId(), construction.getBlockCount())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "done.success", construction.getId(), construction.getBlockCount());
     }
 
     private static void handleGuiGive(ServerPlayer player) {
         ItemStack hammerStack = new ItemStack(ModItems.CONSTRUCTION_HAMMER);
 
         if (player.getInventory().add(hammerStack)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "give.success")));
+            ChatMessages.send(player, ChatMessages.Level.INFO, "give.success");
         } else {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "give.inventory_full")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "give.inventory_full");
         }
     }
 
@@ -825,8 +792,7 @@ public class NetworkHandler {
             // Use current editing session if no ID provided
             EditingSession session = EditingSession.getSession(player);
             if (session == null) {
-                player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                        I18n.tr(player, "shot.no_id")));
+                ChatMessages.send(player, ChatMessages.Level.ERROR, "shot.no_id");
                 return;
             }
             constructionId = session.getConstruction().getId();
@@ -834,8 +800,7 @@ public class NetworkHandler {
 
         String screenshotTitle = (title != null && !title.isEmpty()) ? title : "Screenshot";
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "shot.in_editing", constructionId)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "shot.in_editing", constructionId);
 
         sendScreenshotRequest(player, constructionId, screenshotTitle);
     }
@@ -843,8 +808,7 @@ public class NetworkHandler {
     private static void handleGuiTitle(ServerPlayer player, String langId, String title) {
         EditingSession session = EditingSession.getSession(player);
         if (session == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -859,8 +823,7 @@ public class NetworkHandler {
 
         session.getConstruction().setTitle(lang, title);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "title.success", lang, title)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "title.success", lang, title);
 
         // Update translations on client
         sendTranslations(player);
@@ -870,8 +833,7 @@ public class NetworkHandler {
         // Il giocatore deve essere in editing
         EditingSession session = EditingSession.getSession(player);
         if (session == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -884,23 +846,20 @@ public class NetworkHandler {
 
         // Valida il nuovo ID
         if (!Construction.isValidId(newId)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "edit.invalid_id", newId)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "edit.invalid_id", newId);
             return;
         }
 
         // Verifica che il nuovo ID non esista già (nel registry o in altre sessioni)
         if (ConstructionRegistry.getInstance().exists(newId)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "rename.id_exists", newId)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "rename.id_exists", newId);
             return;
         }
 
         // Verifica che un altro giocatore non stia già modificando una costruzione con il nuovo ID
         for (EditingSession otherSession : EditingSession.getAllSessions()) {
             if (otherSession != session && otherSession.getConstruction().getId().equals(newId)) {
-                player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                        I18n.tr(player, "rename.id_exists", newId)));
+                ChatMessages.send(player, ChatMessages.Level.ERROR, "rename.id_exists", newId);
                 return;
             }
         }
@@ -920,8 +879,7 @@ public class NetworkHandler {
         Architect.LOGGER.info("Player {} renamed construction from {} to {}",
                 player.getName().getString(), oldId, newId);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "rename.success", oldId, newId)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "rename.success", oldId, newId);
 
         // Aggiorna le info di editing e la lista costruzioni sul client
         sendEditingInfo(player);
@@ -933,8 +891,7 @@ public class NetworkHandler {
 
         // Verifica che la costruzione esista (in registry o in editing)
         if (!registry.exists(id) && getSessionForConstruction(id) == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "destroy.not_found", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "destroy.not_found", id);
             return;
         }
 
@@ -942,8 +899,7 @@ public class NetworkHandler {
         EditingSession existingSession = getSessionForConstruction(id);
         if (existingSession != null && !existingSession.getPlayer().getUUID().equals(player.getUUID())) {
             String otherPlayerName = existingSession.getPlayer().getName().getString();
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "destroy.in_editing_by_other", id, otherPlayerName)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "destroy.in_editing_by_other", id, otherPlayerName);
             return;
         }
 
@@ -985,44 +941,38 @@ public class NetworkHandler {
 
         Architect.LOGGER.info("Player {} destroyed construction via GUI: {}", player.getName().getString(), id);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "destroy.success", id)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "destroy.success", id);
     }
 
     private static void handleGuiPush(ServerPlayer player, String id) {
         // Verifica che la costruzione NON sia in modalità editing
         if (isConstructionBeingEdited(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.in_editing", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.in_editing", id);
             return;
         }
 
         // Verifica che la costruzione esista nel registry
         ConstructionRegistry registry = ConstructionRegistry.getInstance();
         if (!registry.exists(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.not_found", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.not_found", id);
             return;
         }
 
         // Verifica che non ci sia già una richiesta in corso
         if (ApiClient.isRequestInProgress()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.request_in_progress")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
             return;
         }
 
         Construction construction = registry.get(id);
         if (construction == null || construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.empty", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.empty", id);
             return;
         }
 
         // Verifica che la costruzione abbia un titolo (obbligatorio per l'API)
         if (!construction.hasValidTitle()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.no_title", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.no_title", id);
             return;
         }
 
@@ -1034,8 +984,7 @@ public class NetworkHandler {
         }
 
         // Messaggio di invio
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "push.sending", id, construction.getBlockCount())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "push.sending", id, construction.getBlockCount());
 
         Architect.LOGGER.info("Player {} pushing construction {} ({} blocks) via GUI",
             player.getName().getString(), id, construction.getBlockCount());
@@ -1049,9 +998,7 @@ public class NetworkHandler {
             if (server != null) {
                 server.execute(() -> {
                     if (response.success()) {
-                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                            I18n.tr(player, "push.success", id, response.statusCode(), response.message())
-                        ));
+                        ChatMessages.send(player, ChatMessages.Level.INFO, "push.success", id, response.statusCode(), response.message());
                         // Show first-push disclaimer dialog when version is 1
                         if (response.version() == 1) {
                             ServerPlayNetworking.send(player, new FirstPushDisclaimerPacket());
@@ -1059,9 +1006,7 @@ public class NetworkHandler {
                         Architect.LOGGER.info("Push successful for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     } else {
-                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                            I18n.tr(player, "push.failed", id, response.statusCode(), response.message())
-                        ));
+                        ChatMessages.send(player, ChatMessages.Level.ERROR, "push.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Push failed for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     }
@@ -1070,8 +1015,7 @@ public class NetworkHandler {
         });
 
         if (!started) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.request_in_progress")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
         }
     }
 
@@ -1085,22 +1029,19 @@ public class NetworkHandler {
             String otherPlayerName = existingSession != null
                 ? existingSession.getPlayer().getName().getString()
                 : "unknown";
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "pull.in_editing", id, otherPlayerName)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.in_editing", id, otherPlayerName);
             return;
         }
 
         // Verifica che non sia già in corso un pull per questa costruzione
         if (PULLING_CONSTRUCTIONS.contains(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "pull.already_pulling", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.already_pulling", id);
             return;
         }
 
         // Verifica che non ci sia già una richiesta API in corso
         if (ApiClient.isRequestInProgress()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.request_in_progress")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
             return;
         }
 
@@ -1108,8 +1049,7 @@ public class NetworkHandler {
         PULLING_CONSTRUCTIONS.add(id);
 
         // Messaggio di inizio
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "pull.starting", id)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "pull.starting", id);
 
         Architect.LOGGER.info("Player {} pulling construction {} via GUI", player.getName().getString(), id);
 
@@ -1141,9 +1081,7 @@ public class NetworkHandler {
                         it.magius.struttura.architect.validation.CoherenceChecker.validateConstruction(
                             level, construction, true);
 
-                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                            I18n.tr(player, "pull.success", id, placementResult.blocksPlaced())
-                        ));
+                        ChatMessages.send(player, ChatMessages.Level.INFO, "pull.success", id, placementResult.blocksPlaced());
 
                         // Update construction list
                         sendConstructionList(player);
@@ -1151,9 +1089,7 @@ public class NetworkHandler {
                         Architect.LOGGER.info("Pull successful for {}: {} blocks placed",
                             id, placementResult.blocksPlaced());
                     } else {
-                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                            I18n.tr(player, "pull.failed", id, response.statusCode(), response.message())
-                        ));
+                        ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Pull failed for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     }
@@ -1166,8 +1102,7 @@ public class NetworkHandler {
 
         if (!started) {
             PULLING_CONSTRUCTIONS.remove(id);
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.request_in_progress")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
         }
     }
 
@@ -1430,14 +1365,12 @@ public class NetworkHandler {
         // Verify the construction exists (including those being edited)
         Construction construction = getConstructionIncludingEditing(id);
         if (construction == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "spawn.not_found", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "spawn.not_found", id);
             return;
         }
 
         if (construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "spawn.empty", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "spawn.empty", id);
             return;
         }
 
@@ -1449,8 +1382,7 @@ public class NetworkHandler {
         Architect.LOGGER.info("Player {} architect-spawned {} via GUI ({} blocks, {} rooms)",
             player.getName().getString(), id, result.blocksPlaced(), result.roomsSpawned());
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "spawn.architect_success", id, result.blocksPlaced(), result.roomsSpawned())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "spawn.architect_success", id, result.blocksPlaced(), result.roomsSpawned());
     }
 
     /**
@@ -1459,8 +1391,7 @@ public class NetworkHandler {
      */
     private static void handleGuiShortDesc(ServerPlayer player, String langId, String description) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -1481,8 +1412,7 @@ public class NetworkHandler {
         // Set short description
         construction.setShortDescription(lang, description);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "short_desc.saved")));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "short_desc.saved");
 
         // Update translations on client
         sendTranslations(player);
@@ -1494,8 +1424,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRemoveBlock(ServerPlayer player, String blockId) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -1587,11 +1516,9 @@ public class NetworkHandler {
                 }
             }
 
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "remove_block.success", removedCount, displayName)));
+            ChatMessages.send(player, ChatMessages.Level.INFO, "remove_block.success", removedCount, displayName);
         } else {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "remove_block.not_found", blockId)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "remove_block.not_found", blockId);
         }
     }
 
@@ -1601,8 +1528,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRemoveEntity(ServerPlayer player, String entityType) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -1693,11 +1619,9 @@ public class NetworkHandler {
                 }
             }
 
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entity.removed_count", removedCount, displayName)));
+            ChatMessages.send(player, ChatMessages.Level.INFO, "entity.removed_count", removedCount, displayName);
         } else {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entity.error.not_found")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entity.error.not_found");
         }
     }
 
@@ -1707,8 +1631,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomCreate(ServerPlayer player, String roomId, String roomName) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -1717,15 +1640,13 @@ public class NetworkHandler {
 
         // Verifica che l'ID sia valido
         if (roomId == null || roomId.isEmpty()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.error.invalid_id")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.invalid_id");
             return;
         }
 
         // Verifica che non esista già una stanza con lo stesso ID
         if (construction.getRoom(roomId) != null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.error.exists", roomId)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.exists", roomId);
             return;
         }
 
@@ -1736,8 +1657,7 @@ public class NetworkHandler {
         }
         construction.addRoom(room);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "room.created", roomId)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "room.created", roomId);
 
         // Entra in editing della stanza
         session.enterRoom(roomId);
@@ -1753,8 +1673,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomEdit(ServerPlayer player, String roomId) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -1763,8 +1682,7 @@ public class NetworkHandler {
 
         // Verifica che la stanza esista
         if (construction.getRoom(roomId) == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.not_found", roomId)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.not_found", roomId);
             return;
         }
 
@@ -1782,8 +1700,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomDelete(ServerPlayer player, String roomId) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -1792,8 +1709,7 @@ public class NetworkHandler {
 
         // Verifica che la stanza esista
         if (construction.getRoom(roomId) == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.not_found", roomId)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.not_found", roomId);
             return;
         }
 
@@ -1805,8 +1721,7 @@ public class NetworkHandler {
         // Elimina la stanza
         construction.removeRoom(roomId);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "room.deleted", roomId)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "room.deleted", roomId);
 
         // Aggiorna il client
         sendWireframeSync(player);
@@ -1821,8 +1736,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomRename(ServerPlayer player, String oldId, String extraData) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -1831,8 +1745,7 @@ public class NetworkHandler {
         // Parse extraData: newId|newName
         String[] parts = extraData.split("\\|", 2);
         if (parts.length < 2) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.error.invalid_data")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.invalid_data");
             return;
         }
 
@@ -1841,28 +1754,24 @@ public class NetworkHandler {
 
         // Verifica che l'ID sia valido
         if (newId == null || newId.isEmpty()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.error.invalid_id")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.invalid_id");
             return;
         }
 
         // Verifica lunghezza nome
         if (newName.length() > 100) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.name_too_long")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.name_too_long");
             return;
         }
 
         // Rinomina la stanza (restituisce il nuovo ID o null se fallisce)
         String resultId = session.renameRoomWithId(oldId, newId, newName);
         if (resultId != null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.renamed", oldId, newName) +
-                    (resultId.equals(oldId) ? "" : "\nNew ID: " + resultId)));
+            ChatMessages.sendRaw(player, ChatMessages.Level.INFO, I18n.tr(player, "room.renamed", oldId, newName) +
+                    (resultId.equals(oldId) ? "" : "\nNew ID: " + resultId));
         } else {
             // Fallimento: probabilmente ID già esistente
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.error.exists", newId)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.exists", newId);
         }
 
         // Aggiorna il client
@@ -1877,16 +1786,14 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomExit(ServerPlayer player, boolean saveEntities) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
         EditingSession session = EditingSession.getSession(player);
 
         if (!session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "room.not_in_room")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.not_in_room");
             return;
         }
 
@@ -1904,8 +1811,7 @@ public class NetworkHandler {
         // Esci dalla room
         session.exitRoom();
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "room.exited", roomId)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "room.exited", roomId);
 
         // Aggiorna il client
         sendWireframeSync(player);
@@ -1918,8 +1824,7 @@ public class NetworkHandler {
      */
     private static void handleGuiSetEntrance(ServerPlayer player) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -1927,8 +1832,7 @@ public class NetworkHandler {
 
         // Entrance can only be set for base construction, not rooms
         if (session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.not_in_room")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_in_room");
             return;
         }
 
@@ -1936,8 +1840,7 @@ public class NetworkHandler {
         ConstructionBounds bounds = construction.getBounds();
 
         if (!bounds.isValid()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.no_bounds")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.no_bounds");
             return;
         }
 
@@ -1952,8 +1855,7 @@ public class NetworkHandler {
         boolean withinY = playerY >= bounds.getMinY() && playerY <= bounds.getMaxY() + 1;
 
         if (!withinXZ || !withinY) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.outside_bounds")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.outside_bounds");
             return;
         }
 
@@ -1972,8 +1874,7 @@ public class NetworkHandler {
         // Save construction
         ConstructionRegistry.getInstance().register(construction);
 
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "entrance.set", playerX, playerY, playerZ)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "entrance.set", playerX, playerY, playerZ);
 
         // Update client
         sendEditingInfo(player);
@@ -1985,8 +1886,7 @@ public class NetworkHandler {
      */
     private static void handleGuiTpEntrance(ServerPlayer player) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -1994,28 +1894,24 @@ public class NetworkHandler {
 
         // Entrance can only be used for base construction, not rooms
         if (session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.not_in_room")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_in_room");
             return;
         }
 
         Construction construction = session.getConstruction();
 
         if (!construction.getAnchors().hasEntrance()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.not_set")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_set");
             return;
         }
 
         if (!construction.getBounds().isValid()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.no_bounds")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.no_bounds");
             return;
         }
 
         BlockPos pos = teleportToConstruction(player, construction);
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "entrance.tp", pos.getX(), pos.getY(), pos.getZ())));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "entrance.tp", pos.getX(), pos.getY(), pos.getZ());
     }
 
     /**
@@ -2024,8 +1920,7 @@ public class NetworkHandler {
      */
     private static void handleGuiAdjustEntranceY(ServerPlayer player, String deltaStr) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "command.not_editing")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
             return;
         }
 
@@ -2033,23 +1928,20 @@ public class NetworkHandler {
 
         // Entrance can only be adjusted for base construction, not rooms
         if (session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.not_in_room")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_in_room");
             return;
         }
 
         Construction construction = session.getConstruction();
 
         if (!construction.getAnchors().hasEntrance()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.not_set")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_set");
             return;
         }
 
         ConstructionBounds bounds = construction.getBounds();
         if (!bounds.isValid()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.no_bounds")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.no_bounds");
             return;
         }
 
@@ -2072,8 +1964,7 @@ public class NetworkHandler {
         // Check bounds (normalized Y must be within 0 to maxY of the construction)
         int maxY = bounds.getMaxY() - bounds.getMinY();
         if (newY < 0 || newY > maxY) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "entrance.y_out_of_bounds")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.y_out_of_bounds");
             return;
         }
 
@@ -2086,8 +1977,7 @@ public class NetworkHandler {
 
         // Calculate world coordinates for message
         int worldY = newY + bounds.getMinY();
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "entrance.y_adjusted", worldY)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "entrance.y_adjusted", worldY);
 
         // Update client
         sendEditingInfo(player);
@@ -2101,8 +1991,7 @@ public class NetworkHandler {
         // Verify the construction exists
         Construction construction = getConstructionIncludingEditing(id);
         if (construction == null) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "move.not_found", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "move.not_found", id);
             return;
         }
 
@@ -2112,14 +2001,12 @@ public class NetworkHandler {
             String otherPlayerName = existingSession != null
                 ? existingSession.getPlayer().getName().getString()
                 : "unknown";
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "move.in_editing", id, otherPlayerName)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "move.in_editing", id, otherPlayerName);
             return;
         }
 
         if (construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "move.empty", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "move.empty", id);
             return;
         }
 
@@ -2153,11 +2040,9 @@ public class NetworkHandler {
             player.getName().getString(), id, placementResult.blocksPlaced(), placementResult.entitiesSpawned());
 
         if (placementResult.entitiesSpawned() > 0) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "move.success_with_entities", id, placementResult.blocksPlaced(), placementResult.entitiesSpawned())));
+            ChatMessages.send(player, ChatMessages.Level.INFO, "move.success_with_entities", id, placementResult.blocksPlaced(), placementResult.entitiesSpawned());
         } else {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "move.success", id, placementResult.blocksPlaced())));
+            ChatMessages.send(player, ChatMessages.Level.INFO, "move.success", id, placementResult.blocksPlaced());
         }
     }
 
@@ -2500,28 +2385,24 @@ public class NetworkHandler {
             String otherPlayerName = existingSession != null
                 ? existingSession.getPlayer().getName().getString()
                 : "unknown";
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "pull.in_editing", id, otherPlayerName)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.in_editing", id, otherPlayerName);
             return;
         }
 
         // Verifica che non sia già in corso un pull per questa costruzione
         if (PULLING_CONSTRUCTIONS.contains(id)) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "pull.already_pulling", id)));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.already_pulling", id);
             return;
         }
 
         // Verifica che non ci sia già una richiesta API in corso
         if (ApiClient.isRequestInProgress()) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.request_in_progress")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
             return;
         }
 
         // Messaggio di inizio
-        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                I18n.tr(player, "pull.checking", id)));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "pull.checking", id);
 
         Architect.LOGGER.info("Player {} checking mod requirements for {} via GUI",
             player.getName().getString(), id);
@@ -2544,9 +2425,7 @@ public class NetworkHandler {
                         Architect.LOGGER.info("Sent mod requirements for {} to {}: {} mods",
                             id, player.getName().getString(), response.requiredMods().size());
                     } else {
-                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                            I18n.tr(player, "pull.failed", id, response.statusCode(), response.message())
-                        ));
+                        ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Pull check failed for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     }
@@ -2555,8 +2434,7 @@ public class NetworkHandler {
         });
 
         if (!started) {
-            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
-                    I18n.tr(player, "push.request_in_progress")));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
         }
     }
 
@@ -2874,27 +2752,19 @@ public class NetworkHandler {
                 Architect.LOGGER.info("Player {} declined InGame mode", player.getName().getString());
                 manager.decline();
                 // Send message that adventure mode is disabled
-                player.sendSystemMessage(
-                    net.minecraft.network.chat.Component.translatable("struttura.ingame.disabled")
-                );
+                ChatMessages.send(player, ChatMessages.Level.INFO, "struttura.ingame.disabled");
                 // Hint to use /struttura give if player doesn't have the hammer
                 if (!it.magius.struttura.architect.item.ConstructionHammerItem.isInPlayerInventory(player)) {
-                    player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                        "§a[Struttura] §f" + I18n.tr(player, "give.hint")
-                    ));
+                    ChatMessages.send(player, ChatMessages.Level.INFO, "give.hint");
                 }
             }
             case SKIP -> {
                 Architect.LOGGER.info("Player {} skipped InGame mode for now", player.getName().getString());
                 // Don't mark as initialized - will retry next world load
-                player.sendSystemMessage(
-                    net.minecraft.network.chat.Component.translatable("struttura.ingame.skipped")
-                );
+                ChatMessages.send(player, ChatMessages.Level.INFO, "struttura.ingame.skipped");
                 // Hint to use /struttura give if player doesn't have the hammer
                 if (!it.magius.struttura.architect.item.ConstructionHammerItem.isInPlayerInventory(player)) {
-                    player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                        "§a[Struttura] §f" + I18n.tr(player, "give.hint")
-                    ));
+                    ChatMessages.send(player, ChatMessages.Level.INFO, "give.hint");
                 }
             }
             case SELECT -> {
@@ -2915,13 +2785,8 @@ public class NetworkHandler {
                     if (response != null && response.success() && response.spawnableList() != null) {
                         server.execute(() -> {
                             manager.setSpawnableList(response.spawnableList());
-                            player.sendSystemMessage(
-                                net.minecraft.network.chat.Component.translatable(
-                                    "struttura.ingame.activated",
-                                    packet.listName(),
-                                    response.spawnableList().getBuildingCount()
-                                )
-                            );
+                            ChatMessages.send(player, ChatMessages.Level.INFO, "struttura.ingame.activated",
+                                packet.listName(), response.spawnableList().getBuildingCount());
                         });
                     }
                 });

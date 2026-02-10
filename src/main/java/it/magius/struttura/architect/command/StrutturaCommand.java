@@ -6,6 +6,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.ChatMessages;
 import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.i18n.LanguageUtils;
@@ -1102,9 +1103,7 @@ public class StrutturaCommand {
             if (server != null) {
                 server.execute(() -> {
                     if (response.success()) {
-                        player.sendSystemMessage(Component.literal(
-                            I18n.tr(player, "push.success", id, response.statusCode(), response.message())
-                        ));
+                        ChatMessages.send(player, ChatMessages.Level.INFO, "push.success", id, response.statusCode(), response.message());
                         // Show first-push disclaimer dialog when version is 1
                         if (response.version() == 1) {
                             ServerPlayNetworking.send(player, new FirstPushDisclaimerPacket());
@@ -1112,9 +1111,7 @@ public class StrutturaCommand {
                         Architect.LOGGER.info("Push successful for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     } else {
-                        player.sendSystemMessage(Component.literal(
-                            I18n.tr(player, "push.failed", id, response.statusCode(), response.message())
-                        ));
+                        ChatMessages.send(player, ChatMessages.Level.ERROR, "push.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Push failed for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     }
@@ -1529,14 +1526,10 @@ public class StrutturaCommand {
         // boolean tapeAdded = player.getInventory().add(tapeStack);
 
         if (hammerAdded) {
-            source.sendSuccess(() -> Component.literal(
-                "§a[Struttura] §f" + I18n.tr(player, "give.success")
-            ), false);
+            ChatMessages.send(player, ChatMessages.Level.INFO, "give.success");
             return 1;
         } else {
-            source.sendFailure(Component.literal(
-                "§a[Struttura] §f" + I18n.tr(player, "give.inventory_full")
-            ));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "give.inventory_full");
             return 0;
         }
     }
@@ -1728,16 +1721,12 @@ public class StrutturaCommand {
                             null, player.getYRot(), false
                         );
 
-                        player.sendSystemMessage(Component.literal(
-                            I18n.tr(player, "pull.success", id, placementResult.blocksPlaced())
-                        ));
+                        ChatMessages.send(player, ChatMessages.Level.INFO, "pull.success", id, placementResult.blocksPlaced());
 
                         Architect.LOGGER.info("Pull successful for {}: {} blocks placed",
                             id, placementResult.blocksPlaced());
                     } else {
-                        player.sendSystemMessage(Component.literal(
-                            I18n.tr(player, "pull.failed", id, response.statusCode(), response.message())
-                        ));
+                        ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Pull failed for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     }
@@ -2303,17 +2292,13 @@ public class StrutturaCommand {
         Architect.LOGGER.info("Loaded {} constructions ({} failed)", loadedCount, failedCount);
 
         if (loadedCount == 0) {
-            player.sendSystemMessage(Component.literal(
-                I18n.tr(player, "vanilla.batchpush.load_failed")
-            ));
+            ChatMessages.send(player, ChatMessages.Level.ERROR, "vanilla.batchpush.load_failed");
             state.fail();
             return;
         }
 
         // Start phase 2: processing
-        player.sendSystemMessage(Component.literal(
-            I18n.tr(player, "vanilla.batchpush.starting", loadedCount)
-        ));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "vanilla.batchpush.starting", loadedCount);
 
         state.setState(VanillaBatchPushState.State.PROCESSING);
         state.setCurrentIndex(0);
@@ -2333,9 +2318,7 @@ public class StrutturaCommand {
 
         // Check for async upload errors
         if (state.hasUploadError()) {
-            player.sendSystemMessage(Component.literal(
-                "§a[Struttura] §f" + "Upload error: " + state.getUploadErrorMessage()
-            ));
+            ChatMessages.sendRaw(player, ChatMessages.Level.ERROR, "Upload error: " + state.getUploadErrorMessage());
             Architect.LOGGER.error("Batch push aborted due to upload error: {}", state.getUploadErrorMessage());
             state.fail();
             return;
@@ -2343,9 +2326,7 @@ public class StrutturaCommand {
 
         // Check if batch is complete
         if (state.isComplete()) {
-            player.sendSystemMessage(Component.literal(
-                I18n.tr(player, "vanilla.batchpush.complete", state.getSuccessCount(), state.getFailCount())
-            ));
+            ChatMessages.send(player, ChatMessages.Level.INFO, "vanilla.batchpush.complete", state.getSuccessCount(), state.getFailCount());
             Architect.LOGGER.info("Vanilla batchpush complete: {} success, {} failed",
                 state.getSuccessCount(), state.getFailCount());
             state.complete();
@@ -2365,10 +2346,8 @@ public class StrutturaCommand {
         state.setCurrentConstruction(construction);
 
         // Send progress message
-        player.sendSystemMessage(Component.literal(
-            I18n.tr(player, "vanilla.batchpush.processing",
-                state.getCurrentIndex() + 1, state.getLoadedCount(), constructionId)
-        ));
+        ChatMessages.send(player, ChatMessages.Level.INFO, "vanilla.batchpush.processing",
+                state.getCurrentIndex() + 1, state.getLoadedCount(), constructionId);
 
         // Spawn the construction in front of the player
         BlockPos spawnPos = spawnConstructionForScreenshot(player, level, construction);
@@ -2598,9 +2577,7 @@ public class StrutturaCommand {
         String constructionId = state.getCurrentConstructionId();
 
         Architect.LOGGER.warn("Screenshot failed for vanilla structure {}: {}", constructionId, error);
-        player.sendSystemMessage(Component.literal(
-            I18n.tr(player, "vanilla.batchpush.screenshot_failed", constructionId)
-        ));
+        ChatMessages.send(player, ChatMessages.Level.ERROR, "vanilla.batchpush.screenshot_failed", constructionId);
 
         // Continue without screenshot - still push the structure (with null screenshot data)
         onVanillaScreenshotReceived(state, null);

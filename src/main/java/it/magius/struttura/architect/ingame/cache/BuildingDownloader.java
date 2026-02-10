@@ -1,12 +1,11 @@
 package it.magius.struttura.architect.ingame.cache;
 
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.ChatMessages;
 import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
 import it.magius.struttura.architect.ingame.model.SpawnableList;
-import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerPlayer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -87,7 +86,7 @@ public class BuildingDownloader {
         currentIndex = 0;
 
         // Notify players
-        broadcastMessage("§a[Struttura] §f Downloading " + totalBuildings + " buildings...");
+        ChatMessages.broadcastRaw(server, ChatMessages.Level.INFO, "Downloading " + totalBuildings + " buildings...");
 
         BuildingCache cache = BuildingCache.getInstance();
 
@@ -130,12 +129,12 @@ public class BuildingDownloader {
             if (response.success() && response.construction() != null) {
                 BuildingCache.getInstance().put(rdns, response.construction(), hash);
                 int done = downloadedCount.incrementAndGet();
-                broadcastMessage("§a[Struttura] §f Downloaded " + done + "/" + totalBuildings + ": " + rdns);
+                ChatMessages.broadcastRaw(server, ChatMessages.Level.INFO, "Downloaded " + done + "/" + totalBuildings + ": " + rdns);
             } else {
                 failedCount.incrementAndGet();
                 downloadedCount.incrementAndGet(); // Count as done even if failed
                 Architect.LOGGER.warn("Failed to download building {}: {}", rdns, response.message());
-                broadcastMessage("§a[Struttura] §f Failed to download: " + rdns);
+                ChatMessages.broadcastRaw(server, ChatMessages.Level.ERROR, "Failed to download: " + rdns);
             }
 
             // Move to next building
@@ -155,11 +154,11 @@ public class BuildingDownloader {
         state = DownloadState.READY;
 
         if (failed > 0) {
-            broadcastMessage("§a[Struttura] §f Download complete with " + failed + " failures (" + duration + "ms)");
+            ChatMessages.broadcastRaw(server, ChatMessages.Level.ERROR, "Download complete with " + failed + " failures (" + duration + "ms)");
         } else {
-            broadcastMessage("§a[Struttura] §f All " + totalBuildings + " buildings downloaded! (" + duration + "ms)");
+            ChatMessages.broadcastRaw(server, ChatMessages.Level.INFO, "All " + totalBuildings + " buildings downloaded! (" + duration + "ms)");
         }
-        broadcastMessage("§a[Struttura] §f Spawner is now active!");
+        ChatMessages.broadcastRaw(server, ChatMessages.Level.INFO, "Spawner is now active!");
 
         // Trigger callback
         if (onCompleteCallback != null) {
@@ -253,17 +252,4 @@ public class BuildingDownloader {
         state = DownloadState.READY;
     }
 
-    /**
-     * Broadcasts a message to all players on the server.
-     */
-    private void broadcastMessage(String message) {
-        if (server == null) {
-            return;
-        }
-        server.execute(() -> {
-            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-                player.sendSystemMessage(Component.literal(message));
-            }
-        });
-    }
 }
