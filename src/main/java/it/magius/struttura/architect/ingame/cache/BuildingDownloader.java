@@ -87,7 +87,7 @@ public class BuildingDownloader {
         currentIndex = 0;
 
         // Notify players
-        broadcastMessage("§e[STRUTTURA]§f Downloading " + totalBuildings + " buildings...");
+        broadcastMessage("§a[Struttura] §f Downloading " + totalBuildings + " buildings...");
 
         BuildingCache cache = BuildingCache.getInstance();
 
@@ -130,12 +130,12 @@ public class BuildingDownloader {
             if (response.success() && response.construction() != null) {
                 BuildingCache.getInstance().put(rdns, response.construction(), hash);
                 int done = downloadedCount.incrementAndGet();
-                broadcastMessage("§7[STRUTTURA]§f Downloaded " + done + "/" + totalBuildings + ": " + rdns);
+                broadcastMessage("§a[Struttura] §f Downloaded " + done + "/" + totalBuildings + ": " + rdns);
             } else {
                 failedCount.incrementAndGet();
                 downloadedCount.incrementAndGet(); // Count as done even if failed
                 Architect.LOGGER.warn("Failed to download building {}: {}", rdns, response.message());
-                broadcastMessage("§c[STRUTTURA]§f Failed to download: " + rdns);
+                broadcastMessage("§a[Struttura] §f Failed to download: " + rdns);
             }
 
             // Move to next building
@@ -155,11 +155,11 @@ public class BuildingDownloader {
         state = DownloadState.READY;
 
         if (failed > 0) {
-            broadcastMessage("§e[STRUTTURA]§f Download complete with " + failed + " failures (" + duration + "ms)");
+            broadcastMessage("§a[Struttura] §f Download complete with " + failed + " failures (" + duration + "ms)");
         } else {
-            broadcastMessage("§a[STRUTTURA]§f All " + totalBuildings + " buildings downloaded! (" + duration + "ms)");
+            broadcastMessage("§a[Struttura] §f All " + totalBuildings + " buildings downloaded! (" + duration + "ms)");
         }
-        broadcastMessage("§a[STRUTTURA]§f Spawner is now active!");
+        broadcastMessage("§a[Struttura] §f Spawner is now active!");
 
         // Trigger callback
         if (onCompleteCallback != null) {

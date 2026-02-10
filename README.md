@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Minecraft-1.21.11-62B47A?style=for-the-badge&logo=modrinth" alt="Minecraft Version">
-  <img src="https://img.shields.io/badge/Fabric-0.18.2-DBB06C?style=for-the-badge" alt="Fabric Loader">
+  <img src="https://img.shields.io/badge/Fabric-0.18.4-DBB06C?style=for-the-badge" alt="Fabric Loader">
   <img src="https://img.shields.io/badge/Java-21+-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white" alt="Java Version">
   <img src="https://img.shields.io/badge/Status-Alpha-orange?style=for-the-badge" alt="Alpha">
   <img src="https://img.shields.io/badge/License-GPL_v3-blue?style=for-the-badge" alt="License">
@@ -71,7 +71,7 @@ The **adventure engine**. As you explore your survival world, player-made buildi
 ### Requirements
 
 - Minecraft **1.21.11**
-- Fabric Loader **0.18.2+**
+- Fabric Loader **0.18.4+**
 - Fabric API **0.140.2+**
 - Java **21+**
 

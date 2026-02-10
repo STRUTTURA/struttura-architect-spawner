@@ -1535,7 +1535,7 @@ public class StrutturaCommand {
             return 1;
         } else {
             source.sendFailure(Component.literal(
-                "§c[Struttura] §f" + I18n.tr(player, "give.inventory_full")
+                "§a[Struttura] §f" + I18n.tr(player, "give.inventory_full")
             ));
             return 0;
         }
@@ -2334,7 +2334,7 @@ public class StrutturaCommand {
         // Check for async upload errors
         if (state.hasUploadError()) {
             player.sendSystemMessage(Component.literal(
-                "§c[Struttura] Upload error: " + state.getUploadErrorMessage()
+                "§a[Struttura] §f" + "Upload error: " + state.getUploadErrorMessage()
             ));
             Architect.LOGGER.error("Batch push aborted due to upload error: {}", state.getUploadErrorMessage());
             state.fail();

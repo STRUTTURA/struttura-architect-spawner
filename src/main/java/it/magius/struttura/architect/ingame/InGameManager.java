@@ -545,7 +545,7 @@ public class InGameManager {
         if (server != null) {
             for (net.minecraft.server.level.ServerPlayer player : server.getPlayerList().getPlayers()) {
                 player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                    "§a[STRUTTURA]§f Spawner activated with " + list.getBuildingCount() + " buildings"));
+                    "§a[Struttura] §f Spawner activated with " + list.getBuildingCount() + " buildings"));
             }
         }
     }

@@ -40,7 +40,7 @@ body:
     attributes:
       label: Fabric Loader Version
       description: The Fabric Loader version (check in Mod Menu or launcher).
-      placeholder: "e.g. 0.18.2"
+      placeholder: "e.g. 0.18.4"
     validations:
       required: true
 

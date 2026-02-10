@@ -107,7 +107,7 @@ public class ServerGamePacketListenerMixin {
                 });
                 if (isAttack.get()) {
                     // Block the attack - entity is protected
-                    player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+                    player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                             I18n.tr(player, "entity.protected")));
                     ci.cancel();
                 }
@@ -122,7 +122,7 @@ public class ServerGamePacketListenerMixin {
 
         // For tape, show error if not in editing mode
         if (holdingTape && session == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "tape.error.not_editing")));
             ci.cancel();
             return;
@@ -130,7 +130,7 @@ public class ServerGamePacketListenerMixin {
 
         // For tape, show error if editing a room (tape only works on base construction)
         if (holdingTape && session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "tape.error.not_in_room")));
             ci.cancel();
             return;
@@ -288,13 +288,13 @@ public class ServerGamePacketListenerMixin {
         boolean isTracked = session.isEntityTracked(entityId);
 
         if (!isTracked) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "tape.error.not_in_construction")));
             return;
         }
 
         // Entity is in construction but tape has no action on entities yet
-        player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "tape.entity.no_action")));
     }
 
@@ -311,13 +311,13 @@ public class ServerGamePacketListenerMixin {
         boolean isTracked = session.isEntityTracked(entityId);
 
         if (!isTracked) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "tape.error.not_in_construction")));
             return;
         }
 
         // Entity is in construction but tape has no action on entities yet
-        player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "tape.entity.no_action")));
     }
 
@@ -335,14 +335,14 @@ public class ServerGamePacketListenerMixin {
 
         if (isTracked) {
             // Entity is included: prevent killing
-            player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entity.protected")));
         } else {
             // Entity not included: kill without drops
             // Use discard() to remove without effects
             entity.discard();
 
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entity.killed")));
         }
     }

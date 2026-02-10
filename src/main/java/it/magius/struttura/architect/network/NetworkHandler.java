@@ -374,7 +374,7 @@ public class NetworkHandler {
         // Controlla se è in editing
         EditingSession session = EditingSession.getSession(player.getUUID());
         if (session == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "error.not_in_editing")));
             return;
         }
@@ -422,7 +422,7 @@ public class NetworkHandler {
 
     private static void handleClear(ServerPlayer player) {
         SelectionManager.getInstance().clearSelection(player);
-        player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "selection.cleared")));
         sendWireframeSync(player);
     }
@@ -431,7 +431,7 @@ public class NetworkHandler {
         // Controlla se ha una selezione completa
         SelectionManager.Selection selection = SelectionManager.getInstance().getSelection(player);
         if (selection == null || !selection.isComplete()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "error.selection_incomplete")));
             return;
         }
@@ -626,26 +626,26 @@ public class NetworkHandler {
         ConstructionRegistry registry = ConstructionRegistry.getInstance();
 
         if (!registry.exists(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "show.not_found", id)));
             return;
         }
 
         if (isConstructionBeingEdited(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "show.in_editing", id)));
             return;
         }
 
         if (VISIBLE_CONSTRUCTIONS.contains(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "show.already_visible", id)));
             return;
         }
 
         Construction construction = registry.get(id);
         if (construction == null || construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "show.empty", id)));
             return;
         }
@@ -670,20 +670,20 @@ public class NetworkHandler {
         ConstructionRegistry registry = ConstructionRegistry.getInstance();
 
         if (!registry.exists(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "hide.not_found", id)));
             return;
         }
 
         if (isConstructionBeingEdited(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "hide.in_editing", id)));
             return;
         }
 
         Construction construction = registry.get(id);
         if (construction == null || construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "hide.not_found", id)));
             return;
         }
@@ -708,7 +708,7 @@ public class NetworkHandler {
     private static void handleGuiTp(ServerPlayer player, String id) {
         Construction construction = getConstructionIncludingEditing(id);
         if (construction == null || !construction.getBounds().isValid()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "tp.not_found", id)));
             return;
         }
@@ -721,7 +721,7 @@ public class NetworkHandler {
     private static void handleGuiEdit(ServerPlayer player, String id) {
         // Valida formato ID
         if (!Construction.isValidId(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "edit.invalid_id", id)));
             return;
         }
@@ -732,7 +732,7 @@ public class NetworkHandler {
             // Solo blocca se un ALTRO giocatore sta modificando questa costruzione
             if (existingSession != null && !existingSession.getPlayer().getUUID().equals(player.getUUID())) {
                 String otherPlayerName = existingSession.getPlayer().getName().getString();
-                player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                         I18n.tr(player, "edit.already_in_use", id, otherPlayerName)));
                 return;
             }
@@ -776,7 +776,7 @@ public class NetworkHandler {
 
     private static void handleGuiDone(ServerPlayer player, boolean saveEntities) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -815,7 +815,7 @@ public class NetworkHandler {
             player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "give.success")));
         } else {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "give.inventory_full")));
         }
     }
@@ -825,7 +825,7 @@ public class NetworkHandler {
             // Use current editing session if no ID provided
             EditingSession session = EditingSession.getSession(player);
             if (session == null) {
-                player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                         I18n.tr(player, "shot.no_id")));
                 return;
             }
@@ -843,7 +843,7 @@ public class NetworkHandler {
     private static void handleGuiTitle(ServerPlayer player, String langId, String title) {
         EditingSession session = EditingSession.getSession(player);
         if (session == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -870,7 +870,7 @@ public class NetworkHandler {
         // Il giocatore deve essere in editing
         EditingSession session = EditingSession.getSession(player);
         if (session == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -884,14 +884,14 @@ public class NetworkHandler {
 
         // Valida il nuovo ID
         if (!Construction.isValidId(newId)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "edit.invalid_id", newId)));
             return;
         }
 
         // Verifica che il nuovo ID non esista già (nel registry o in altre sessioni)
         if (ConstructionRegistry.getInstance().exists(newId)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "rename.id_exists", newId)));
             return;
         }
@@ -899,7 +899,7 @@ public class NetworkHandler {
         // Verifica che un altro giocatore non stia già modificando una costruzione con il nuovo ID
         for (EditingSession otherSession : EditingSession.getAllSessions()) {
             if (otherSession != session && otherSession.getConstruction().getId().equals(newId)) {
-                player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                         I18n.tr(player, "rename.id_exists", newId)));
                 return;
             }
@@ -933,7 +933,7 @@ public class NetworkHandler {
 
         // Verifica che la costruzione esista (in registry o in editing)
         if (!registry.exists(id) && getSessionForConstruction(id) == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "destroy.not_found", id)));
             return;
         }
@@ -942,7 +942,7 @@ public class NetworkHandler {
         EditingSession existingSession = getSessionForConstruction(id);
         if (existingSession != null && !existingSession.getPlayer().getUUID().equals(player.getUUID())) {
             String otherPlayerName = existingSession.getPlayer().getName().getString();
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "destroy.in_editing_by_other", id, otherPlayerName)));
             return;
         }
@@ -992,7 +992,7 @@ public class NetworkHandler {
     private static void handleGuiPush(ServerPlayer player, String id) {
         // Verifica che la costruzione NON sia in modalità editing
         if (isConstructionBeingEdited(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.in_editing", id)));
             return;
         }
@@ -1000,28 +1000,28 @@ public class NetworkHandler {
         // Verifica che la costruzione esista nel registry
         ConstructionRegistry registry = ConstructionRegistry.getInstance();
         if (!registry.exists(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.not_found", id)));
             return;
         }
 
         // Verifica che non ci sia già una richiesta in corso
         if (ApiClient.isRequestInProgress()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.request_in_progress")));
             return;
         }
 
         Construction construction = registry.get(id);
         if (construction == null || construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.empty", id)));
             return;
         }
 
         // Verifica che la costruzione abbia un titolo (obbligatorio per l'API)
         if (!construction.hasValidTitle()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.no_title", id)));
             return;
         }
@@ -1059,7 +1059,7 @@ public class NetworkHandler {
                         Architect.LOGGER.info("Push successful for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     } else {
-                        player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                             I18n.tr(player, "push.failed", id, response.statusCode(), response.message())
                         ));
                         Architect.LOGGER.warn("Push failed for {}: {} - {}",
@@ -1070,7 +1070,7 @@ public class NetworkHandler {
         });
 
         if (!started) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.request_in_progress")));
         }
     }
@@ -1085,21 +1085,21 @@ public class NetworkHandler {
             String otherPlayerName = existingSession != null
                 ? existingSession.getPlayer().getName().getString()
                 : "unknown";
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "pull.in_editing", id, otherPlayerName)));
             return;
         }
 
         // Verifica che non sia già in corso un pull per questa costruzione
         if (PULLING_CONSTRUCTIONS.contains(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "pull.already_pulling", id)));
             return;
         }
 
         // Verifica che non ci sia già una richiesta API in corso
         if (ApiClient.isRequestInProgress()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.request_in_progress")));
             return;
         }
@@ -1151,7 +1151,7 @@ public class NetworkHandler {
                         Architect.LOGGER.info("Pull successful for {}: {} blocks placed",
                             id, placementResult.blocksPlaced());
                     } else {
-                        player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                             I18n.tr(player, "pull.failed", id, response.statusCode(), response.message())
                         ));
                         Architect.LOGGER.warn("Pull failed for {}: {} - {}",
@@ -1166,7 +1166,7 @@ public class NetworkHandler {
 
         if (!started) {
             PULLING_CONSTRUCTIONS.remove(id);
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.request_in_progress")));
         }
     }
@@ -1430,13 +1430,13 @@ public class NetworkHandler {
         // Verify the construction exists (including those being edited)
         Construction construction = getConstructionIncludingEditing(id);
         if (construction == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "spawn.not_found", id)));
             return;
         }
 
         if (construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "spawn.empty", id)));
             return;
         }
@@ -1459,7 +1459,7 @@ public class NetworkHandler {
      */
     private static void handleGuiShortDesc(ServerPlayer player, String langId, String description) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1494,7 +1494,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRemoveBlock(ServerPlayer player, String blockId) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1590,7 +1590,7 @@ public class NetworkHandler {
             player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "remove_block.success", removedCount, displayName)));
         } else {
-            player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "remove_block.not_found", blockId)));
         }
     }
@@ -1601,7 +1601,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRemoveEntity(ServerPlayer player, String entityType) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1696,7 +1696,7 @@ public class NetworkHandler {
             player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entity.removed_count", removedCount, displayName)));
         } else {
-            player.sendSystemMessage(Component.literal("§e[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entity.error.not_found")));
         }
     }
@@ -1707,7 +1707,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomCreate(ServerPlayer player, String roomId, String roomName) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1717,14 +1717,14 @@ public class NetworkHandler {
 
         // Verifica che l'ID sia valido
         if (roomId == null || roomId.isEmpty()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "room.error.invalid_id")));
             return;
         }
 
         // Verifica che non esista già una stanza con lo stesso ID
         if (construction.getRoom(roomId) != null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "room.error.exists", roomId)));
             return;
         }
@@ -1753,7 +1753,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomEdit(ServerPlayer player, String roomId) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1763,7 +1763,7 @@ public class NetworkHandler {
 
         // Verifica che la stanza esista
         if (construction.getRoom(roomId) == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "room.not_found", roomId)));
             return;
         }
@@ -1782,7 +1782,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomDelete(ServerPlayer player, String roomId) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1792,7 +1792,7 @@ public class NetworkHandler {
 
         // Verifica che la stanza esista
         if (construction.getRoom(roomId) == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "room.not_found", roomId)));
             return;
         }
@@ -1821,7 +1821,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomRename(ServerPlayer player, String oldId, String extraData) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1831,7 +1831,7 @@ public class NetworkHandler {
         // Parse extraData: newId|newName
         String[] parts = extraData.split("\\|", 2);
         if (parts.length < 2) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "room.error.invalid_data")));
             return;
         }
@@ -1841,14 +1841,14 @@ public class NetworkHandler {
 
         // Verifica che l'ID sia valido
         if (newId == null || newId.isEmpty()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "room.error.invalid_id")));
             return;
         }
 
         // Verifica lunghezza nome
         if (newName.length() > 100) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "room.name_too_long")));
             return;
         }
@@ -1861,7 +1861,7 @@ public class NetworkHandler {
                     (resultId.equals(oldId) ? "" : "\nNew ID: " + resultId)));
         } else {
             // Fallimento: probabilmente ID già esistente
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "room.error.exists", newId)));
         }
 
@@ -1877,7 +1877,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomExit(ServerPlayer player, boolean saveEntities) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1885,7 +1885,7 @@ public class NetworkHandler {
         EditingSession session = EditingSession.getSession(player);
 
         if (!session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "room.not_in_room")));
             return;
         }
@@ -1918,7 +1918,7 @@ public class NetworkHandler {
      */
     private static void handleGuiSetEntrance(ServerPlayer player) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1927,7 +1927,7 @@ public class NetworkHandler {
 
         // Entrance can only be set for base construction, not rooms
         if (session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.not_in_room")));
             return;
         }
@@ -1936,7 +1936,7 @@ public class NetworkHandler {
         ConstructionBounds bounds = construction.getBounds();
 
         if (!bounds.isValid()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.no_bounds")));
             return;
         }
@@ -1952,7 +1952,7 @@ public class NetworkHandler {
         boolean withinY = playerY >= bounds.getMinY() && playerY <= bounds.getMaxY() + 1;
 
         if (!withinXZ || !withinY) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.outside_bounds")));
             return;
         }
@@ -1985,7 +1985,7 @@ public class NetworkHandler {
      */
     private static void handleGuiTpEntrance(ServerPlayer player) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -1994,7 +1994,7 @@ public class NetworkHandler {
 
         // Entrance can only be used for base construction, not rooms
         if (session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.not_in_room")));
             return;
         }
@@ -2002,13 +2002,13 @@ public class NetworkHandler {
         Construction construction = session.getConstruction();
 
         if (!construction.getAnchors().hasEntrance()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.not_set")));
             return;
         }
 
         if (!construction.getBounds().isValid()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.no_bounds")));
             return;
         }
@@ -2024,7 +2024,7 @@ public class NetworkHandler {
      */
     private static void handleGuiAdjustEntranceY(ServerPlayer player, String deltaStr) {
         if (!EditingSession.hasSession(player)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "command.not_editing")));
             return;
         }
@@ -2033,7 +2033,7 @@ public class NetworkHandler {
 
         // Entrance can only be adjusted for base construction, not rooms
         if (session.isInRoom()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.not_in_room")));
             return;
         }
@@ -2041,14 +2041,14 @@ public class NetworkHandler {
         Construction construction = session.getConstruction();
 
         if (!construction.getAnchors().hasEntrance()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.not_set")));
             return;
         }
 
         ConstructionBounds bounds = construction.getBounds();
         if (!bounds.isValid()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.no_bounds")));
             return;
         }
@@ -2072,7 +2072,7 @@ public class NetworkHandler {
         // Check bounds (normalized Y must be within 0 to maxY of the construction)
         int maxY = bounds.getMaxY() - bounds.getMinY();
         if (newY < 0 || newY > maxY) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "entrance.y_out_of_bounds")));
             return;
         }
@@ -2101,7 +2101,7 @@ public class NetworkHandler {
         // Verify the construction exists
         Construction construction = getConstructionIncludingEditing(id);
         if (construction == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "move.not_found", id)));
             return;
         }
@@ -2112,13 +2112,13 @@ public class NetworkHandler {
             String otherPlayerName = existingSession != null
                 ? existingSession.getPlayer().getName().getString()
                 : "unknown";
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "move.in_editing", id, otherPlayerName)));
             return;
         }
 
         if (construction.getBlockCount() == 0) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "move.empty", id)));
             return;
         }
@@ -2500,21 +2500,21 @@ public class NetworkHandler {
             String otherPlayerName = existingSession != null
                 ? existingSession.getPlayer().getName().getString()
                 : "unknown";
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "pull.in_editing", id, otherPlayerName)));
             return;
         }
 
         // Verifica che non sia già in corso un pull per questa costruzione
         if (PULLING_CONSTRUCTIONS.contains(id)) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "pull.already_pulling", id)));
             return;
         }
 
         // Verifica che non ci sia già una richiesta API in corso
         if (ApiClient.isRequestInProgress()) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.request_in_progress")));
             return;
         }
@@ -2544,7 +2544,7 @@ public class NetworkHandler {
                         Architect.LOGGER.info("Sent mod requirements for {} to {}: {} mods",
                             id, player.getName().getString(), response.requiredMods().size());
                     } else {
-                        player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+                        player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                             I18n.tr(player, "pull.failed", id, response.statusCode(), response.message())
                         ));
                         Architect.LOGGER.warn("Pull check failed for {}: {} - {}",
@@ -2555,7 +2555,7 @@ public class NetworkHandler {
         });
 
         if (!started) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "push.request_in_progress")));
         }
     }
@@ -2877,6 +2877,12 @@ public class NetworkHandler {
                 player.sendSystemMessage(
                     net.minecraft.network.chat.Component.translatable("struttura.ingame.disabled")
                 );
+                // Hint to use /struttura give if player doesn't have the hammer
+                if (!it.magius.struttura.architect.item.ConstructionHammerItem.isInPlayerInventory(player)) {
+                    player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                        "§a[Struttura] §f" + I18n.tr(player, "give.hint")
+                    ));
+                }
             }
             case SKIP -> {
                 Architect.LOGGER.info("Player {} skipped InGame mode for now", player.getName().getString());
@@ -2884,6 +2890,12 @@ public class NetworkHandler {
                 player.sendSystemMessage(
                     net.minecraft.network.chat.Component.translatable("struttura.ingame.skipped")
                 );
+                // Hint to use /struttura give if player doesn't have the hammer
+                if (!it.magius.struttura.architect.item.ConstructionHammerItem.isInPlayerInventory(player)) {
+                    player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                        "§a[Struttura] §f" + I18n.tr(player, "give.hint")
+                    ));
+                }
             }
             case SELECT -> {
                 Architect.LOGGER.info("Player {} selected InGame list: {} (id={})",

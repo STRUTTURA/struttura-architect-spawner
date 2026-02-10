@@ -235,7 +235,7 @@ public class ConstructionHammerItem extends Item {
         var construction = registry.get(id);
 
         if (construction == null) {
-            player.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(player, "error.construction_not_found", id)));
             return;
         }
@@ -260,6 +260,18 @@ public class ConstructionHammerItem extends Item {
 
         player.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                 I18n.tr(player, "enter.success", id)));
+    }
+
+    /**
+     * Checks if the player has a Construction Hammer in their inventory (any slot).
+     */
+    public static boolean isInPlayerInventory(ServerPlayer player) {
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+            if (player.getInventory().getItem(i).getItem() instanceof ConstructionHammerItem) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

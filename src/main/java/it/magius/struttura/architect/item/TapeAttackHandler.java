@@ -63,14 +63,14 @@ public class TapeAttackHandler {
 
         // Check if in editing mode
         if (session == null) {
-            serverPlayer.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            serverPlayer.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(serverPlayer, "tape.error.not_editing")));
             return InteractionResult.FAIL;
         }
 
         // Check if editing a room - tape only works on base construction
         if (session.isInRoom()) {
-            serverPlayer.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            serverPlayer.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(serverPlayer, "tape.error.not_in_room")));
             return InteractionResult.FAIL;
         }
@@ -80,7 +80,7 @@ public class TapeAttackHandler {
         boolean isInConstruction = construction.containsBlock(pos);
 
         if (!isInConstruction) {
-            serverPlayer.sendSystemMessage(Component.literal("§c[Struttura] §f" +
+            serverPlayer.sendSystemMessage(Component.literal("§a[Struttura] §f" +
                     I18n.tr(serverPlayer, "tape.error.not_in_construction")));
             return InteractionResult.FAIL;
         }
