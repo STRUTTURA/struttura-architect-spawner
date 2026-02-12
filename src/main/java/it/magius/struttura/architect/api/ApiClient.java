@@ -1038,11 +1038,8 @@ public class ApiClient {
             conn.setConnectTimeout(config.getRequestTimeout() * 1000);
             conn.setReadTimeout(config.getRequestTimeout() * 1000);
             conn.setRequestProperty("Accept", "application/json");
-            // Include API key for rate limiting but auth not required
-            String apiKey = config.getApikey();
-            if (apiKey != null && !apiKey.isEmpty()) {
-                conn.setRequestProperty("X-Api-Key", apiKey);
-            }
+            conn.setRequestProperty("Authorization", config.getAuth());
+            conn.setRequestProperty("X-Api-Key", config.getApikey());
 
             int status = conn.getResponseCode();
 
@@ -2058,6 +2055,7 @@ public class ApiClient {
                 conn.setConnectTimeout(10000); // 10 seconds for startup
                 conn.setReadTimeout(10000);
                 conn.setRequestProperty("Accept", "application/json");
+                conn.setRequestProperty("Authorization", config.getAuth());
                 conn.setRequestProperty("X-Api-Key", config.getApikey());
 
                 int statusCode = conn.getResponseCode();
@@ -2182,12 +2180,8 @@ public class ApiClient {
             conn.setConnectTimeout(config.getRequestTimeout() * 1000);
             conn.setReadTimeout(config.getRequestTimeout() * 1000);
             conn.setRequestProperty("Accept", "application/json");
-
-            // Include API key if available (optional auth)
-            String apiKey = config.getApikey();
-            if (apiKey != null && !apiKey.isEmpty()) {
-                conn.setRequestProperty("X-Api-Key", apiKey);
-            }
+            conn.setRequestProperty("Authorization", config.getAuth());
+            conn.setRequestProperty("X-Api-Key", config.getApikey());
 
             int statusCode = conn.getResponseCode();
             String responseBody = readResponse(conn);
@@ -2338,12 +2332,8 @@ public class ApiClient {
             conn.setConnectTimeout(config.getRequestTimeout() * 1000);
             conn.setReadTimeout(config.getRequestTimeout() * 1000);
             conn.setRequestProperty("Accept", "application/json");
-
-            // Include API key if available
-            String apiKey = config.getApikey();
-            if (apiKey != null && !apiKey.isEmpty()) {
-                conn.setRequestProperty("X-Api-Key", apiKey);
-            }
+            conn.setRequestProperty("Authorization", config.getAuth());
+            conn.setRequestProperty("X-Api-Key", config.getApikey());
 
             int statusCode = conn.getResponseCode();
 

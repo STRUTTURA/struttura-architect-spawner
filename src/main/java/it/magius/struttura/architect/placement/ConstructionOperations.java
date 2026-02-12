@@ -17,6 +17,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.decoration.HangingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -1439,15 +1440,6 @@ public class ConstructionOperations {
                 nbt.remove("Motion");
                 nbt.remove("UUID");
 
-                // Set Pos in NBT BEFORE entity creation - this is CRITICAL for hanging entities
-                // Minecraft validates that block_pos and entity position are within 16 blocks
-                // If Pos is not set, the validation fails with "Block-attached entity at invalid position"
-                net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
-                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldX));
-                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldY));
-                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldZ));
-                nbt.put("Pos", posTag);
-
                 // Remove maps from item frames
                 String entityType = data.getEntityType();
                 if (entityType.equals("minecraft:item_frame") || entityType.equals("minecraft:glow_item_frame")) {
@@ -1465,22 +1457,49 @@ public class ConstructionOperations {
                 // Update sleeping_pos for villagers
                 updateSleepingPos(nbt, originX, originY, originZ);
 
+                // Set Pos in NBT BEFORE entity creation.
+                // For hanging entities (paintings, item frames), use block_pos as approximate Pos
+                // so MC validation passes, then loadEntityRecursive recalculates the exact position
+                // from block_pos + facing + size. For other entities, use the stored relative position.
+                if (nbt.contains("block_pos")) {
+                    Tag rawTag = nbt.get("block_pos");
+                    if (rawTag instanceof IntArrayTag intArrayTag) {
+                        int[] coords = intArrayTag.getAsIntArray();
+                        if (coords.length >= 3) {
+                            net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
+                            posTag.add(net.minecraft.nbt.DoubleTag.valueOf(coords[0] + 0.5));
+                            posTag.add(net.minecraft.nbt.DoubleTag.valueOf(coords[1] + 0.5));
+                            posTag.add(net.minecraft.nbt.DoubleTag.valueOf(coords[2] + 0.5));
+                            nbt.put("Pos", posTag);
+                        }
+                    }
+                } else {
+                    net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
+                    posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldX));
+                    posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldY));
+                    posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldZ));
+                    nbt.put("Pos", posTag);
+                }
+
                 // Create entity from NBT
                 Entity entity = EntityType.loadEntityRecursive(nbt, level, EntitySpawnReason.LOAD, e -> e);
 
                 if (entity != null) {
-                    // Disable gravity during spawn
-                    entity.setNoGravity(true);
-
-                    // Set position and rotation
-                    entity.setPos(worldX, worldY, worldZ);
-                    entity.setYRot(data.getYaw());
-                    entity.setXRot(data.getPitch());
                     entity.setUUID(UUID.randomUUID());
 
-                    // Disable AI for mobs (permanent freeze)
-                    if (entity instanceof Mob mob) {
-                        mob.setNoAi(true);
+                    if (entity instanceof HangingEntity) {
+                        // Hanging entities (paintings, item frames) calculate their own position
+                        // from block_pos + facing in NBT. Do NOT call setPos() or it will
+                        // override the correct position and cause them to detach.
+                    } else {
+                        entity.setNoGravity(true);
+                        entity.setPos(worldX, worldY, worldZ);
+                        entity.setYRot(data.getYaw());
+                        entity.setXRot(data.getPitch());
+
+                        if (entity instanceof Mob mob) {
+                            mob.setNoAi(true);
+                        }
                     }
 
                     level.addFreshEntity(entity);
@@ -1497,7 +1516,7 @@ public class ConstructionOperations {
 
         // Re-enable gravity for non-mob entities after all are spawned
         for (Entity entity : spawnedEntities) {
-            if (!(entity instanceof Mob)) {
+            if (!(entity instanceof Mob) && !(entity instanceof HangingEntity)) {
                 entity.setNoGravity(false);
             }
         }
@@ -1554,15 +1573,6 @@ public class ConstructionOperations {
                 nbt.remove("Motion");
                 nbt.remove("UUID");
 
-                // Set Pos in NBT BEFORE entity creation - this is CRITICAL for hanging entities
-                // Minecraft validates that block_pos and entity position are within 16 blocks
-                // If Pos is not set, the validation fails with "Block-attached entity at invalid position"
-                net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
-                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldX));
-                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldY));
-                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldZ));
-                nbt.put("Pos", posTag);
-
                 // Remove maps from item frames
                 String entityType = data.getEntityType();
                 if (entityType.equals("minecraft:item_frame") || entityType.equals("minecraft:glow_item_frame")) {
@@ -1581,6 +1591,30 @@ public class ConstructionOperations {
 
                 // Update sleeping_pos for villagers (with rotation)
                 updateSleepingPosRotated(nbt, targetX, targetY, targetZ, rotationSteps, pivotX, pivotZ);
+
+                // Set Pos in NBT BEFORE entity creation.
+                // For hanging entities, use block_pos as approximate Pos so MC validation passes,
+                // then loadEntityRecursive recalculates the exact position from block_pos + facing + size.
+                // For other entities, use the rotated relative position.
+                if (nbt.contains("block_pos")) {
+                    Tag rawTag = nbt.get("block_pos");
+                    if (rawTag instanceof IntArrayTag intArrayTag) {
+                        int[] coords = intArrayTag.getAsIntArray();
+                        if (coords.length >= 3) {
+                            net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
+                            posTag.add(net.minecraft.nbt.DoubleTag.valueOf(coords[0] + 0.5));
+                            posTag.add(net.minecraft.nbt.DoubleTag.valueOf(coords[1] + 0.5));
+                            posTag.add(net.minecraft.nbt.DoubleTag.valueOf(coords[2] + 0.5));
+                            nbt.put("Pos", posTag);
+                        }
+                    }
+                } else {
+                    net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
+                    posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldX));
+                    posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldY));
+                    posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldZ));
+                    nbt.put("Pos", posTag);
+                }
 
                 // Rotate facing for ALL entities that have it (item frames, paintings, etc.)
                 // MC 1.21.11 uses "Facing" (capital F), not "facing"
@@ -1623,21 +1657,20 @@ public class ConstructionOperations {
                 Entity entity = EntityType.loadEntityRecursive(nbt, level, EntitySpawnReason.LOAD, e -> e);
 
                 if (entity != null) {
-                    // Disable gravity during spawn
-                    entity.setNoGravity(true);
-
-                    // Set position
-                    entity.setPos(worldX, worldY, worldZ);
-
-                    // Rotation is already set in NBT before entity creation (for mobs)
-                    // and via Facing tag (for hanging entities like item frames)
-                    // Just set pitch here as a safety measure
-                    entity.setXRot(data.getPitch());
                     entity.setUUID(UUID.randomUUID());
 
-                    // Disable AI for mobs (permanent freeze)
-                    if (entity instanceof Mob mob) {
-                        mob.setNoAi(true);
+                    if (entity instanceof HangingEntity) {
+                        // Hanging entities (paintings, item frames) calculate their own position
+                        // from block_pos + facing in NBT. Do NOT call setPos() or it will
+                        // override the correct position and cause them to detach.
+                    } else {
+                        entity.setNoGravity(true);
+                        entity.setPos(worldX, worldY, worldZ);
+                        entity.setXRot(data.getPitch());
+
+                        if (entity instanceof Mob mob) {
+                            mob.setNoAi(true);
+                        }
                     }
 
                     level.addFreshEntity(entity);
@@ -1659,7 +1692,7 @@ public class ConstructionOperations {
 
         // Re-enable gravity for non-mob entities after all are spawned
         for (Entity entity : spawnedEntities) {
-            if (!(entity instanceof Mob)) {
+            if (!(entity instanceof Mob) && !(entity instanceof HangingEntity)) {
                 entity.setNoGravity(false);
             }
         }
