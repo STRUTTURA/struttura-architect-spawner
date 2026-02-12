@@ -728,8 +728,9 @@ public class ConstructionOperations {
      */
     public static BlockPos calculatePositionAtEntrance(ServerPlayer player, Construction construction) {
         // Calculate spawn point from player position: X, Z from blockPosition, Y = round(Y) - 1
+        // The player stands ON TOP of the entrance block, so subtract 1 from Y
         int spawnX = player.blockPosition().getX();
-        int spawnY = (int) Math.round(player.getY());
+        int spawnY = (int) Math.round(player.getY()) - 1;
         int spawnZ = player.blockPosition().getZ();
         return calculatePositionAtEntrance(new BlockPos(spawnX, spawnY, spawnZ), construction);
     }
@@ -803,8 +804,9 @@ public class ConstructionOperations {
         int pivotX,
         int pivotZ
     ) {
+        // The player stands ON TOP of the entrance block, so subtract 1 from Y
         int spawnX = player.blockPosition().getX();
-        int spawnY = (int) Math.round(player.getY());
+        int spawnY = (int) Math.round(player.getY()) - 1;
         int spawnZ = player.blockPosition().getZ();
         return calculatePositionAtEntranceRotated(
             new BlockPos(spawnX, spawnY, spawnZ),

@@ -28,7 +28,9 @@ public class OnGroundValidator extends AbstractPositionValidator {
 
     @Override
     protected int getYAtPosition(ServerLevel level, int x, int z, SpawnRule rule, Random random) {
-        return getGroundHeight(level, x, z);
+        // getGroundHeight returns the Y of the first air block above ground.
+        // Subtract 1 so the entrance anchor is placed ON the ground block itself.
+        return getGroundHeight(level, x, z) - 1;
     }
 
     @Override

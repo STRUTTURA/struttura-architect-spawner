@@ -52,44 +52,40 @@ public class BottomWaterValidator extends AbstractPositionValidator {
 
     /**
      * Validates placement at a specific Y coordinate (anchor Y in world coordinates).
-     * The building base must be on solid floor with water above the building top.
+     * The anchor is placed ON the solid floor block itself.
+     * Water must be present above the anchor (anchorY + 1 and up).
      *
      * Key positions:
-     * - anchorY (y parameter) = world Y of the anchor/entrance
-     * - entranceY = normalized Y of anchor within building (0 = bottom)
-     * - floorY = anchorY - 1 (where solid floor must be, directly below anchor)
-     * - topY = anchorY + heightAboveAnchor (where water must be)
-     *
-     * The part of the building below the anchor (entranceY blocks) can be in the terrain.
-     * The anchor itself must be on solid floor with water above.
+     * - anchorY = world Y of the anchor/entrance (solid floor block)
+     * - waterY = anchorY + 1 (first water block above floor)
+     * - topY = anchorY + heightAboveAnchor (where water must still be present)
      */
     private PlacementResult validateAtY(PlacementContext ctx, int anchorY) {
-        // entranceY = how far the anchor is from the building base (normalized coords)
         int entranceY = ctx.building().getEntrance().getY();
         int buildingHeight = ctx.building().getSizeY();
         int heightAboveAnchor = buildingHeight - entranceY;
 
-        // Floor must be one block below the anchor (not building base!)
-        int floorY = anchorY - 1;
-        // Top of building in world coordinates (where water must be)
+        // Anchor is ON the floor block; water must be above it
+        int waterY = anchorY + 1;
+        // Top of building in world coordinates (where water must still be)
         int topY = anchorY + heightAboveAnchor;
 
-        // Check that the anchor is on solid floor
-        BlockPos floorPos = new BlockPos(ctx.entrancePos().getX(), floorY, ctx.entrancePos().getZ());
-        BlockState floorState = ctx.level().getBlockState(floorPos);
-        if (!isSolidFloorBlock(floorState)) {
-            return PlacementResult.fail(String.format(
-                "No solid floor below anchor at %s (found: %s)",
-                floorPos.toShortString(), floorState.getBlock().getName().getString()));
-        }
-
-        // Check that the anchor position is in water (not buried in terrain)
+        // Check that the anchor position is solid floor
         BlockPos anchorPos = new BlockPos(ctx.entrancePos().getX(), anchorY, ctx.entrancePos().getZ());
         BlockState anchorState = ctx.level().getBlockState(anchorPos);
-        if (!isWater(anchorState) && !isIgnorableUnderwaterBlock(anchorState)) {
+        if (!isSolidFloorBlock(anchorState)) {
             return PlacementResult.fail(String.format(
-                "Anchor at %s is not in water (found: %s)",
+                "Anchor at %s is not solid floor (found: %s)",
                 anchorPos.toShortString(), anchorState.getBlock().getName().getString()));
+        }
+
+        // Check that water is above the anchor
+        BlockPos waterPos = new BlockPos(ctx.entrancePos().getX(), waterY, ctx.entrancePos().getZ());
+        BlockState waterState = ctx.level().getBlockState(waterPos);
+        if (!isWater(waterState) && !isIgnorableUnderwaterBlock(waterState)) {
+            return PlacementResult.fail(String.format(
+                "No water above anchor at %s (found: %s)",
+                waterPos.toShortString(), waterState.getBlock().getName().getString()));
         }
 
         // Check corners of the building footprint
@@ -100,8 +96,8 @@ public class BottomWaterValidator extends AbstractPositionValidator {
             int cornerX = ctx.buildingOrigin().getX() + cornerXOffsets[i];
             int cornerZ = ctx.buildingOrigin().getZ() + cornerZOffsets[i];
 
-            // Check floor at corner (one block below anchor Y)
-            BlockPos cornerFloorPos = new BlockPos(cornerX, floorY, cornerZ);
+            // Check floor at corner (anchor level)
+            BlockPos cornerFloorPos = new BlockPos(cornerX, anchorY, cornerZ);
             BlockState cornerFloorState = ctx.level().getBlockState(cornerFloorPos);
 
             if (!isSolidFloorBlock(cornerFloorState)) {
@@ -110,17 +106,17 @@ public class BottomWaterValidator extends AbstractPositionValidator {
                     i, cornerFloorPos.toShortString(), cornerFloorState.getBlock().getName().getString()));
             }
 
-            // Check anchor level at corner is in water (not buried)
-            BlockPos cornerAnchorPos = new BlockPos(cornerX, anchorY, cornerZ);
-            BlockState cornerAnchorState = ctx.level().getBlockState(cornerAnchorPos);
+            // Check water above floor at corner
+            BlockPos cornerWaterPos = new BlockPos(cornerX, waterY, cornerZ);
+            BlockState cornerWaterState = ctx.level().getBlockState(cornerWaterPos);
 
-            if (!isWater(cornerAnchorState) && !isIgnorableUnderwaterBlock(cornerAnchorState)) {
+            if (!isWater(cornerWaterState) && !isIgnorableUnderwaterBlock(cornerWaterState)) {
                 return PlacementResult.fail(String.format(
-                    "Corner %d anchor level at %s is not in water (found: %s)",
-                    i, cornerAnchorPos.toShortString(), cornerAnchorState.getBlock().getName().getString()));
+                    "Corner %d has no water above floor at %s (found: %s)",
+                    i, cornerWaterPos.toShortString(), cornerWaterState.getBlock().getName().getString()));
             }
 
-            // Check water ABOVE the building top at this corner
+            // Check water above the building top at this corner
             BlockPos cornerTopPos = new BlockPos(cornerX, topY, cornerZ);
             BlockState cornerTopState = ctx.level().getBlockState(cornerTopPos);
 
@@ -181,9 +177,9 @@ public class BottomWaterValidator extends AbstractPositionValidator {
             // Water must be at: anchorY + heightAboveAnchor (above building top)
             //
             // Constraints:
-            // - Floor (anchorY - 1) >= y1, so anchorY >= y1 + 1
-            // - Water (anchorY + heightAboveAnchor) <= y2, so anchorY <= y2 - heightAboveAnchor
-            int effectiveMinY = rule.getY1() + 1;
+            // - Anchor (floor) anchorY >= y1
+            // - Water above building top (anchorY + heightAboveAnchor) <= y2
+            int effectiveMinY = rule.getY1();
             int effectiveMaxY = rule.getY2() - heightAboveAnchor;
 
             // Check if there's any valid range at all
@@ -255,32 +251,27 @@ public class BottomWaterValidator extends AbstractPositionValidator {
 
     /**
      * Quick check if a position could be a valid underwater floor.
+     * The anchor is ON the solid floor block itself.
      * Checks:
-     * 1. Solid floor below the anchor (anchorY - 1)
-     * 2. Water/ignorable at the anchor level (not solid - we must be ON the floor, not IN it)
+     * 1. Anchor level (anchorY) must be solid floor
+     * 2. Water above the anchor (anchorY + 1)
      * 3. Water above the building top
      *
-     * The part of the building below the anchor can be in the terrain.
-     *
-     * @param anchorY the anchor Y in world coordinates
-     * @param entranceY how far the anchor is from the building base (normalized) - NOT USED anymore
+     * @param anchorY the anchor Y in world coordinates (the floor block)
+     * @param entranceY how far the anchor is from the building base (normalized)
      * @param heightAboveAnchor how much of the building is above the anchor
      */
     private boolean isValidUnderwaterFloorCandidate(ServerLevel level, int x, int anchorY, int z,
                                                      int entranceY, int heightAboveAnchor) {
-        // Floor is one block below the anchor (not building base!)
-        int floorY = anchorY - 1;
-
-        // Check 1: Floor must be solid (directly below anchor)
-        BlockState floorState = level.getBlockState(new BlockPos(x, floorY, z));
-        if (!isSolidFloorBlock(floorState)) {
+        // Check 1: Anchor level must be solid floor
+        BlockState anchorState = level.getBlockState(new BlockPos(x, anchorY, z));
+        if (!isSolidFloorBlock(anchorState)) {
             return false;
         }
 
-        // Check 2: Anchor level must be in water (not solid terrain!)
-        // This ensures we're ON the floor, not buried inside it
-        BlockState anchorState = level.getBlockState(new BlockPos(x, anchorY, z));
-        if (!isWater(anchorState) && !isIgnorableUnderwaterBlock(anchorState)) {
+        // Check 2: Water must be above the anchor
+        BlockState aboveState = level.getBlockState(new BlockPos(x, anchorY + 1, z));
+        if (!isWater(aboveState) && !isIgnorableUnderwaterBlock(aboveState)) {
             return false;
         }
 
