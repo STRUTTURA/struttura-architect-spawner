@@ -670,11 +670,18 @@ public class MainPanel {
         return true; // Consume click within modal
     }
 
+    // Actions that require world interaction and must close the screen
+    private static final java.util.Set<String> WORLD_ACTIONS = java.util.Set.of(
+        "tp", "show", "hide", "spawn", "move", "pull_confirm"
+    );
+
     private void executeAction(String action, String targetId) {
         Architect.LOGGER.debug("GUI action: {} on {}", action, targetId);
 
-        // Close the screen so the player can see server response messages in chat
-        Minecraft.getInstance().setScreen(null);
+        // Only close the screen for actions that require world interaction
+        if (WORLD_ACTIONS.contains(action)) {
+            Minecraft.getInstance().setScreen(null);
+        }
 
         ClientPlayNetworking.send(new GuiActionPacket(action, targetId != null ? targetId : "", ""));
     }
