@@ -68,7 +68,7 @@ public class ApiClient {
      * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
      */
     public static boolean pushConstruction(Construction construction, Consumer<ApiResponse> onComplete) {
-        return pushConstruction(construction, false, onComplete);
+        return pushConstruction(construction, false, false, onComplete);
     }
 
     /**
@@ -80,13 +80,26 @@ public class ApiClient {
      * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
      */
     public static boolean pushConstruction(Construction construction, boolean purge, Consumer<ApiResponse> onComplete) {
+        return pushConstruction(construction, purge, false, onComplete);
+    }
+
+    /**
+     * Esegue il push di una costruzione al server in modo asincrono.
+     *
+     * @param construction la costruzione da inviare
+     * @param purge se true, elimina tutti i dati esistenti della costruzione prima di aggiungere i nuovi
+     * @param jsonFormat se true, serializza blocchi/entita in formato JSON invece che NBT
+     * @param onComplete callback chiamato al completamento (sul main thread)
+     * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
+     */
+    public static boolean pushConstruction(Construction construction, boolean purge, boolean jsonFormat, Consumer<ApiResponse> onComplete) {
         if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
             return false;
         }
 
         CompletableFuture.supplyAsync(() -> {
             try {
-                return executePush(construction, purge);
+                return executePush(construction, purge, jsonFormat);
             } catch (Exception e) {
                 Architect.LOGGER.error("Push request failed", e);
                 return new ApiResponse(0, "Error: " + e.getMessage(), false, 0);
@@ -98,7 +111,7 @@ public class ApiClient {
         return true;
     }
 
-    private static ApiResponse executePush(Construction construction, boolean purge) throws Exception {
+    private static ApiResponse executePush(Construction construction, boolean purge, boolean jsonFormat) throws Exception {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String endpoint = config.getEndpoint();
         String url = endpoint + "/building/add/" + construction.getId();
@@ -108,8 +121,8 @@ public class ApiClient {
 
         Architect.LOGGER.info("Pushing construction {} to {}", construction.getId(), url);
 
-        // Prepara il payload JSON con blocks in base64
-        JsonObject payload = buildPayload(construction);
+        // Build JSON payload (blocks/entities as base64 NBT or JSON based on format flag)
+        JsonObject payload = buildPayload(construction, jsonFormat);
         byte[] jsonBytes = GSON.toJson(payload).getBytes(StandardCharsets.UTF_8);
 
         Architect.LOGGER.info("Payload size: {} bytes ({} KB)", jsonBytes.length, jsonBytes.length / 1024);
@@ -157,8 +170,9 @@ public class ApiClient {
 
     /**
      * Costruisce il payload JSON per il push.
+     * @param jsonFormat if true, blocks/entities are serialized as JSON with type hints instead of compressed NBT base64
      */
-    private static JsonObject buildPayload(Construction construction) throws IOException {
+    private static JsonObject buildPayload(Construction construction, boolean jsonFormat) throws IOException {
         JsonObject json = new JsonObject();
 
         // Titoli multilingua: { "en": "Medieval Tower", "it": "Torre Medievale" }
@@ -256,16 +270,7 @@ public class ApiClient {
         // Versione del mod Struttura
         json.addProperty("modVersion", Architect.MOD_VERSION);
 
-        // Blocchi in formato NBT compresso e codificato base64
-        byte[] nbtBytes = serializeBlocksToNbt(construction);
-        String blocksBase64 = Base64.getEncoder().encodeToString(nbtBytes);
-        json.addProperty("blocks", blocksBase64);
-
-        Architect.LOGGER.debug("NBT size: {} bytes, Base64 size: {} bytes",
-            nbtBytes.length, blocksBase64.length());
-
-        // Entità in formato NBT compresso e codificato base64 (se presenti)
-        // Check both base entities and room entities
+        // Check if any entities exist (base + rooms)
         boolean hasEntities = !construction.getEntities().isEmpty();
         if (!hasEntities) {
             for (Room room : construction.getRooms().values()) {
@@ -275,13 +280,39 @@ public class ApiClient {
                 }
             }
         }
-        if (hasEntities) {
-            byte[] entitiesNbtBytes = serializeEntitiesToNbt(construction);
-            String entitiesBase64 = Base64.getEncoder().encodeToString(entitiesNbtBytes);
-            json.addProperty("entities", entitiesBase64);
 
-            Architect.LOGGER.debug("Entities NBT size: {} bytes, Base64 size: {} bytes",
-                entitiesNbtBytes.length, entitiesBase64.length());
+        if (jsonFormat) {
+            // JSON format: blocks/entities as JSON objects (REST API expects objects, not strings)
+            json.addProperty("contentType", "application/json");
+
+            JsonObject blocksJson = serializeBlocksToJson(construction);
+            json.add("blocks", blocksJson);
+
+            Architect.LOGGER.debug("Blocks JSON size: {} bytes", GSON.toJson(blocksJson).length());
+
+            if (hasEntities) {
+                JsonObject entitiesJson = serializeEntitiesToJson(construction);
+                json.add("entities", entitiesJson);
+
+                Architect.LOGGER.debug("Entities JSON size: {} bytes", GSON.toJson(entitiesJson).length());
+            }
+        } else {
+            // NBT format: blocks/entities as base64-encoded compressed NBT (default)
+            byte[] nbtBytes = serializeBlocksToNbt(construction);
+            String blocksBase64 = Base64.getEncoder().encodeToString(nbtBytes);
+            json.addProperty("blocks", blocksBase64);
+
+            Architect.LOGGER.debug("NBT size: {} bytes, Base64 size: {} bytes",
+                nbtBytes.length, blocksBase64.length());
+
+            if (hasEntities) {
+                byte[] entitiesNbtBytes = serializeEntitiesToNbt(construction);
+                String entitiesBase64 = Base64.getEncoder().encodeToString(entitiesNbtBytes);
+                json.addProperty("entities", entitiesBase64);
+
+                Architect.LOGGER.debug("Entities NBT size: {} bytes, Base64 size: {} bytes",
+                    entitiesNbtBytes.length, entitiesBase64.length());
+            }
         }
 
         return json;
@@ -516,6 +547,202 @@ public class ApiClient {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         NbtIo.writeCompressed(root, baos);
         return baos.toByteArray();
+    }
+
+    /**
+     * Serializes blocks to JSON format with NBT type hints.
+     * Structure mirrors serializeBlocksToNbt() but produces a JsonObject.
+     * Top-level fields (x, y, z, p) are plain JSON numbers.
+     * Block entity NBT uses NbtJsonConverter type-hint suffixes.
+     */
+    private static JsonObject serializeBlocksToJson(Construction construction) {
+        JsonObject root = new JsonObject();
+        root.addProperty("version", 1);
+
+        var bounds = construction.getBounds();
+        int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
+        int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
+        int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
+
+        // Palette: blockState string -> index
+        Map<String, Integer> palette = new LinkedHashMap<>();
+        com.google.gson.JsonArray paletteArray = new com.google.gson.JsonArray();
+
+        // Blocks
+        com.google.gson.JsonArray blocksArray = new com.google.gson.JsonArray();
+
+        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+            BlockPos pos = entry.getKey();
+            BlockState state = entry.getValue();
+
+            String stateString = serializeBlockState(state);
+
+            int paletteIndex = palette.computeIfAbsent(stateString, s -> {
+                JsonObject paletteEntry = new JsonObject();
+                paletteEntry.addProperty("state", s);
+                paletteArray.add(paletteEntry);
+                return palette.size();
+            });
+
+            JsonObject blockObj = new JsonObject();
+            blockObj.addProperty("x", pos.getX() - offsetX);
+            blockObj.addProperty("y", pos.getY() - offsetY);
+            blockObj.addProperty("z", pos.getZ() - offsetZ);
+            blockObj.addProperty("p", paletteIndex);
+
+            CompoundTag blockEntityNbt = construction.getBlockEntityNbt(pos);
+            if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                blockObj.add("nbt", NbtJsonConverter.compoundTagToJson(blockEntityNbt));
+            }
+
+            blocksArray.add(blockObj);
+        }
+
+        root.add("palette", paletteArray);
+        root.add("blocks", blocksArray);
+
+        // Room deltas
+        JsonObject roomsObj = new JsonObject();
+        for (Room room : construction.getRooms().values()) {
+            if (room.getChangedBlockCount() > 0) {
+                JsonObject roomObj = new JsonObject();
+                com.google.gson.JsonArray roomBlocksArray = new com.google.gson.JsonArray();
+
+                for (Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
+                    BlockPos pos = entry.getKey();
+                    BlockState state = entry.getValue();
+
+                    String stateString = serializeBlockState(state);
+
+                    int paletteIndex = palette.computeIfAbsent(stateString, s -> {
+                        JsonObject paletteEntry = new JsonObject();
+                        paletteEntry.addProperty("state", s);
+                        paletteArray.add(paletteEntry);
+                        return palette.size();
+                    });
+
+                    JsonObject blockObj = new JsonObject();
+                    blockObj.addProperty("x", pos.getX() - offsetX);
+                    blockObj.addProperty("y", pos.getY() - offsetY);
+                    blockObj.addProperty("z", pos.getZ() - offsetZ);
+                    blockObj.addProperty("p", paletteIndex);
+
+                    CompoundTag blockEntityNbt = room.getBlockEntityNbt(pos);
+                    if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                        blockObj.add("nbt", NbtJsonConverter.compoundTagToJson(blockEntityNbt));
+                    }
+
+                    roomBlocksArray.add(blockObj);
+                }
+
+                roomObj.add("blocks", roomBlocksArray);
+                roomsObj.add(room.getId(), roomObj);
+            }
+        }
+        if (roomsObj.size() > 0) {
+            root.add("rooms", roomsObj);
+        }
+
+        return root;
+    }
+
+    /**
+     * Serializes entities to JSON format with NBT type hints.
+     * Structure mirrors serializeEntitiesToNbt() but produces a JsonObject.
+     * Top-level fields (type, x, y, z, yaw, pitch) are plain JSON values.
+     * Entity NBT uses NbtJsonConverter type-hint suffixes.
+     */
+    private static JsonObject serializeEntitiesToJson(Construction construction) {
+        JsonObject root = new JsonObject();
+        root.addProperty("version", 1);
+
+        var bounds = construction.getBounds();
+        int minX = bounds.isValid() ? bounds.getMinX() : 0;
+        int minY = bounds.isValid() ? bounds.getMinY() : 0;
+        int minZ = bounds.isValid() ? bounds.getMinZ() : 0;
+
+        com.google.gson.JsonArray entitiesArray = new com.google.gson.JsonArray();
+
+        for (EntityData data : construction.getEntities()) {
+            JsonObject entityObj = new JsonObject();
+            entityObj.addProperty("type", data.getEntityType());
+            entityObj.addProperty("x", data.getRelativePos().x);
+            entityObj.addProperty("y", data.getRelativePos().y);
+            entityObj.addProperty("z", data.getRelativePos().z);
+            entityObj.addProperty("yaw", data.getYaw());
+            entityObj.addProperty("pitch", data.getPitch());
+
+            // Copy NBT and normalize coordinates for hanging entities
+            CompoundTag nbt = data.getNbt().copy();
+            normalizeEntityNbtCoordinates(nbt, minX, minY, minZ);
+            entityObj.add("nbt", NbtJsonConverter.compoundTagToJson(nbt));
+
+            entitiesArray.add(entityObj);
+        }
+
+        root.add("entities", entitiesArray);
+
+        // Room entities
+        JsonObject roomsObj = new JsonObject();
+        for (Room room : construction.getRooms().values()) {
+            if (!room.getEntities().isEmpty()) {
+                JsonObject roomObj = new JsonObject();
+                com.google.gson.JsonArray roomEntitiesArray = new com.google.gson.JsonArray();
+
+                for (EntityData data : room.getEntities()) {
+                    JsonObject entityObj = new JsonObject();
+                    entityObj.addProperty("type", data.getEntityType());
+                    entityObj.addProperty("x", data.getRelativePos().x);
+                    entityObj.addProperty("y", data.getRelativePos().y);
+                    entityObj.addProperty("z", data.getRelativePos().z);
+                    entityObj.addProperty("yaw", data.getYaw());
+                    entityObj.addProperty("pitch", data.getPitch());
+
+                    CompoundTag nbt = data.getNbt().copy();
+                    normalizeEntityNbtCoordinates(nbt, minX, minY, minZ);
+                    entityObj.add("nbt", NbtJsonConverter.compoundTagToJson(nbt));
+
+                    roomEntitiesArray.add(entityObj);
+                }
+
+                roomObj.add("entities", roomEntitiesArray);
+                roomsObj.add(room.getId(), roomObj);
+            }
+        }
+        if (roomsObj.size() > 0) {
+            root.add("rooms", roomsObj);
+        }
+
+        return root;
+    }
+
+    /**
+     * Normalizes entity NBT coordinates for hanging entities.
+     * Shared by both NBT and JSON serialization of entities.
+     */
+    private static void normalizeEntityNbtCoordinates(CompoundTag nbt, int minX, int minY, int minZ) {
+        // MC 1.21+ uses "block_pos" (CompoundTag with X, Y, Z)
+        if (nbt.contains("block_pos")) {
+            nbt.getCompound("block_pos").ifPresent(blockPos -> {
+                int x = blockPos.getIntOr("X", 0);
+                int y = blockPos.getIntOr("Y", 0);
+                int z = blockPos.getIntOr("Z", 0);
+
+                blockPos.putInt("X", x - minX);
+                blockPos.putInt("Y", y - minY);
+                blockPos.putInt("Z", z - minZ);
+            });
+        }
+        // Fallback for old formats (TileX/Y/Z)
+        else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
+            int tileX = nbt.getIntOr("TileX", 0);
+            int tileY = nbt.getIntOr("TileY", 0);
+            int tileZ = nbt.getIntOr("TileZ", 0);
+
+            nbt.putInt("TileX", tileX - minX);
+            nbt.putInt("TileY", tileY - minY);
+            nbt.putInt("TileZ", tileZ - minZ);
+        }
     }
 
     /**
@@ -848,7 +1075,7 @@ public class ApiClient {
             blocksConn.setInstanceFollowRedirects(true);
             blocksConn.setConnectTimeout(config.getRequestTimeout() * 1000);
             blocksConn.setReadTimeout(config.getRequestTimeout() * 1000);
-            blocksConn.setRequestProperty("Accept", "application/octet-stream");
+            blocksConn.setRequestProperty("Accept", "application/octet-stream, application/json");
 
             int blocksStatus = blocksConn.getResponseCode();
 
@@ -874,7 +1101,7 @@ public class ApiClient {
                 entitiesConn.setInstanceFollowRedirects(true);
                 entitiesConn.setConnectTimeout(config.getRequestTimeout() * 1000);
                 entitiesConn.setReadTimeout(config.getRequestTimeout() * 1000);
-                entitiesConn.setRequestProperty("Accept", "application/octet-stream");
+                entitiesConn.setRequestProperty("Accept", "application/octet-stream, application/json");
 
                 int entitiesStatus = entitiesConn.getResponseCode();
 
@@ -902,7 +1129,142 @@ public class ApiClient {
     }
 
     /**
-     * Parses blocks and entities NBT data into a Construction object.
+     * Parses blocks from JSON format (with type-hinted NBT).
+     * Mirrors the NBT block deserialization but reads from JSON.
+     */
+    private static void deserializeBlocksFromJson(Construction construction, String jsonString) {
+        JsonObject root = GSON.fromJson(jsonString, JsonObject.class);
+
+        // Parse palette
+        com.google.gson.JsonArray paletteArray = root.getAsJsonArray("palette");
+        List<BlockState> palette = new ArrayList<>();
+        for (int i = 0; i < paletteArray.size(); i++) {
+            String stateString = paletteArray.get(i).getAsJsonObject().get("state").getAsString();
+            BlockState state = parseBlockState(stateString);
+            palette.add(state);
+        }
+
+        // Parse blocks
+        com.google.gson.JsonArray blocksArray = root.getAsJsonArray("blocks");
+        for (int i = 0; i < blocksArray.size(); i++) {
+            JsonObject blockObj = blocksArray.get(i).getAsJsonObject();
+            int x = blockObj.get("x").getAsInt();
+            int y = blockObj.get("y").getAsInt();
+            int z = blockObj.get("z").getAsInt();
+            int paletteIndex = blockObj.get("p").getAsInt();
+
+            BlockPos pos = new BlockPos(x, y, z);
+            BlockState state = palette.get(paletteIndex);
+
+            if (blockObj.has("nbt")) {
+                CompoundTag nbt = NbtJsonConverter.jsonToCompoundTag(blockObj.getAsJsonObject("nbt"));
+                construction.addBlockRaw(pos, state, nbt);
+            } else {
+                construction.addBlockRaw(pos, state);
+            }
+        }
+
+        // Parse rooms if present
+        if (root.has("rooms")) {
+            JsonObject roomsObj = root.getAsJsonObject("rooms");
+            for (String roomId : roomsObj.keySet()) {
+                Room room = construction.getRoom(roomId);
+                if (room == null) {
+                    room = new Room(roomId, roomId, java.time.Instant.now());
+                    construction.addRoom(room);
+                }
+
+                JsonObject roomObj = roomsObj.getAsJsonObject(roomId);
+                if (roomObj == null || !roomObj.has("blocks")) continue;
+
+                com.google.gson.JsonArray roomBlocksArray = roomObj.getAsJsonArray("blocks");
+                for (int i = 0; i < roomBlocksArray.size(); i++) {
+                    JsonObject blockObj = roomBlocksArray.get(i).getAsJsonObject();
+                    int x = blockObj.get("x").getAsInt();
+                    int y = blockObj.get("y").getAsInt();
+                    int z = blockObj.get("z").getAsInt();
+                    int paletteIndex = blockObj.get("p").getAsInt();
+
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = palette.get(paletteIndex);
+
+                    if (blockObj.has("nbt")) {
+                        CompoundTag nbt = NbtJsonConverter.jsonToCompoundTag(blockObj.getAsJsonObject("nbt"));
+                        room.setBlockChange(pos, state, nbt);
+                    } else {
+                        room.setBlockChange(pos, state);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Parses entities from JSON format (with type-hinted NBT).
+     * Mirrors the NBT entity deserialization but reads from JSON.
+     */
+    private static void deserializeEntitiesFromJson(Construction construction, String jsonString) {
+        JsonObject root = GSON.fromJson(jsonString, JsonObject.class);
+
+        // Base entities
+        com.google.gson.JsonArray entitiesArray = root.getAsJsonArray("entities");
+        for (int i = 0; i < entitiesArray.size(); i++) {
+            JsonObject entityObj = entitiesArray.get(i).getAsJsonObject();
+            EntityData data = parseEntityDataFromJson(entityObj);
+            construction.addEntity(data);
+        }
+
+        // Room entities
+        if (root.has("rooms")) {
+            JsonObject roomsObj = root.getAsJsonObject("rooms");
+            for (String roomId : roomsObj.keySet()) {
+                Room room = construction.getRoom(roomId);
+                if (room == null) {
+                    room = new Room(roomId, roomId, java.time.Instant.now());
+                    construction.addRoom(room);
+                }
+
+                JsonObject roomObj = roomsObj.getAsJsonObject(roomId);
+                if (roomObj == null || !roomObj.has("entities")) continue;
+
+                com.google.gson.JsonArray roomEntitiesArray = roomObj.getAsJsonArray("entities");
+                for (int i = 0; i < roomEntitiesArray.size(); i++) {
+                    JsonObject entityObj = roomEntitiesArray.get(i).getAsJsonObject();
+                    EntityData data = parseEntityDataFromJson(entityObj);
+                    room.addEntity(data);
+                }
+            }
+        }
+    }
+
+    /**
+     * Parses a single EntityData from a JSON object.
+     */
+    private static EntityData parseEntityDataFromJson(JsonObject entityObj) {
+        String type = entityObj.get("type").getAsString();
+        double x = entityObj.get("x").getAsDouble();
+        double y = entityObj.get("y").getAsDouble();
+        double z = entityObj.get("z").getAsDouble();
+        float yaw = entityObj.get("yaw").getAsFloat();
+        float pitch = entityObj.get("pitch").getAsFloat();
+        CompoundTag nbt = entityObj.has("nbt")
+            ? NbtJsonConverter.jsonToCompoundTag(entityObj.getAsJsonObject("nbt"))
+            : new CompoundTag();
+
+        Vec3 relativePos = new Vec3(x, y, z);
+        return new EntityData(type, relativePos, yaw, pitch, nbt);
+    }
+
+    /**
+     * Detects whether binary data is JSON (starts with '{') or compressed NBT (GZIP magic bytes 0x1F 0x8B).
+     */
+    private static boolean isJsonFormat(byte[] data) {
+        return data.length > 0 && data[0] == '{';
+    }
+
+    /**
+     * Parses blocks and entities data into a Construction object.
+     * Auto-detects format: JSON (starts with '{') or compressed NBT (GZIP).
      * Used by InGame download (no metadata needed).
      */
     private static Construction parseConstructionFromNbt(String constructionId, byte[] blocksData, byte[] entitiesData) {
@@ -910,125 +1272,134 @@ public class ApiClient {
             // Create minimal construction (metadata comes from list export)
             Construction construction = new Construction(constructionId, new java.util.UUID(0, 0), "ingame");
 
-            // Parse blocks NBT
-            ByteArrayInputStream blocksStream = new ByteArrayInputStream(blocksData);
-            CompoundTag blocksRoot = NbtIo.readCompressed(blocksStream, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+            // Auto-detect blocks format and parse
+            if (isJsonFormat(blocksData)) {
+                String jsonString = new String(blocksData, StandardCharsets.UTF_8);
+                deserializeBlocksFromJson(construction, jsonString);
+                Architect.LOGGER.info("Parsed InGame blocks from JSON for {}", constructionId);
+            } else {
+                // Parse blocks NBT (existing logic)
+                ByteArrayInputStream blocksStream = new ByteArrayInputStream(blocksData);
+                CompoundTag blocksRoot = NbtIo.readCompressed(blocksStream, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
 
-            // Parse palette
-            ListTag paletteList = blocksRoot.getList("palette").orElse(new ListTag());
-            List<BlockState> palette = new ArrayList<>();
-            for (int i = 0; i < paletteList.size(); i++) {
-                CompoundTag paletteEntry = paletteList.getCompound(i).orElseThrow();
-                String stateString = paletteEntry.getString("state").orElse("");
-                BlockState state = parseBlockState(stateString);
-                palette.add(state);
-            }
-
-            // Parse blocks
-            ListTag blocksList = blocksRoot.getList("blocks").orElse(new ListTag());
-            for (int i = 0; i < blocksList.size(); i++) {
-                CompoundTag blockTag = blocksList.getCompound(i).orElseThrow();
-                int x = blockTag.getInt("x").orElse(0);
-                int y = blockTag.getInt("y").orElse(0);
-                int z = blockTag.getInt("z").orElse(0);
-                int paletteIndex = blockTag.getInt("p").orElse(0);
-
-                BlockPos pos = new BlockPos(x, y, z);
-                BlockState state = palette.get(paletteIndex);
-
-                CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
-                if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                    construction.addBlockRaw(pos, state, blockEntityNbt);
-                } else {
-                    construction.addBlockRaw(pos, state);
+                ListTag paletteList = blocksRoot.getList("palette").orElse(new ListTag());
+                List<BlockState> palette = new ArrayList<>();
+                for (int i = 0; i < paletteList.size(); i++) {
+                    CompoundTag paletteEntry = paletteList.getCompound(i).orElseThrow();
+                    String stateString = paletteEntry.getString("state").orElse("");
+                    BlockState state = parseBlockState(stateString);
+                    palette.add(state);
                 }
-            }
 
-            // Parse rooms if present
-            CompoundTag roomsTag = blocksRoot.getCompound("rooms").orElse(null);
-            if (roomsTag != null) {
-                for (String roomId : roomsTag.keySet()) {
-                    Room room = construction.getRoom(roomId);
-                    if (room == null) {
-                        room = new Room(roomId, roomId, java.time.Instant.now());
-                        construction.addRoom(room);
-                    }
+                ListTag blocksList = blocksRoot.getList("blocks").orElse(new ListTag());
+                for (int i = 0; i < blocksList.size(); i++) {
+                    CompoundTag blockTag = blocksList.getCompound(i).orElseThrow();
+                    int x = blockTag.getInt("x").orElse(0);
+                    int y = blockTag.getInt("y").orElse(0);
+                    int z = blockTag.getInt("z").orElse(0);
+                    int paletteIndex = blockTag.getInt("p").orElse(0);
 
-                    CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
-                    if (roomTag == null) continue;
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = palette.get(paletteIndex);
 
-                    ListTag roomBlocksList = roomTag.getList("blocks").orElse(new ListTag());
-                    for (int i = 0; i < roomBlocksList.size(); i++) {
-                        CompoundTag blockTag = roomBlocksList.getCompound(i).orElseThrow();
-                        int x = blockTag.getInt("x").orElse(0);
-                        int y = blockTag.getInt("y").orElse(0);
-                        int z = blockTag.getInt("z").orElse(0);
-                        int paletteIndex = blockTag.getInt("p").orElse(0);
-
-                        BlockPos pos = new BlockPos(x, y, z);
-                        BlockState state = palette.get(paletteIndex);
-
-                        CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
-                        if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                            room.setBlockChange(pos, state, blockEntityNbt);
-                        } else {
-                            room.setBlockChange(pos, state);
-                        }
+                    CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
+                    if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                        construction.addBlockRaw(pos, state, blockEntityNbt);
+                    } else {
+                        construction.addBlockRaw(pos, state);
                     }
                 }
-            }
 
-            // Parse entities if present
-            if (entitiesData != null && entitiesData.length > 0) {
-                ByteArrayInputStream entitiesStream = new ByteArrayInputStream(entitiesData);
-                CompoundTag entitiesRoot = NbtIo.readCompressed(entitiesStream, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
-
-                // Base entities
-                ListTag entitiesList = entitiesRoot.getList("entities").orElse(new ListTag());
-                for (int i = 0; i < entitiesList.size(); i++) {
-                    CompoundTag entityTag = entitiesList.getCompound(i).orElseThrow();
-
-                    String type = entityTag.getString("type").orElse("");
-                    double ex = entityTag.getDouble("x").orElse(0.0);
-                    double ey = entityTag.getDouble("y").orElse(0.0);
-                    double ez = entityTag.getDouble("z").orElse(0.0);
-                    float yaw = entityTag.getFloat("yaw").orElse(0.0f);
-                    float pitch = entityTag.getFloat("pitch").orElse(0.0f);
-                    CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
-
-                    Vec3 relativePos = new Vec3(ex, ey, ez);
-                    EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
-                    construction.addEntity(data);
-                }
-
-                // Room entities
-                CompoundTag roomsEntitiesTag = entitiesRoot.getCompound("rooms").orElse(null);
-                if (roomsEntitiesTag != null) {
-                    for (String roomId : roomsEntitiesTag.keySet()) {
+                CompoundTag roomsTag = blocksRoot.getCompound("rooms").orElse(null);
+                if (roomsTag != null) {
+                    for (String roomId : roomsTag.keySet()) {
                         Room room = construction.getRoom(roomId);
                         if (room == null) {
                             room = new Room(roomId, roomId, java.time.Instant.now());
                             construction.addRoom(room);
                         }
 
-                        CompoundTag roomTag = roomsEntitiesTag.getCompound(roomId).orElse(null);
+                        CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
                         if (roomTag == null) continue;
 
-                        ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
-                        for (int i = 0; i < roomEntitiesList.size(); i++) {
-                            CompoundTag entityTag = roomEntitiesList.getCompound(i).orElseThrow();
+                        ListTag roomBlocksList = roomTag.getList("blocks").orElse(new ListTag());
+                        for (int i = 0; i < roomBlocksList.size(); i++) {
+                            CompoundTag blockTag = roomBlocksList.getCompound(i).orElseThrow();
+                            int x = blockTag.getInt("x").orElse(0);
+                            int y = blockTag.getInt("y").orElse(0);
+                            int z = blockTag.getInt("z").orElse(0);
+                            int paletteIndex = blockTag.getInt("p").orElse(0);
 
-                            String type = entityTag.getString("type").orElse("");
-                            double ex = entityTag.getDouble("x").orElse(0.0);
-                            double ey = entityTag.getDouble("y").orElse(0.0);
-                            double ez = entityTag.getDouble("z").orElse(0.0);
-                            float yaw = entityTag.getFloat("yaw").orElse(0.0f);
-                            float pitch = entityTag.getFloat("pitch").orElse(0.0f);
-                            CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+                            BlockPos pos = new BlockPos(x, y, z);
+                            BlockState state = palette.get(paletteIndex);
 
-                            Vec3 relativePos = new Vec3(ex, ey, ez);
-                            EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
-                            room.addEntity(data);
+                            CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
+                            if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
+                                room.setBlockChange(pos, state, blockEntityNbt);
+                            } else {
+                                room.setBlockChange(pos, state);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Auto-detect entities format and parse
+            if (entitiesData != null && entitiesData.length > 0) {
+                if (isJsonFormat(entitiesData)) {
+                    String jsonString = new String(entitiesData, StandardCharsets.UTF_8);
+                    deserializeEntitiesFromJson(construction, jsonString);
+                    Architect.LOGGER.info("Parsed InGame entities from JSON for {}", constructionId);
+                } else {
+                    // Parse entities NBT (existing logic)
+                    ByteArrayInputStream entitiesStream = new ByteArrayInputStream(entitiesData);
+                    CompoundTag entitiesRoot = NbtIo.readCompressed(entitiesStream, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+
+                    ListTag entitiesList = entitiesRoot.getList("entities").orElse(new ListTag());
+                    for (int i = 0; i < entitiesList.size(); i++) {
+                        CompoundTag entityTag = entitiesList.getCompound(i).orElseThrow();
+
+                        String type = entityTag.getString("type").orElse("");
+                        double ex = entityTag.getDouble("x").orElse(0.0);
+                        double ey = entityTag.getDouble("y").orElse(0.0);
+                        double ez = entityTag.getDouble("z").orElse(0.0);
+                        float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+                        float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+                        CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+
+                        Vec3 relativePos = new Vec3(ex, ey, ez);
+                        EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+                        construction.addEntity(data);
+                    }
+
+                    CompoundTag roomsEntitiesTag = entitiesRoot.getCompound("rooms").orElse(null);
+                    if (roomsEntitiesTag != null) {
+                        for (String roomId : roomsEntitiesTag.keySet()) {
+                            Room room = construction.getRoom(roomId);
+                            if (room == null) {
+                                room = new Room(roomId, roomId, java.time.Instant.now());
+                                construction.addRoom(room);
+                            }
+
+                            CompoundTag roomTag = roomsEntitiesTag.getCompound(roomId).orElse(null);
+                            if (roomTag == null) continue;
+
+                            ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
+                            for (int i = 0; i < roomEntitiesList.size(); i++) {
+                                CompoundTag entityTag = roomEntitiesList.getCompound(i).orElseThrow();
+
+                                String type = entityTag.getString("type").orElse("");
+                                double ex = entityTag.getDouble("x").orElse(0.0);
+                                double ey = entityTag.getDouble("y").orElse(0.0);
+                                double ez = entityTag.getDouble("z").orElse(0.0);
+                                float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+                                float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+                                CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+
+                                Vec3 relativePos = new Vec3(ex, ey, ez);
+                                EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+                                room.addEntity(data);
+                            }
                         }
                     }
                 }
@@ -1043,7 +1414,7 @@ public class ApiClient {
             return construction;
 
         } catch (Exception e) {
-            Architect.LOGGER.error("Failed to parse InGame NBT for {}", constructionId, e);
+            Architect.LOGGER.error("Failed to parse InGame data for {}", constructionId, e);
             return null;
         }
     }
@@ -1088,7 +1459,7 @@ public class ApiClient {
             metadataConn.disconnect();
         }
 
-        // 2. Scarica i blocchi (NBT binario compresso, non base64)
+        // 2. Download blocks (compressed NBT or JSON, auto-detect from content)
         String blocksUrl = endpoint + "/building/" + constructionId + "/blocks";
         Architect.LOGGER.info("Pulling blocks for {} from {}", constructionId, blocksUrl);
 
@@ -1101,7 +1472,7 @@ public class ApiClient {
             blocksConn.setInstanceFollowRedirects(true); // Segui redirect al CDN
             blocksConn.setConnectTimeout(config.getRequestTimeout() * 1000);
             blocksConn.setReadTimeout(config.getRequestTimeout() * 1000);
-            blocksConn.setRequestProperty("Accept", "application/octet-stream");
+            blocksConn.setRequestProperty("Accept", "application/octet-stream, application/json");
             blocksConn.setRequestProperty("Authorization", config.getAuth());
             blocksConn.setRequestProperty("X-Api-Key", config.getApikey());
 
@@ -1121,7 +1492,7 @@ public class ApiClient {
             blocksConn.disconnect();
         }
 
-        // 3. Scarica le entità (NBT binario compresso, opzionale - può non esistere)
+        // 3. Download entities (compressed NBT or JSON, optional - may not exist)
         String entitiesUrl = endpoint + "/building/" + constructionId + "/entities";
         Architect.LOGGER.info("Pulling entities for {} from {}", constructionId, entitiesUrl);
 
@@ -1133,7 +1504,7 @@ public class ApiClient {
             entitiesConn.setInstanceFollowRedirects(true);
             entitiesConn.setConnectTimeout(config.getRequestTimeout() * 1000);
             entitiesConn.setReadTimeout(config.getRequestTimeout() * 1000);
-            entitiesConn.setRequestProperty("Accept", "application/octet-stream");
+            entitiesConn.setRequestProperty("Accept", "application/octet-stream, application/json");
             entitiesConn.setRequestProperty("Authorization", config.getAuth());
             entitiesConn.setRequestProperty("X-Api-Key", config.getApikey());
 
@@ -1300,14 +1671,26 @@ public class ApiClient {
                 }
             }
 
-            // Deserializza i blocchi da NBT compresso (dati binari diretti, non base64)
+            // Deserialize blocks (auto-detect format: JSON or compressed NBT)
             if (blocksData != null && blocksData.length > 0) {
-                deserializeBlocksFromNbt(construction, blocksData);
+                if (isJsonFormat(blocksData)) {
+                    String jsonString = new String(blocksData, StandardCharsets.UTF_8);
+                    deserializeBlocksFromJson(construction, jsonString);
+                    Architect.LOGGER.info("Parsed blocks from JSON for pull of {}", constructionId);
+                } else {
+                    deserializeBlocksFromNbt(construction, blocksData);
+                }
             }
 
-            // Deserializza le entità da NBT compresso (opzionale)
+            // Deserialize entities (auto-detect format: JSON or compressed NBT)
             if (entitiesData != null && entitiesData.length > 0) {
-                deserializeEntitiesFromNbt(construction, entitiesData);
+                if (isJsonFormat(entitiesData)) {
+                    String jsonString = new String(entitiesData, StandardCharsets.UTF_8);
+                    deserializeEntitiesFromJson(construction, jsonString);
+                    Architect.LOGGER.info("Parsed entities from JSON for pull of {}", constructionId);
+                } else {
+                    deserializeEntitiesFromNbt(construction, entitiesData);
+                }
             }
 
             return construction;

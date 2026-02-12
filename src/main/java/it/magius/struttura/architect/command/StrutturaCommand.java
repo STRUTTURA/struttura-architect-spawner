@@ -169,6 +169,9 @@ public class StrutturaCommand {
                     .then(Commands.argument("id", StringArgumentType.string())
                         .suggests(CONSTRUCTION_ID_SUGGESTIONS)
                         .executes(StrutturaCommand::executePush)
+                        .then(Commands.argument("format", StringArgumentType.word())
+                            .executes(StrutturaCommand::executePushWithFormat)
+                        )
                     )
                 )
                 .then(Commands.literal("title")
@@ -1039,6 +1042,16 @@ public class StrutturaCommand {
     // ===== Comando Push =====
 
     private static int executePush(CommandContext<CommandSourceStack> ctx) {
+        return executePushInternal(ctx, false);
+    }
+
+    private static int executePushWithFormat(CommandContext<CommandSourceStack> ctx) {
+        String format = StringArgumentType.getString(ctx, "format");
+        boolean jsonFormat = "json".equalsIgnoreCase(format);
+        return executePushInternal(ctx, jsonFormat);
+    }
+
+    private static int executePushInternal(CommandContext<CommandSourceStack> ctx, boolean jsonFormat) {
         CommandSourceStack source = ctx.getSource();
 
         if (!(source.getEntity() instanceof ServerPlayer player)) {
@@ -1087,18 +1100,19 @@ public class StrutturaCommand {
         }
 
         // Messaggio di invio
+        String formatLabel = jsonFormat ? " (JSON)" : "";
         source.sendSuccess(() -> Component.literal(
-            I18n.tr(player, "push.sending", id, construction.getBlockCount())
+            I18n.tr(player, "push.sending", id, construction.getBlockCount()) + formatLabel
         ), false);
 
-        Architect.LOGGER.info("Player {} pushing construction {} ({} blocks)",
-            player.getName().getString(), id, construction.getBlockCount());
+        Architect.LOGGER.info("Player {} pushing construction {} ({} blocks, format={})",
+            player.getName().getString(), id, construction.getBlockCount(), jsonFormat ? "json" : "nbt");
 
         // Cattura il server per il callback sul main thread
         var server = level.getServer();
 
         // Esegui push asincrono
-        boolean started = ApiClient.pushConstruction(construction, response -> {
+        boolean started = ApiClient.pushConstruction(construction, false, jsonFormat, response -> {
             // Callback viene eseguito su thread async, schedula sul main thread
             if (server != null) {
                 server.execute(() -> {
