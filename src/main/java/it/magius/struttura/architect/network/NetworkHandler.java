@@ -81,6 +81,8 @@ public class NetworkHandler {
         PayloadTypeRegistry.playS2C().register(OpenOptionsPacket.TYPE, OpenOptionsPacket.STREAM_CODEC);
         // First push disclaimer screen packet
         PayloadTypeRegistry.playS2C().register(FirstPushDisclaimerPacket.TYPE, FirstPushDisclaimerPacket.STREAM_CODEC);
+        // Close screen packet (sent when GUI action results in error)
+        PayloadTypeRegistry.playS2C().register(CloseScreenPacket.TYPE, CloseScreenPacket.STREAM_CODEC);
 
         // Registra il receiver per i dati dello screenshot
         ServerPlayNetworking.registerGlobalReceiver(ScreenshotDataPacket.TYPE, NetworkHandler::handleScreenshotData);
@@ -607,27 +609,36 @@ public class NetworkHandler {
         }
     }
 
+    /**
+     * Sends an error message for a GUI action.
+     * Closes the client screen first so the error is visible in chat.
+     */
+    private static void sendGuiError(ServerPlayer player, String key, Object... args) {
+        ServerPlayNetworking.send(player, new CloseScreenPacket());
+        ChatMessages.send(player, ChatMessages.Level.ERROR, key, args);
+    }
+
     private static void handleGuiShow(ServerPlayer player, String id) {
         ConstructionRegistry registry = ConstructionRegistry.getInstance();
 
         if (!registry.exists(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "show.not_found", id);
+            sendGuiError(player, "show.not_found", id);
             return;
         }
 
         if (isConstructionBeingEdited(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "show.in_editing", id);
+            sendGuiError(player, "show.in_editing", id);
             return;
         }
 
         if (VISIBLE_CONSTRUCTIONS.contains(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "show.already_visible", id);
+            sendGuiError(player, "show.already_visible", id);
             return;
         }
 
         Construction construction = registry.get(id);
         if (construction == null || construction.getBlockCount() == 0) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "show.empty", id);
+            sendGuiError(player, "show.empty", id);
             return;
         }
 
@@ -650,18 +661,18 @@ public class NetworkHandler {
         ConstructionRegistry registry = ConstructionRegistry.getInstance();
 
         if (!registry.exists(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "hide.not_found", id);
+            sendGuiError(player, "hide.not_found", id);
             return;
         }
 
         if (isConstructionBeingEdited(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "hide.in_editing", id);
+            sendGuiError(player, "hide.in_editing", id);
             return;
         }
 
         Construction construction = registry.get(id);
         if (construction == null || construction.getBlockCount() == 0) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "hide.not_found", id);
+            sendGuiError(player, "hide.not_found", id);
             return;
         }
 
@@ -684,7 +695,7 @@ public class NetworkHandler {
     private static void handleGuiTp(ServerPlayer player, String id) {
         Construction construction = getConstructionIncludingEditing(id);
         if (construction == null || !construction.getBounds().isValid()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "tp.not_found", id);
+            sendGuiError(player, "tp.not_found", id);
             return;
         }
 
@@ -695,7 +706,7 @@ public class NetworkHandler {
     private static void handleGuiEdit(ServerPlayer player, String id) {
         // Valida formato ID
         if (!Construction.isValidId(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "edit.invalid_id", id);
+            sendGuiError(player, "edit.invalid_id", id);
             return;
         }
 
@@ -705,7 +716,7 @@ public class NetworkHandler {
             // Solo blocca se un ALTRO giocatore sta modificando questa costruzione
             if (existingSession != null && !existingSession.getPlayer().getUUID().equals(player.getUUID())) {
                 String otherPlayerName = existingSession.getPlayer().getName().getString();
-                ChatMessages.send(player, ChatMessages.Level.ERROR, "edit.already_in_use", id, otherPlayerName);
+                sendGuiError(player, "edit.already_in_use", id, otherPlayerName);
                 return;
             }
         }
@@ -747,7 +758,7 @@ public class NetworkHandler {
 
     private static void handleGuiDone(ServerPlayer player, boolean saveEntities) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -783,7 +794,7 @@ public class NetworkHandler {
         if (player.getInventory().add(hammerStack)) {
             ChatMessages.send(player, ChatMessages.Level.INFO, "give.success");
         } else {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "give.inventory_full");
+            sendGuiError(player, "give.inventory_full");
         }
     }
 
@@ -792,7 +803,7 @@ public class NetworkHandler {
             // Use current editing session if no ID provided
             EditingSession session = EditingSession.getSession(player);
             if (session == null) {
-                ChatMessages.send(player, ChatMessages.Level.ERROR, "shot.no_id");
+                sendGuiError(player, "shot.no_id");
                 return;
             }
             constructionId = session.getConstruction().getId();
@@ -808,7 +819,7 @@ public class NetworkHandler {
     private static void handleGuiTitle(ServerPlayer player, String langId, String title) {
         EditingSession session = EditingSession.getSession(player);
         if (session == null) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -833,7 +844,7 @@ public class NetworkHandler {
         // Il giocatore deve essere in editing
         EditingSession session = EditingSession.getSession(player);
         if (session == null) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -846,20 +857,20 @@ public class NetworkHandler {
 
         // Valida il nuovo ID
         if (!Construction.isValidId(newId)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "edit.invalid_id", newId);
+            sendGuiError(player, "edit.invalid_id", newId);
             return;
         }
 
         // Verifica che il nuovo ID non esista già (nel registry o in altre sessioni)
         if (ConstructionRegistry.getInstance().exists(newId)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "rename.id_exists", newId);
+            sendGuiError(player, "rename.id_exists", newId);
             return;
         }
 
         // Verifica che un altro giocatore non stia già modificando una costruzione con il nuovo ID
         for (EditingSession otherSession : EditingSession.getAllSessions()) {
             if (otherSession != session && otherSession.getConstruction().getId().equals(newId)) {
-                ChatMessages.send(player, ChatMessages.Level.ERROR, "rename.id_exists", newId);
+                sendGuiError(player, "rename.id_exists", newId);
                 return;
             }
         }
@@ -891,7 +902,7 @@ public class NetworkHandler {
 
         // Verifica che la costruzione esista (in registry o in editing)
         if (!registry.exists(id) && getSessionForConstruction(id) == null) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "destroy.not_found", id);
+            sendGuiError(player, "destroy.not_found", id);
             return;
         }
 
@@ -899,7 +910,7 @@ public class NetworkHandler {
         EditingSession existingSession = getSessionForConstruction(id);
         if (existingSession != null && !existingSession.getPlayer().getUUID().equals(player.getUUID())) {
             String otherPlayerName = existingSession.getPlayer().getName().getString();
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "destroy.in_editing_by_other", id, otherPlayerName);
+            sendGuiError(player, "destroy.in_editing_by_other", id, otherPlayerName);
             return;
         }
 
@@ -947,32 +958,32 @@ public class NetworkHandler {
     private static void handleGuiPush(ServerPlayer player, String id) {
         // Verifica che la costruzione NON sia in modalità editing
         if (isConstructionBeingEdited(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.in_editing", id);
+            sendGuiError(player, "push.in_editing", id);
             return;
         }
 
         // Verifica che la costruzione esista nel registry
         ConstructionRegistry registry = ConstructionRegistry.getInstance();
         if (!registry.exists(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.not_found", id);
+            sendGuiError(player, "push.not_found", id);
             return;
         }
 
         // Verifica che non ci sia già una richiesta in corso
         if (ApiClient.isRequestInProgress()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
+            sendGuiError(player, "push.request_in_progress");
             return;
         }
 
         Construction construction = registry.get(id);
         if (construction == null || construction.getBlockCount() == 0) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.empty", id);
+            sendGuiError(player, "push.empty", id);
             return;
         }
 
         // Verifica che la costruzione abbia un titolo (obbligatorio per l'API)
         if (!construction.hasValidTitle()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.no_title", id);
+            sendGuiError(player, "push.no_title", id);
             return;
         }
 
@@ -1006,7 +1017,7 @@ public class NetworkHandler {
                         Architect.LOGGER.info("Push successful for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     } else {
-                        ChatMessages.send(player, ChatMessages.Level.ERROR, "push.failed", id, response.statusCode(), response.message());
+                        sendGuiError(player, "push.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Push failed for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     }
@@ -1015,7 +1026,7 @@ public class NetworkHandler {
         });
 
         if (!started) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
+            sendGuiError(player, "push.request_in_progress");
         }
     }
 
@@ -1029,19 +1040,19 @@ public class NetworkHandler {
             String otherPlayerName = existingSession != null
                 ? existingSession.getPlayer().getName().getString()
                 : "unknown";
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.in_editing", id, otherPlayerName);
+            sendGuiError(player, "pull.in_editing", id, otherPlayerName);
             return;
         }
 
         // Verifica che non sia già in corso un pull per questa costruzione
         if (PULLING_CONSTRUCTIONS.contains(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.already_pulling", id);
+            sendGuiError(player, "pull.already_pulling", id);
             return;
         }
 
         // Verifica che non ci sia già una richiesta API in corso
         if (ApiClient.isRequestInProgress()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
+            sendGuiError(player, "push.request_in_progress");
             return;
         }
 
@@ -1089,7 +1100,7 @@ public class NetworkHandler {
                         Architect.LOGGER.info("Pull successful for {}: {} blocks placed",
                             id, placementResult.blocksPlaced());
                     } else {
-                        ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.failed", id, response.statusCode(), response.message());
+                        sendGuiError(player, "pull.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Pull failed for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     }
@@ -1102,7 +1113,7 @@ public class NetworkHandler {
 
         if (!started) {
             PULLING_CONSTRUCTIONS.remove(id);
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
+            sendGuiError(player, "push.request_in_progress");
         }
     }
 
@@ -1365,12 +1376,12 @@ public class NetworkHandler {
         // Verify the construction exists (including those being edited)
         Construction construction = getConstructionIncludingEditing(id);
         if (construction == null) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "spawn.not_found", id);
+            sendGuiError(player, "spawn.not_found", id);
             return;
         }
 
         if (construction.getBlockCount() == 0) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "spawn.empty", id);
+            sendGuiError(player, "spawn.empty", id);
             return;
         }
 
@@ -1391,7 +1402,7 @@ public class NetworkHandler {
      */
     private static void handleGuiShortDesc(ServerPlayer player, String langId, String description) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1424,7 +1435,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRemoveBlock(ServerPlayer player, String blockId) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1518,7 +1529,7 @@ public class NetworkHandler {
 
             ChatMessages.send(player, ChatMessages.Level.INFO, "remove_block.success", removedCount, displayName);
         } else {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "remove_block.not_found", blockId);
+            sendGuiError(player, "remove_block.not_found", blockId);
         }
     }
 
@@ -1528,7 +1539,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRemoveEntity(ServerPlayer player, String entityType) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1621,7 +1632,7 @@ public class NetworkHandler {
 
             ChatMessages.send(player, ChatMessages.Level.INFO, "entity.removed_count", removedCount, displayName);
         } else {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entity.error.not_found");
+            sendGuiError(player, "entity.error.not_found");
         }
     }
 
@@ -1631,7 +1642,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomCreate(ServerPlayer player, String roomId, String roomName) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1640,13 +1651,13 @@ public class NetworkHandler {
 
         // Verifica che l'ID sia valido
         if (roomId == null || roomId.isEmpty()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.invalid_id");
+            sendGuiError(player, "room.error.invalid_id");
             return;
         }
 
         // Verifica che non esista già una stanza con lo stesso ID
         if (construction.getRoom(roomId) != null) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.exists", roomId);
+            sendGuiError(player, "room.error.exists", roomId);
             return;
         }
 
@@ -1673,7 +1684,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomEdit(ServerPlayer player, String roomId) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1682,7 +1693,7 @@ public class NetworkHandler {
 
         // Verifica che la stanza esista
         if (construction.getRoom(roomId) == null) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.not_found", roomId);
+            sendGuiError(player, "room.not_found", roomId);
             return;
         }
 
@@ -1700,7 +1711,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomDelete(ServerPlayer player, String roomId) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1709,7 +1720,7 @@ public class NetworkHandler {
 
         // Verifica che la stanza esista
         if (construction.getRoom(roomId) == null) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.not_found", roomId);
+            sendGuiError(player, "room.not_found", roomId);
             return;
         }
 
@@ -1736,7 +1747,7 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomRename(ServerPlayer player, String oldId, String extraData) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1745,7 +1756,7 @@ public class NetworkHandler {
         // Parse extraData: newId|newName
         String[] parts = extraData.split("\\|", 2);
         if (parts.length < 2) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.invalid_data");
+            sendGuiError(player, "room.error.invalid_data");
             return;
         }
 
@@ -1754,13 +1765,13 @@ public class NetworkHandler {
 
         // Verifica che l'ID sia valido
         if (newId == null || newId.isEmpty()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.invalid_id");
+            sendGuiError(player, "room.error.invalid_id");
             return;
         }
 
         // Verifica lunghezza nome
         if (newName.length() > 100) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.name_too_long");
+            sendGuiError(player, "room.name_too_long");
             return;
         }
 
@@ -1771,7 +1782,7 @@ public class NetworkHandler {
                     (resultId.equals(oldId) ? "" : "\nNew ID: " + resultId));
         } else {
             // Fallimento: probabilmente ID già esistente
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.error.exists", newId);
+            sendGuiError(player, "room.error.exists", newId);
         }
 
         // Aggiorna il client
@@ -1786,14 +1797,14 @@ public class NetworkHandler {
      */
     private static void handleGuiRoomExit(ServerPlayer player, boolean saveEntities) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
         EditingSession session = EditingSession.getSession(player);
 
         if (!session.isInRoom()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "room.not_in_room");
+            sendGuiError(player, "room.not_in_room");
             return;
         }
 
@@ -1824,7 +1835,7 @@ public class NetworkHandler {
      */
     private static void handleGuiSetEntrance(ServerPlayer player) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1832,7 +1843,7 @@ public class NetworkHandler {
 
         // Entrance can only be set for base construction, not rooms
         if (session.isInRoom()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_in_room");
+            sendGuiError(player, "entrance.not_in_room");
             return;
         }
 
@@ -1840,7 +1851,7 @@ public class NetworkHandler {
         ConstructionBounds bounds = construction.getBounds();
 
         if (!bounds.isValid()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.no_bounds");
+            sendGuiError(player, "entrance.no_bounds");
             return;
         }
 
@@ -1855,7 +1866,7 @@ public class NetworkHandler {
         boolean withinY = playerY >= bounds.getMinY() && playerY <= bounds.getMaxY() + 1;
 
         if (!withinXZ || !withinY) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.outside_bounds");
+            sendGuiError(player, "entrance.outside_bounds");
             return;
         }
 
@@ -1886,7 +1897,7 @@ public class NetworkHandler {
      */
     private static void handleGuiTpEntrance(ServerPlayer player) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1894,19 +1905,19 @@ public class NetworkHandler {
 
         // Entrance can only be used for base construction, not rooms
         if (session.isInRoom()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_in_room");
+            sendGuiError(player, "entrance.not_in_room");
             return;
         }
 
         Construction construction = session.getConstruction();
 
         if (!construction.getAnchors().hasEntrance()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_set");
+            sendGuiError(player, "entrance.not_set");
             return;
         }
 
         if (!construction.getBounds().isValid()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.no_bounds");
+            sendGuiError(player, "entrance.no_bounds");
             return;
         }
 
@@ -1920,7 +1931,7 @@ public class NetworkHandler {
      */
     private static void handleGuiAdjustEntranceY(ServerPlayer player, String deltaStr) {
         if (!EditingSession.hasSession(player)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "command.not_editing");
+            sendGuiError(player, "command.not_editing");
             return;
         }
 
@@ -1928,20 +1939,20 @@ public class NetworkHandler {
 
         // Entrance can only be adjusted for base construction, not rooms
         if (session.isInRoom()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_in_room");
+            sendGuiError(player, "entrance.not_in_room");
             return;
         }
 
         Construction construction = session.getConstruction();
 
         if (!construction.getAnchors().hasEntrance()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.not_set");
+            sendGuiError(player, "entrance.not_set");
             return;
         }
 
         ConstructionBounds bounds = construction.getBounds();
         if (!bounds.isValid()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.no_bounds");
+            sendGuiError(player, "entrance.no_bounds");
             return;
         }
 
@@ -1964,7 +1975,7 @@ public class NetworkHandler {
         // Check bounds (normalized Y must be within 0 to maxY of the construction)
         int maxY = bounds.getMaxY() - bounds.getMinY();
         if (newY < 0 || newY > maxY) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "entrance.y_out_of_bounds");
+            sendGuiError(player, "entrance.y_out_of_bounds");
             return;
         }
 
@@ -1991,7 +2002,7 @@ public class NetworkHandler {
         // Verify the construction exists
         Construction construction = getConstructionIncludingEditing(id);
         if (construction == null) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "move.not_found", id);
+            sendGuiError(player, "move.not_found", id);
             return;
         }
 
@@ -2001,12 +2012,12 @@ public class NetworkHandler {
             String otherPlayerName = existingSession != null
                 ? existingSession.getPlayer().getName().getString()
                 : "unknown";
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "move.in_editing", id, otherPlayerName);
+            sendGuiError(player, "move.in_editing", id, otherPlayerName);
             return;
         }
 
         if (construction.getBlockCount() == 0) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "move.empty", id);
+            sendGuiError(player, "move.empty", id);
             return;
         }
 
@@ -2385,19 +2396,19 @@ public class NetworkHandler {
             String otherPlayerName = existingSession != null
                 ? existingSession.getPlayer().getName().getString()
                 : "unknown";
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.in_editing", id, otherPlayerName);
+            sendGuiError(player, "pull.in_editing", id, otherPlayerName);
             return;
         }
 
         // Verifica che non sia già in corso un pull per questa costruzione
         if (PULLING_CONSTRUCTIONS.contains(id)) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.already_pulling", id);
+            sendGuiError(player, "pull.already_pulling", id);
             return;
         }
 
         // Verifica che non ci sia già una richiesta API in corso
         if (ApiClient.isRequestInProgress()) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
+            sendGuiError(player, "push.request_in_progress");
             return;
         }
 
@@ -2425,7 +2436,7 @@ public class NetworkHandler {
                         Architect.LOGGER.info("Sent mod requirements for {} to {}: {} mods",
                             id, player.getName().getString(), response.requiredMods().size());
                     } else {
-                        ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.failed", id, response.statusCode(), response.message());
+                        sendGuiError(player, "pull.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Pull check failed for {}: {} - {}",
                             id, response.statusCode(), response.message());
                     }
@@ -2434,7 +2445,7 @@ public class NetworkHandler {
         });
 
         if (!started) {
-            ChatMessages.send(player, ChatMessages.Level.ERROR, "push.request_in_progress");
+            sendGuiError(player, "push.request_in_progress");
         }
     }
 

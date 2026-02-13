@@ -23,6 +23,7 @@ import it.magius.struttura.architect.network.InGameBuildingPacket;
 import it.magius.struttura.architect.network.InGameListsPacket;
 import it.magius.struttura.architect.network.ModRequirementsPacket;
 import it.magius.struttura.architect.network.FirstPushDisclaimerPacket;
+import it.magius.struttura.architect.network.CloseScreenPacket;
 import it.magius.struttura.architect.network.OpenOptionsPacket;
 import it.magius.struttura.architect.network.ScreenshotRequestPacket;
 import it.magius.struttura.architect.network.TranslationsPacket;
@@ -246,6 +247,13 @@ public class ArchitectClient implements ClientModInitializer {
             context.client().execute(() -> {
                 Architect.LOGGER.debug("Showing first push disclaimer screen");
                 context.client().setScreen(new FirstPushDisclaimerScreen());
+            });
+        });
+
+        // Close screen packet receiver (for GUI action errors)
+        ClientPlayNetworking.registerGlobalReceiver(CloseScreenPacket.TYPE, (packet, context) -> {
+            context.client().execute(() -> {
+                context.client().setScreen(null);
             });
         });
 

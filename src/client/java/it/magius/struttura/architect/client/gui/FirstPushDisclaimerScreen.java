@@ -1,14 +1,19 @@
 package it.magius.struttura.architect.client.gui;
 
+import it.magius.struttura.architect.config.ArchitectConfig;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.minecraft.util.Util;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.FittingMultiLineTextWidget;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+
+import java.net.URI;
 
 /**
  * Modal disclaimer screen shown after the first push of a building (version 1).
@@ -54,11 +59,20 @@ public class FirstPushDisclaimerScreen extends Screen {
         );
         this.addRenderableWidget(messageWidget);
 
-        // OK button
+        // Buttons: View Rules + OK
+        int buttonGap = 8;
+        int totalButtonsWidth = BUTTON_WIDTH * 2 + buttonGap;
+        int buttonsStartX = centerX - totalButtonsWidth / 2;
+
+        this.addRenderableWidget(Button.builder(
+            Component.translatable("struttura.first_push.rules_btn"),
+            button -> openRules()
+        ).bounds(buttonsStartX, buttonY, BUTTON_WIDTH, BUTTON_HEIGHT).build());
+
         this.addRenderableWidget(Button.builder(
             Component.literal("OK"),
             button -> onClose()
-        ).bounds(centerX - BUTTON_WIDTH / 2, buttonY, BUTTON_WIDTH, BUTTON_HEIGHT).build());
+        ).bounds(buttonsStartX + BUTTON_WIDTH + buttonGap, buttonY, BUTTON_WIDTH, BUTTON_HEIGHT).build());
     }
 
     @Override
@@ -88,6 +102,32 @@ public class FirstPushDisclaimerScreen extends Screen {
     public boolean mouseClicked(MouseButtonEvent event, boolean consumed) {
         if (consumed) return true;
         return super.mouseClicked(event, consumed);
+    }
+
+    private void openRules() {
+        ArchitectConfig config = ArchitectConfig.getInstance();
+        String www = config.getWww();
+        if (www == null || www.isEmpty()) {
+            www = "https://struttura.magius.it";
+        }
+        if (www.endsWith("/")) {
+            www = www.substring(0, www.length() - 1);
+        }
+        String url = www + "/rules";
+        this.minecraft.setScreen(new ConfirmLinkScreen(
+            confirmed -> {
+                if (confirmed) {
+                    try {
+                        Util.getPlatform().openUri(new URI(url));
+                    } catch (Exception e) {
+                        // Ignore URI parsing errors
+                    }
+                }
+                this.minecraft.setScreen(this);
+            },
+            url,
+            true
+        ));
     }
 
     @Override
