@@ -4,6 +4,7 @@ import it.magius.struttura.architect.ingame.model.PositionType;
 import it.magius.struttura.architect.ingame.model.SpawnRule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -38,12 +39,16 @@ public class OverWaterValidator extends AbstractPositionValidator {
 
     @Override
     protected PlacementResult validatePlacement(PlacementContext ctx) {
-        int anchorY = ctx.entrancePos().getY();
-        int waterY = anchorY - 1; // Water should be directly below the anchor
+        int anchorY = ctx.entrancePos().getY(); // Entrance Y = one block above water
+        int waterY = anchorY - 1; // Water should be directly below the entrance
         int margin = ctx.margin();
         int buildingHeight = ctx.building().getSizeY();
 
-        // Check entire footprint has water at waterY
+        // Entrance offset: blocks below the entrance are allowed to be in water
+        int entranceOffsetY = ctx.building().getEntrance() != null ? ctx.building().getEntrance().getY() : 0;
+        int heightAboveEntrance = buildingHeight - entranceOffsetY;
+
+        // Check entire footprint has water at waterY (below entrance)
         for (int x = ctx.buildingOrigin().getX(); x < ctx.buildingOrigin().getX() + ctx.effectiveWidth(); x++) {
             for (int z = ctx.buildingOrigin().getZ(); z < ctx.buildingOrigin().getZ() + ctx.effectiveDepth(); z++) {
                 BlockPos waterPos = new BlockPos(x, waterY, z);
@@ -55,10 +60,10 @@ public class OverWaterValidator extends AbstractPositionValidator {
                         waterPos.toShortString(), state.getBlock().getName().getString()));
                 }
 
-                // Also check that the block above water (where building sits) is air
+                // Check that the block at entrance level (above water) is air or replaceable
                 BlockPos abovePos = new BlockPos(x, anchorY, z);
                 BlockState aboveState = ctx.level().getBlockState(abovePos);
-                if (!aboveState.isAir()) {
+                if (!isReplaceableAboveWater(aboveState)) {
                     return PlacementResult.fail(String.format(
                         "Non-air block above water at %s (found: %s)",
                         abovePos.toShortString(), aboveState.getBlock().getName().getString()));
@@ -66,13 +71,13 @@ public class OverWaterValidator extends AbstractPositionValidator {
             }
         }
 
-        // Check that the building + margin fits in air space above the water
-        // This is important for underground caves where there's a ceiling
+        // Check that the part of the building above the entrance + margin fits in air space
+        // Blocks below the entrance are allowed to be submerged in water
         int minX = ctx.buildingOrigin().getX() - margin;
         int maxX = ctx.buildingOrigin().getX() + ctx.effectiveWidth() + margin - 1;
         int minZ = ctx.buildingOrigin().getZ() - margin;
         int maxZ = ctx.buildingOrigin().getZ() + ctx.effectiveDepth() + margin - 1;
-        int maxY = anchorY + buildingHeight + margin - 1;
+        int maxY = anchorY + heightAboveEntrance + margin - 1;
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int bx = minX; bx <= maxX; bx++) {
@@ -80,7 +85,7 @@ public class OverWaterValidator extends AbstractPositionValidator {
                 for (int by = anchorY; by <= maxY; by++) {
                     pos.set(bx, by, bz);
                     BlockState state = ctx.level().getBlockState(pos);
-                    if (!state.isAir()) {
+                    if (!isReplaceableAboveWater(state)) {
                         return PlacementResult.fail(String.format(
                             "Non-air block in building space at %s (found: %s)",
                             pos.toShortString(), state.getBlock().getName().getString()));
@@ -94,7 +99,7 @@ public class OverWaterValidator extends AbstractPositionValidator {
 
     /**
      * Finds the water surface height at the given position within the specified Y range.
-     * Scans down from maxY to find the topmost water block with air above it,
+     * Scans down from maxY to find the topmost water block with air/replaceable above it,
      * then returns Y + 1 (one block above water).
      *
      * This handles both surface water and underground water (caves).
@@ -106,21 +111,19 @@ public class OverWaterValidator extends AbstractPositionValidator {
     private int getWaterSurfaceHeight(ServerLevel level, int x, int z, int minY, int maxY) {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(x, maxY, z);
 
-        // Scan down from maxY looking for water with air above it
-        // This pattern finds underground water lakes in caves
+        // Scan down from maxY looking for water with air/replaceable above it
         while (pos.getY() >= minY) {
             BlockState state = level.getBlockState(pos);
 
             if (isWater(state)) {
-                // Found water - check if there's air above it (a valid water surface)
+                // Found water - check if there's air or replaceable block above it (a valid water surface)
                 BlockPos abovePos = pos.above();
                 BlockState aboveState = level.getBlockState(abovePos);
 
-                if (aboveState.isAir()) {
-                    // This is a valid water surface with air above
+                if (isReplaceableAboveWater(aboveState)) {
                     return pos.getY() + 1;
                 }
-                // Water but no air above - keep searching down
+                // Water but solid block above - keep searching down
             }
 
             pos.setY(pos.getY() - 1);
@@ -134,5 +137,29 @@ public class OverWaterValidator extends AbstractPositionValidator {
      */
     private boolean isWater(BlockState state) {
         return state.is(Blocks.WATER);
+    }
+
+    /**
+     * Checks if a block is replaceable above water.
+     * Includes air, lily pads, snow layers, and other small decorative blocks
+     * that naturally generate on or near water surfaces and will be replaced by the building.
+     */
+    private boolean isReplaceableAboveWater(BlockState state) {
+        if (state.isAir()) {
+            return true;
+        }
+        // Lily pads on water surface
+        if (state.is(Blocks.LILY_PAD)) {
+            return true;
+        }
+        // Snow layers (can form on frozen water)
+        if (state.is(Blocks.SNOW)) {
+            return true;
+        }
+        // Small flowers and grass that could be on shoreline blocks within footprint
+        if (state.is(BlockTags.REPLACEABLE)) {
+            return true;
+        }
+        return false;
     }
 }
