@@ -341,17 +341,18 @@ public class ConstructionOperations {
             entitySpawnBase = targetPos;
         }
 
-        int entitiesSpawned = spawnEntitiesFrozenRotated(
+        List<Entity> spawnedEntities = spawnEntitiesFrozenRotated(
             construction.getEntities(),
             level,
             entitySpawnBase.getX(), entitySpawnBase.getY(), entitySpawnBase.getZ(),
             entityRotationSteps, pivotX, pivotZ,
-            construction
+            construction,
+            false
         );
 
-        Architect.LOGGER.info("Placed {} blocks, {} entities at {}", placedCount, entitiesSpawned, targetPos);
+        Architect.LOGGER.info("Placed {} blocks, {} entities at {}", placedCount, spawnedEntities.size(), targetPos);
 
-        return new PlacementResult(placedCount, entitiesSpawned, targetPos);
+        return new PlacementResult(placedCount, spawnedEntities.size(), targetPos);
     }
 
     /**
@@ -1327,13 +1328,20 @@ public class ConstructionOperations {
             }
         }
 
-        // Rotate Facing for hanging entities
+        // Rotate Facing for hanging entities (item frames use uppercase "Facing" with 3D values)
         if (nbt.contains("Facing")) {
             int facing = nbt.getByteOr("Facing", (byte) 0);
             if (facing >= 2 && facing <= 5) {
                 int newFacing = rotateFacing(facing, rotationSteps);
                 nbt.putByte("Facing", (byte) newFacing);
             }
+        }
+
+        // Rotate facing for paintings (lowercase "facing" with 2D values)
+        if (nbt.contains("facing")) {
+            int facing2D = nbt.getByteOr("facing", (byte) 0);
+            int newFacing2D = rotateFacing2D(facing2D, rotationSteps);
+            nbt.putByte("facing", (byte) newFacing2D);
         }
 
         // Rotate yaw in Rotation tag for mobs
@@ -1353,7 +1361,7 @@ public class ConstructionOperations {
     }
 
     /**
-     * Rotates entity NBT data: block_pos, sleeping_pos, Facing, and Rotation tags.
+     * Rotates entity NBT data: block_pos, sleeping_pos, Facing, facing, and Rotation tags.
      * Used when updating construction coordinates after a rotated placement.
      * Does NOT re-normalize coordinates - keeps them relative to the rotated pivot.
      */
@@ -1390,13 +1398,20 @@ public class ConstructionOperations {
             }
         }
 
-        // Rotate Facing for hanging entities (item frames, paintings)
+        // Rotate Facing for hanging entities (item frames use uppercase "Facing" with 3D values)
         if (nbt.contains("Facing")) {
             int facing = nbt.getByteOr("Facing", (byte) 0);
             if (facing >= 2 && facing <= 5) {
                 int newFacing = rotateFacing(facing, rotationSteps);
                 nbt.putByte("Facing", (byte) newFacing);
             }
+        }
+
+        // Rotate facing for paintings (lowercase "facing" with 2D values)
+        if (nbt.contains("facing")) {
+            int facing2D = nbt.getByteOr("facing", (byte) 0);
+            int newFacing2D = rotateFacing2D(facing2D, rotationSteps);
+            nbt.putByte("facing", (byte) newFacing2D);
         }
 
         // Rotate yaw in Rotation tag for mobs
@@ -1533,20 +1548,20 @@ public class ConstructionOperations {
      *
      * @param construction The construction to track spawned entities in (can be null to skip tracking)
      */
-    private static int spawnEntitiesFrozenRotated(
+    private static List<Entity> spawnEntitiesFrozenRotated(
         List<EntityData> entities,
         ServerLevel level,
         int targetX, int targetY, int targetZ,
         int rotationSteps,
         int pivotX, int pivotZ,
-        Construction construction
+        Construction construction,
+        boolean keepFrozen
     ) {
         if (entities.isEmpty()) {
-            return 0;
+            return new ArrayList<>();
         }
 
         List<Entity> spawnedEntities = new ArrayList<>();
-        int spawnedCount = 0;
 
         // For entities, pivot should be at center of the pivot block (add 0.5)
         // This ensures entities rotate around the same center as blocks
@@ -1574,6 +1589,11 @@ public class ConstructionOperations {
                 CompoundTag nbt = data.getNbt().copy();
                 nbt.remove("Motion");
                 nbt.remove("UUID");
+                if (keepFrozen) {
+                    // Remove spawn properties - will be restored by unfreezeSpawnedEntities
+                    nbt.remove("NoGravity");
+                    nbt.remove("NoAI");
+                }
 
                 // Remove maps from item frames
                 String entityType = data.getEntityType();
@@ -1630,6 +1650,16 @@ public class ConstructionOperations {
                     }
                 }
 
+                // Rotate "facing" (lowercase) for paintings (MC 1.21.11 LEGACY_ID_CODEC_2D)
+                // Paintings use different facing values than item frames:
+                // 2D: 0=south, 1=west, 2=north, 3=east
+                if (nbt.contains("facing") && rotationSteps != 0) {
+                    int facing2D = nbt.getByteOr("facing", (byte) 0);
+                    int newFacing2D = rotateFacing2D(facing2D, rotationSteps);
+                    nbt.putByte("facing", (byte) newFacing2D);
+                    Architect.LOGGER.debug("Rotated painting facing (2D) from {} to {} (steps={})", facing2D, newFacing2D, rotationSteps);
+                }
+
                 // Rotate yaw in NBT for non-hanging entities (mobs, armor stands, etc.)
                 // Must be done BEFORE creating the entity, as setYRot() after creation may be ignored
                 boolean isHangingEntity = entityType.equals("minecraft:item_frame") ||
@@ -1675,9 +1705,13 @@ public class ConstructionOperations {
                         }
                     }
 
+                    if (keepFrozen) {
+                        // Mark entity as spawned by struttura (for cleanup and unfreeze)
+                        entity.getTags().add("struttura_spawned");
+                    }
+
                     level.addFreshEntity(entity);
                     spawnedEntities.add(entity);
-                    spawnedCount++;
 
                     // Track entity UUID in construction for later removal
                     if (construction != null) {
@@ -1692,14 +1726,16 @@ public class ConstructionOperations {
             }
         }
 
-        // Re-enable gravity for non-mob entities after all are spawned
-        for (Entity entity : spawnedEntities) {
-            if (!(entity instanceof Mob) && !(entity instanceof HangingEntity)) {
-                entity.setNoGravity(false);
+        if (!keepFrozen) {
+            // Re-enable gravity for non-mob entities after all are spawned
+            for (Entity entity : spawnedEntities) {
+                if (!(entity instanceof Mob) && !(entity instanceof HangingEntity)) {
+                    entity.setNoGravity(false);
+                }
             }
         }
 
-        return spawnedCount;
+        return spawnedEntities;
     }
 
     /**
@@ -1769,6 +1805,17 @@ public class ConstructionOperations {
      * Must match stepsToRotation which uses CLOCKWISE rotation for blocks.
      * Clockwise: north -> east -> south -> west -> north
      */
+    /**
+     * Rotates a 2D facing value by the specified number of 90-degree clockwise steps.
+     * Used by Painting in MC 1.21.11 which stores "facing" (lowercase) with LEGACY_ID_CODEC_2D.
+     * 2D facing values: 0=south(+Z), 1=west(-X), 2=north(-Z), 3=east(+X)
+     * Clockwise: south -> west -> north -> east -> south
+     */
+    private static int rotateFacing2D(int facing2D, int steps) {
+        if (steps == 0 || facing2D < 0 || facing2D > 3) return facing2D;
+        return (facing2D + steps) % 4;
+    }
+
     private static int rotateFacing(int facing, int steps) {
         if (steps == 0 || facing < 2 || facing > 5) return facing;
 
@@ -2616,7 +2663,8 @@ public class ConstructionOperations {
 
     /**
      * Spawns a list of entities for ArchitectSpawn with rotation support.
-     * Entities are spawned with NoAI enabled for mobs.
+     * Delegates to the centralized spawnEntitiesFrozenRotated with keepFrozen=true,
+     * so unfreezeSpawnedEntities handles gravity/AI restoration.
      */
     private static List<Entity> spawnEntitiesListForArchitectSpawn(
         ServerLevel level,
@@ -2626,126 +2674,13 @@ public class ConstructionOperations {
         int pivotX,
         int pivotZ
     ) {
-        List<Entity> spawnedEntities = new ArrayList<>();
-        if (entities.isEmpty()) {
-            return spawnedEntities;
-        }
-
-        // Pivot for entity rotation (center of block)
-        double pivotCenterX = pivotX + 0.5;
-        double pivotCenterZ = pivotZ + 0.5;
-
-        for (EntityData data : entities) {
-            try {
-                // Get relative position and rotate it around pivot center
-                double relX = data.getRelativePos().x;
-                double relY = data.getRelativePos().y;
-                double relZ = data.getRelativePos().z;
-
-                // Rotate the relative position around pivot center
-                double[] rotatedXZ = rotateXZDouble(relX, relZ, pivotCenterX, pivotCenterZ, rotationSteps);
-                double rotatedRelX = rotatedXZ[0];
-                double rotatedRelZ = rotatedXZ[1];
-
-                // Calculate world position
-                double worldX = targetPos.getX() + rotatedRelX;
-                double worldY = targetPos.getY() + relY;
-                double worldZ = targetPos.getZ() + rotatedRelZ;
-
-                // Copy NBT - only remove UUID (will be regenerated)
-                CompoundTag nbt = data.getNbt().copy();
-                nbt.remove("UUID");
-                // Remove spawn-related properties from saved NBT - these will be restored
-                // to default values in unfreezeSpawnedEntities using a fresh entity.
-                // This ensures mobs can move (NoAI), gravity works correctly (NoGravity),
-                // and entities behave normally after spawn.
-                // All other properties (color, type, inventory, etc.) are preserved.
-                nbt.remove("NoGravity");
-                nbt.remove("NoAI");
-
-                // Set Pos in NBT BEFORE entity creation
-                net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
-                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldX));
-                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldY));
-                posTag.add(net.minecraft.nbt.DoubleTag.valueOf(worldZ));
-                nbt.put("Pos", posTag);
-
-                // Remove maps from item frames
-                String entityType = data.getEntityType();
-                if (entityType.equals("minecraft:item_frame") || entityType.equals("minecraft:glow_item_frame")) {
-                    EntityData.removeMapFromItemFrameNbt(nbt);
-                }
-
-                // Ensure id tag exists
-                if (!nbt.contains("id")) {
-                    nbt.putString("id", data.getEntityType());
-                }
-
-                // Update block_pos for hanging entities
-                updateHangingEntityCoordsRotated(nbt, targetPos.getX(), targetPos.getY(), targetPos.getZ(),
-                    rotationSteps, pivotX, pivotZ);
-
-                // Update sleeping_pos for villagers
-                updateSleepingPosRotated(nbt, targetPos.getX(), targetPos.getY(), targetPos.getZ(),
-                    rotationSteps, pivotX, pivotZ);
-
-                // Rotate Facing for hanging entities
-                if (nbt.contains("Facing") && rotationSteps != 0) {
-                    int facing = nbt.getByteOr("Facing", (byte) 0);
-                    if (facing >= 2 && facing <= 5) {
-                        int newFacing = rotateFacing(facing, rotationSteps);
-                        nbt.putByte("Facing", (byte) newFacing);
-                    }
-                }
-
-                // Rotate yaw in NBT for non-hanging entities
-                boolean isHangingEntity = entityType.equals("minecraft:item_frame") ||
-                    entityType.equals("minecraft:glow_item_frame") ||
-                    entityType.equals("minecraft:painting");
-                if (!isHangingEntity && rotationSteps != 0 && nbt.contains("Rotation")) {
-                    net.minecraft.nbt.Tag rotationTag = nbt.get("Rotation");
-                    if (rotationTag instanceof net.minecraft.nbt.ListTag rotationList && rotationList.size() >= 2) {
-                        float originalYaw = rotationList.getFloatOr(0, 0f);
-                        float pitch = rotationList.getFloatOr(1, 0f);
-                        float rotatedYaw = originalYaw + (rotationSteps * 90f);
-
-                        net.minecraft.nbt.ListTag newRotation = new net.minecraft.nbt.ListTag();
-                        newRotation.add(net.minecraft.nbt.FloatTag.valueOf(rotatedYaw));
-                        newRotation.add(net.minecraft.nbt.FloatTag.valueOf(pitch));
-                        nbt.put("Rotation", newRotation);
-                    }
-                }
-
-                // Create entity from NBT
-                Entity entity = EntityType.loadEntityRecursive(nbt, level, EntitySpawnReason.LOAD, e -> e);
-
-                if (entity != null) {
-                    // Temporarily disable gravity during spawn (will be restored in unfreeze)
-                    entity.setNoGravity(true);
-
-                    // Mark entity as spawned by struttura (for cleanup and unfreeze)
-                    entity.getTags().add("struttura_spawned");
-
-                    // Set position
-                    entity.setPos(worldX, worldY, worldZ);
-                    entity.setXRot(data.getPitch());
-                    entity.setUUID(UUID.randomUUID());
-
-                    // Disable AI for mobs (will be re-enabled in unfreezeSpawnedEntities)
-                    if (entity instanceof Mob mob) {
-                        mob.setNoAi(true);
-                    }
-
-                    level.addFreshEntity(entity);
-                    spawnedEntities.add(entity);
-                }
-            } catch (Exception e) {
-                Architect.LOGGER.error("Failed to spawn entity of type {}: {}",
-                    data.getEntityType(), e.getMessage());
-            }
-        }
-
-        return spawnedEntities;
+        return spawnEntitiesFrozenRotated(
+            entities, level,
+            targetPos.getX(), targetPos.getY(), targetPos.getZ(),
+            rotationSteps, pivotX, pivotZ,
+            null,   // No construction tracking for architectSpawn
+            true    // Keep frozen - unfreezeSpawnedEntities handles it
+        );
     }
 
     /**

@@ -2798,11 +2798,11 @@ public class StrutturaCommand {
         // Get biome at player position
         net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> biomeHolder = level.getBiome(player.blockPosition());
         String biomeId = biomeHolder.unwrapKey()
-            .map(net.minecraft.resources.ResourceKey::toString)
+            .map(key -> key.identifier().toString())
             .orElse("unknown");
 
         // Find applicable spawn rule for this biome
-        SpawnRule rule = building.findRuleForBiome(biomeId);
+        SpawnRule rule = building.findRuleForBiome(biomeId, new java.util.Random());
         if (rule == null) {
             if (building.getRules().isEmpty()) {
                 rule = SpawnRule.createDefault();

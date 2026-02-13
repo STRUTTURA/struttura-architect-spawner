@@ -277,13 +277,20 @@ public class EntityData {
             }
         }
 
-        // Rotate Facing for hanging entities (item frames, paintings)
+        // Rotate Facing for hanging entities (item frames use uppercase "Facing" with 3D values)
         if (nbt.contains("Facing")) {
             int facing = nbt.getByteOr("Facing", (byte) 0);
             if (facing >= 2 && facing <= 5) {
                 int newFacing = rotateFacing(facing, rotationSteps);
                 nbt.putByte("Facing", (byte) newFacing);
             }
+        }
+
+        // Rotate facing for paintings (lowercase "facing" with 2D values: 0=south, 1=west, 2=north, 3=east)
+        if (nbt.contains("facing")) {
+            int facing2D = nbt.getByteOr("facing", (byte) 0);
+            int newFacing2D = rotateFacing2D(facing2D, rotationSteps);
+            nbt.putByte("facing", (byte) newFacing2D);
         }
 
         // Rotate yaw in Rotation tag for mobs
@@ -334,6 +341,17 @@ public class EntityData {
         int dir = facingToDir[facing];
         int newDir = (dir + rotationSteps) % 4;
         return dirToFacing[newDir];
+    }
+
+    /**
+     * Rotates a 2D facing value by the specified number of 90-degree clockwise steps.
+     * Used by Painting in MC 1.21.11 which stores "facing" (lowercase) with LEGACY_ID_CODEC_2D.
+     * 2D facing values: 0=south(+Z), 1=west(-X), 2=north(-Z), 3=east(+X)
+     * Clockwise: south -> west -> north -> east -> south
+     */
+    private static int rotateFacing2D(int facing2D, int rotationSteps) {
+        if (rotationSteps == 0 || facing2D < 0 || facing2D > 3) return facing2D;
+        return (facing2D + rotationSteps) % 4;
     }
 
     // Getters

@@ -8,7 +8,7 @@ import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
 import it.magius.struttura.architect.ingame.model.SpawnableList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
-import net.minecraft.resources.ResourceKey;
+
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -69,11 +69,11 @@ public class SpawnEvaluator {
         BlockPos chunkCenter = chunk.getPos().getMiddleBlockPosition(level.getSeaLevel());
         Holder<Biome> biomeHolder = level.getBiome(chunkCenter);
         String biomeId = biomeHolder.unwrapKey()
-            .map(ResourceKey::toString)
+            .map(key -> key.identifier().toString())
             .orElse("unknown");
 
         // Step 4: Find applicable rule for this biome
-        SpawnRule rule = building.findRuleForBiome(biomeId);
+        SpawnRule rule = building.findRuleForBiome(biomeId, random);
 
         // If no rules defined, use default rule: 100% chance, ON_GROUND, Y range 60-100
         if (rule == null) {

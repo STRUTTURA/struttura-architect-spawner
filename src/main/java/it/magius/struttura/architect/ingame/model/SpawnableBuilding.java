@@ -4,8 +4,10 @@ import it.magius.struttura.architect.i18n.LanguageUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.AABB;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 /**
  * Represents a building that can be spawned in the world via the InGame system.
@@ -197,17 +199,23 @@ public class SpawnableBuilding {
     }
 
     /**
-     * Finds the first spawn rule that applies to the given biome.
+     * Finds a random spawn rule among all rules that apply to the given biome.
+     * If multiple rules match (e.g., same biome with different positions), one is picked at random.
      * @param biomeId the biome resource location (e.g., "minecraft:plains")
+     * @param random the random generator for selection
      * @return the matching rule, or null if no rule applies
      */
-    public SpawnRule findRuleForBiome(String biomeId) {
+    public SpawnRule findRuleForBiome(String biomeId, Random random) {
+        List<SpawnRule> matching = new ArrayList<>();
         for (SpawnRule rule : rules) {
             if (rule.appliesToBiome(biomeId)) {
-                return rule;
+                matching.add(rule);
             }
         }
-        return null;
+        if (matching.isEmpty()) {
+            return null;
+        }
+        return matching.get(random.nextInt(matching.size()));
     }
 
     /**
