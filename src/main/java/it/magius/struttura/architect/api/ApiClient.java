@@ -2631,6 +2631,7 @@ public class ApiClient {
             conn.setConnectTimeout(config.getRequestTimeout() * 1000);
             conn.setReadTimeout(config.getRequestTimeout() * 1000);
             conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Authorization", config.getAuth());
             conn.setRequestProperty("X-Api-Key", apiKey);
 
             int statusCode = conn.getResponseCode();
