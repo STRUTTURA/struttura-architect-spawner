@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonElement;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.config.ArchitectConfig;
+import it.magius.struttura.architect.ingame.model.EnsureBoundsMode;
 import it.magius.struttura.architect.ingame.model.InGameListInfo;
 import it.magius.struttura.architect.ingame.model.PositionType;
 import it.magius.struttura.architect.ingame.model.SpawnRule;
@@ -28,6 +29,7 @@ import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -58,6 +60,14 @@ public class ApiClient {
      */
     public static boolean isRequestInProgress() {
         return REQUEST_IN_PROGRESS.get();
+    }
+
+    /**
+     * Checks if cloud access is currently denied by the server.
+     * When denied, all API calls except fetchModSettings and update downloads are blocked.
+     */
+    public static boolean isCloudDenied() {
+        return ArchitectConfig.getInstance().isCloudDenied();
     }
 
     /**
@@ -93,6 +103,10 @@ public class ApiClient {
      * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
      */
     public static boolean pushConstruction(Construction construction, boolean purge, boolean jsonFormat, Consumer<ApiResponse> onComplete) {
+        if (isCloudDenied()) {
+            onComplete.accept(new ApiResponse(403, "Cloud access denied: mod version too old", false, 0));
+            return true;
+        }
         if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
             return false;
         }
@@ -885,6 +899,10 @@ public class ApiClient {
      */
     public static boolean uploadScreenshot(String constructionId, byte[] imageData, String filename,
                                            String title, boolean purge, Consumer<ApiResponse> onComplete) {
+        if (isCloudDenied()) {
+            onComplete.accept(new ApiResponse(403, "Cloud access denied: mod version too old", false, 0));
+            return true;
+        }
         if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
             return false;
         }
@@ -977,6 +995,10 @@ public class ApiClient {
      * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
      */
     public static boolean pullConstruction(String constructionId, Consumer<PullResponse> onComplete) {
+        if (isCloudDenied()) {
+            onComplete.accept(new PullResponse(403, "Cloud access denied: mod version too old", false, null));
+            return true;
+        }
         if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
             return false;
         }
@@ -1004,6 +1026,10 @@ public class ApiClient {
      * @param onComplete callback called on completion
      */
     public static void downloadConstruction(String constructionId, Consumer<PullResponse> onComplete) {
+        if (isCloudDenied()) {
+            onComplete.accept(new PullResponse(403, "Cloud access denied: mod version too old", false, null));
+            return;
+        }
         CompletableFuture.supplyAsync(() -> {
             try {
                 return executeInGameDownload(constructionId);
@@ -1931,6 +1957,10 @@ public class ApiClient {
      * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
      */
     public static boolean pullMetadataOnly(String constructionId, Consumer<MetadataResponse> onComplete) {
+        if (isCloudDenied()) {
+            onComplete.accept(new MetadataResponse(403, "Cloud access denied: mod version too old", false, constructionId, null));
+            return true;
+        }
         if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
             return false;
         }
@@ -2044,7 +2074,10 @@ public class ApiClient {
     private static void executeFetchModSettings() {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String endpoint = config.getEndpoint();
-        String url = endpoint + "/mod/settings";
+        String url = endpoint + "/mod/settings"
+            + "?modVersion=" + URLEncoder.encode(Architect.MOD_VERSION, StandardCharsets.UTF_8)
+            + "&minecraftVersion=" + URLEncoder.encode(Architect.MINECRAFT_VERSION, StandardCharsets.UTF_8)
+            + "&loaderVersion=" + URLEncoder.encode(Architect.LOADER_VERSION, StandardCharsets.UTF_8);
 
         Architect.LOGGER.info("Fetching mod settings from {}", url);
 
@@ -2110,6 +2143,29 @@ public class ApiClient {
                         updated = true;
                     }
 
+                    // Parse cloud deny flag
+                    if (json.has("denyCloud") && json.get("denyCloud").isJsonPrimitive()) {
+                        boolean denyCloud = json.get("denyCloud").getAsBoolean();
+                        config.setCloudDenied(denyCloud);
+                        if (denyCloud) {
+                            Architect.LOGGER.warn("Mod settings: cloud access denied by server (mod version too old)");
+                        }
+                    } else {
+                        config.setCloudDenied(false);
+                    }
+
+                    // Parse latest version info
+                    if (json.has("latestVersion") && json.get("latestVersion").isJsonPrimitive()) {
+                        config.setLatestVersion(json.get("latestVersion").getAsString());
+                        Architect.LOGGER.info("Mod settings: newer version available: {}", config.getLatestVersion());
+                    }
+                    if (json.has("downloadUrl") && json.get("downloadUrl").isJsonPrimitive()) {
+                        config.setDownloadUrl(json.get("downloadUrl").getAsString());
+                    }
+
+                    // Show update/deny screens on the render thread
+                    handleVersionScreens(config);
+
                     if (updated) {
                         config.save();
                         return;
@@ -2126,6 +2182,27 @@ public class ApiClient {
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to fetch mod settings: {}", e.getMessage());
             setDefaultDisclaimer();
+        }
+    }
+
+    // Callback invoked after mod settings are fetched (set by client-side code)
+    private static volatile Runnable modSettingsCallback = null;
+
+    /**
+     * Sets a callback to be invoked after mod settings are fetched.
+     * Used by client-side code to show update/deny screens on the render thread.
+     */
+    public static void setModSettingsCallback(Runnable callback) {
+        modSettingsCallback = callback;
+    }
+
+    /**
+     * Notifies the registered callback that mod settings have been processed.
+     */
+    private static void handleVersionScreens(ArchitectConfig config) {
+        Runnable callback = modSettingsCallback;
+        if (callback != null) {
+            callback.run();
         }
     }
 
@@ -2157,6 +2234,10 @@ public class ApiClient {
      * @param onComplete callback called on completion
      */
     public static void fetchInGameLists(Consumer<InGameListsResponse> onComplete) {
+        if (isCloudDenied()) {
+            onComplete.accept(new InGameListsResponse(403, "Cloud access denied: mod version too old", false, null, false, 0));
+            return;
+        }
         CompletableFuture.supplyAsync(() -> {
             try {
                 return executeFetchInGameLists();
@@ -2295,6 +2376,10 @@ public class ApiClient {
      * @param onComplete callback called on completion
      */
     public static void fetchSpawnableList(String listId, String currentHash, String worldSeed, Consumer<SpawnableListResponse> onComplete) {
+        if (isCloudDenied()) {
+            onComplete.accept(new SpawnableListResponse(403, "Cloud access denied: mod version too old", false, null, 0));
+            return;
+        }
         CompletableFuture.supplyAsync(() -> {
             try {
                 return executeFetchSpawnableList(listId, currentHash, worldSeed);
@@ -2442,10 +2527,18 @@ public class ApiClient {
                                 margin = posObj.has("margin") ? posObj.get("margin").getAsInt() : 5;
                             }
 
-                            // Parse ensureBounds
-                            boolean ensureBounds = ruleObj.has("ensureBounds") && ruleObj.get("ensureBounds").getAsBoolean();
+                            // Parse ensureBounds (backward compat: boolean or string)
+                            EnsureBoundsMode ensureBoundsMode = EnsureBoundsMode.NONE;
+                            if (ruleObj.has("ensureBounds")) {
+                                JsonElement ebElem = ruleObj.get("ensureBounds");
+                                if (ebElem.isJsonPrimitive() && ebElem.getAsJsonPrimitive().isBoolean()) {
+                                    ensureBoundsMode = ebElem.getAsBoolean() ? EnsureBoundsMode.ALL : EnsureBoundsMode.NONE;
+                                } else if (ebElem.isJsonPrimitive() && ebElem.getAsJsonPrimitive().isString()) {
+                                    ensureBoundsMode = EnsureBoundsMode.fromApi(ebElem.getAsString());
+                                }
+                            }
 
-                            rules.add(new SpawnRule(biomes, percentage, posType, y1, y2, margin, ensureBounds));
+                            rules.add(new SpawnRule(biomes, percentage, posType, y1, y2, margin, ensureBoundsMode));
                         }
                     }
                 }
@@ -2506,6 +2599,10 @@ public class ApiClient {
      * @param onComplete callback called on completion
      */
     public static void validateApiKey(Consumer<ValidateApiKeyResponse> onComplete) {
+        if (isCloudDenied()) {
+            onComplete.accept(new ValidateApiKeyResponse(403, "Cloud access denied: mod version too old", false, 0));
+            return;
+        }
         CompletableFuture.supplyAsync(() -> {
             try {
                 return executeValidateApiKey();

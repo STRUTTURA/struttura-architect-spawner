@@ -2,6 +2,7 @@ package it.magius.struttura.architect.ingame;
 
 import com.google.gson.*;
 import it.magius.struttura.architect.Architect;
+import it.magius.struttura.architect.ingame.model.EnsureBoundsMode;
 import it.magius.struttura.architect.ingame.model.PositionType;
 import it.magius.struttura.architect.ingame.model.SpawnRule;
 import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
@@ -197,7 +198,10 @@ public class SpawnableListStorage {
         json.addProperty("y1", rule.getY1());
         json.addProperty("y2", rule.getY2());
         json.addProperty("margin", rule.getMargin());
-        json.addProperty("ensureBounds", rule.isEnsureBounds());
+        // Only write ensureBounds if not NONE (save space)
+        if (rule.getEnsureBoundsMode() != EnsureBoundsMode.NONE) {
+            json.addProperty("ensureBounds", rule.getEnsureBoundsMode().toApi());
+        }
 
         JsonArray biomesArray = new JsonArray();
         for (String biome : rule.getBiomes()) {
@@ -320,7 +324,16 @@ public class SpawnableListStorage {
             int y1 = json.has("y1") ? json.get("y1").getAsInt() : 60;
             int y2 = json.has("y2") ? json.get("y2").getAsInt() : 100;
             int margin = json.has("margin") ? json.get("margin").getAsInt() : 5;
-            boolean ensureBounds = json.has("ensureBounds") && json.get("ensureBounds").getAsBoolean();
+            // Backward compat: absent → NONE, boolean true → ALL, string → fromApi()
+            EnsureBoundsMode ensureBoundsMode = EnsureBoundsMode.NONE;
+            if (json.has("ensureBounds")) {
+                JsonElement ebElem = json.get("ensureBounds");
+                if (ebElem.isJsonPrimitive() && ebElem.getAsJsonPrimitive().isBoolean()) {
+                    ensureBoundsMode = ebElem.getAsBoolean() ? EnsureBoundsMode.ALL : EnsureBoundsMode.NONE;
+                } else if (ebElem.isJsonPrimitive() && ebElem.getAsJsonPrimitive().isString()) {
+                    ensureBoundsMode = EnsureBoundsMode.fromApi(ebElem.getAsString());
+                }
+            }
 
             List<String> biomes = new ArrayList<>();
             if (json.has("biomes") && json.get("biomes").isJsonArray()) {
@@ -330,7 +343,7 @@ public class SpawnableListStorage {
                 }
             }
 
-            return new SpawnRule(biomes, percentage, type, y1, y2, margin, ensureBounds);
+            return new SpawnRule(biomes, percentage, type, y1, y2, margin, ensureBoundsMode);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to deserialize spawn rule", e);

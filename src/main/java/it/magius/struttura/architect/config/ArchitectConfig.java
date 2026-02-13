@@ -61,6 +61,11 @@ public class ArchitectConfig {
     private int listRefreshIntervalMinutes = 60;  // How often to check for list updates (minutes)
     private int maxCachedNbt = 25;                // Maximum NBT files to keep in memory
 
+    // Transient fields from /mod/settings response (not persisted to disk)
+    private transient boolean cloudDenied = false;
+    private transient String latestVersion = null;
+    private transient String downloadUrl = null;
+
     private ArchitectConfig() {}
 
     /**
@@ -178,6 +183,9 @@ public class ArchitectConfig {
     public String getInGameListId() { return inGameListId; }
     public int getListRefreshIntervalMinutes() { return listRefreshIntervalMinutes; }
     public int getMaxCachedNbt() { return maxCachedNbt; }
+    public boolean isCloudDenied() { return cloudDenied; }
+    public String getLatestVersion() { return latestVersion; }
+    public String getDownloadUrl() { return downloadUrl; }
 
     /**
      * Gets the disclaimer text for a specific language.
@@ -247,4 +255,7 @@ public class ArchitectConfig {
     public void setInGameListId(String inGameListId) { this.inGameListId = inGameListId; }
     public void setListRefreshIntervalMinutes(int minutes) { this.listRefreshIntervalMinutes = Math.max(1, minutes); }
     public void setMaxCachedNbt(int max) { this.maxCachedNbt = Math.max(1, max); }
+    public void setCloudDenied(boolean cloudDenied) { this.cloudDenied = cloudDenied; }
+    public void setLatestVersion(String latestVersion) { this.latestVersion = latestVersion; }
+    public void setDownloadUrl(String downloadUrl) { this.downloadUrl = downloadUrl; }
 }

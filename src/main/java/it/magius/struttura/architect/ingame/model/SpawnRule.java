@@ -14,16 +14,16 @@ public class SpawnRule {
     private final int y1;                    // Minimum Y level
     private final int y2;                    // Maximum Y level
     private final int margin;                // Safety margin around the building (default 5)
-    private final boolean ensureBounds;      // Clear spawn area before placing
+    private final EnsureBoundsMode ensureBoundsMode; // How to clear spawn area before placing
 
-    public SpawnRule(List<String> biomes, double percentage, PositionType type, int y1, int y2, int margin, boolean ensureBounds) {
+    public SpawnRule(List<String> biomes, double percentage, PositionType type, int y1, int y2, int margin, EnsureBoundsMode ensureBoundsMode) {
         this.biomes = biomes != null ? List.copyOf(biomes) : List.of();
         this.percentage = Math.max(0.0, Math.min(1.0, percentage));
         this.type = type != null ? type : PositionType.ON_GROUND;
         this.y1 = y1;
         this.y2 = y2;
         this.margin = margin > 0 ? margin : 5;
-        this.ensureBounds = ensureBounds;
+        this.ensureBoundsMode = ensureBoundsMode != null ? ensureBoundsMode : EnsureBoundsMode.NONE;
     }
 
     /**
@@ -38,7 +38,7 @@ public class SpawnRule {
             60,                     // Min Y level
             100,                    // Max Y level
             5,                      // Default margin
-            false                   // Don't clear bounds by default
+            EnsureBoundsMode.NONE   // Don't clear bounds by default
         );
     }
 
@@ -85,12 +85,10 @@ public class SpawnRule {
     }
 
     /**
-     * Checks if the spawn area should be cleared before placing the building.
-     * For water positions (BOTTOM_WATER, ON_WATER), the area is filled with water.
-     * For other positions, the area is filled with air.
+     * Gets the ensure bounds mode for this rule.
      */
-    public boolean isEnsureBounds() {
-        return ensureBounds;
+    public EnsureBoundsMode getEnsureBoundsMode() {
+        return ensureBoundsMode;
     }
 
     /**
@@ -128,6 +126,6 @@ public class SpawnRule {
     public String toString() {
         return "SpawnRule{biomes=" + biomes + ", percentage=" + percentage +
                ", type=" + type + ", y=[" + y1 + "," + y2 + "], margin=" + margin +
-               ", ensureBounds=" + ensureBounds + "}";
+               ", ensureBoundsMode=" + ensureBoundsMode + "}";
     }
 }

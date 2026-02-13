@@ -1,16 +1,20 @@
 package it.magius.struttura.architect;
 
+import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.client.ClientCommands;
 import it.magius.struttura.architect.client.KeybindingHandler;
 import it.magius.struttura.architect.client.ModKeybindings;
 import it.magius.struttura.architect.client.ScreenshotCapture;
 import it.magius.struttura.architect.client.WireframeRenderer;
+import it.magius.struttura.architect.client.gui.CloudDeniedScreen;
 import it.magius.struttura.architect.client.gui.PanelManager;
 import it.magius.struttura.architect.client.gui.StrutturaHud;
+import it.magius.struttura.architect.client.gui.UpdateAvailableScreen;
 import it.magius.struttura.architect.client.gui.panel.MainPanel;
 import it.magius.struttura.architect.client.gui.InGameSetupScreen;
 import it.magius.struttura.architect.client.ingame.InGameClientState;
 import it.magius.struttura.architect.client.toast.StrutturaToast;
+import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.network.BlockListPacket;
 import it.magius.struttura.architect.network.BlockPositionsSyncPacket;
 import it.magius.struttura.architect.network.ConstructionListPacket;
@@ -258,6 +262,21 @@ public class ArchitectClient implements ClientModInitializer {
 
         // Inizializza l'HUD (registra HudRenderCallback)
         StrutturaHud.init();
+
+        // Register callback for mod settings version check (shows update/deny screens)
+        ApiClient.setModSettingsCallback(() -> {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            ArchitectConfig config = ArchitectConfig.getInstance();
+            String latestVersion = config.getLatestVersion();
+            boolean cloudDenied = config.isCloudDenied();
+
+            if (latestVersion != null && !latestVersion.isEmpty()) {
+                mc.execute(() -> mc.setScreen(new UpdateAvailableScreen(
+                    mc.screen, latestVersion, config.getDownloadUrl())));
+            } else if (cloudDenied) {
+                mc.execute(() -> mc.setScreen(new CloudDeniedScreen(mc.screen)));
+            }
+        });
 
         // Pulisci i dati quando ci disconnettiamo
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {

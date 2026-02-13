@@ -4,6 +4,7 @@ import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.ingame.ChunkDataManager;
 import it.magius.struttura.architect.ingame.cache.BuildingCache;
+import it.magius.struttura.architect.ingame.model.EnsureBoundsMode;
 import it.magius.struttura.architect.ingame.model.PositionType;
 import it.magius.struttura.architect.ingame.model.SpawnRule;
 import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
@@ -114,16 +115,26 @@ public class InGameBuildingSpawner {
             construction.getAnchors().setEntrance(entrance, building.getEntranceYaw());
         }
 
-        // Pre-clear bounds if rule has ensureBounds enabled
+        // Pre-clear bounds based on ensureBoundsMode
         SpawnRule rule = position.rule();
-        if (rule != null && rule.isEnsureBounds()) {
-            // Calculate world-space bounds for clearing using SpawnableBuilding metadata
-            // This correctly handles the entrance-to-origin transformation with rotation
+        if (rule != null && rule.getEnsureBoundsMode() != EnsureBoundsMode.NONE) {
             AABB clearBounds = BoundsCalculator.calculate(building, position);
-            // Use water for water positions, air otherwise
             boolean useWater = rule.getType() == PositionType.BOTTOM_WATER ||
                                rule.getType() == PositionType.ON_WATER;
-            preClearBounds(level, clearBounds, useWater);
+
+            if (rule.getEnsureBoundsMode() == EnsureBoundsMode.ABOVE_ENTRANCE) {
+                // Clear only from entranceY+1 upwards within the building bounds
+                // entrancePos is already the world-space position of the entrance anchor
+                int newMinY = entrancePos.getY() + 1;
+                if (newMinY <= clearBounds.maxY) {
+                    clearBounds = new AABB(clearBounds.minX, newMinY, clearBounds.minZ,
+                                           clearBounds.maxX, clearBounds.maxY, clearBounds.maxZ);
+                    preClearBounds(level, clearBounds, useWater);
+                }
+            } else {
+                // ALL: clear entire spawn area
+                preClearBounds(level, clearBounds, useWater);
+            }
         }
 
         // Calculate seed for room selection based on world seed + spawn position

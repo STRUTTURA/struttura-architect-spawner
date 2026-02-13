@@ -33,6 +33,14 @@ public class Architect implements ModInitializer {
 		.getModContainer(MOD_ID)
 		.map(container -> container.getMetadata().getVersion().getFriendlyString())
 		.orElse("unknown");
+	public static final String MINECRAFT_VERSION = net.fabricmc.loader.api.FabricLoader.getInstance()
+		.getModContainer("minecraft")
+		.map(container -> container.getMetadata().getVersion().getFriendlyString())
+		.orElse("unknown");
+	public static final String LOADER_VERSION = net.fabricmc.loader.api.FabricLoader.getInstance()
+		.getModContainer("fabricloader")
+		.map(container -> container.getMetadata().getVersion().getFriendlyString())
+		.orElse("unknown");
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
 	@Override
