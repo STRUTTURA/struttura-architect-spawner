@@ -2191,19 +2191,28 @@ public class ApiClient {
 
     // Callback invoked after mod settings are fetched (set by client-side code)
     private static volatile Runnable modSettingsCallback = null;
+    // Flag to track if mod settings were already fetched before callback was registered
+    private static volatile boolean modSettingsFetched = false;
 
     /**
      * Sets a callback to be invoked after mod settings are fetched.
      * Used by client-side code to show update/deny screens on the render thread.
+     * If mod settings were already fetched, the callback is invoked immediately.
      */
     public static void setModSettingsCallback(Runnable callback) {
         modSettingsCallback = callback;
+        if (modSettingsFetched) {
+            callback.run();
+        }
     }
 
     /**
      * Notifies the registered callback that mod settings have been processed.
+     * If the callback is not yet registered, marks settings as fetched so the
+     * callback will be invoked when it is registered later.
      */
     private static void handleVersionScreens(ArchitectConfig config) {
+        modSettingsFetched = true;
         Runnable callback = modSettingsCallback;
         if (callback != null) {
             callback.run();

@@ -271,19 +271,40 @@ public class ArchitectClient implements ClientModInitializer {
         // Inizializza l'HUD (registra HudRenderCallback)
         StrutturaHud.init();
 
-        // Register callback for mod settings version check (shows update/deny screens)
+        // Register callback for mod settings version check (shows update/deny screens).
+        // We wait for TitleScreen because mc.execute() during init gets overwritten.
         ApiClient.setModSettingsCallback(() -> {
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
             ArchitectConfig config = ArchitectConfig.getInstance();
             String latestVersion = config.getLatestVersion();
             boolean cloudDenied = config.isCloudDenied();
 
-            if (latestVersion != null && !latestVersion.isEmpty()) {
-                mc.execute(() -> mc.setScreen(new UpdateAvailableScreen(
-                    mc.screen, latestVersion, config.getDownloadUrl())));
-            } else if (cloudDenied) {
-                mc.execute(() -> mc.setScreen(new CloudDeniedScreen(mc.screen)));
+            Architect.LOGGER.info("Mod settings callback: latestVersion={}, cloudDenied={}", latestVersion, cloudDenied);
+
+            if (latestVersion == null || latestVersion.isEmpty()) {
+                if (!cloudDenied) return;
             }
+
+            // Schedule a tick listener that waits for TitleScreen before showing the overlay
+            ClientTickEvents.END_CLIENT_TICK.register(new ClientTickEvents.EndTick() {
+                private boolean done = false;
+                @Override
+                public void onEndTick(net.minecraft.client.Minecraft client) {
+                    if (done) return;
+                    if (client.screen instanceof net.minecraft.client.gui.screens.TitleScreen) {
+                        done = true;
+                        String ver = config.getLatestVersion();
+                        if (ver != null && !ver.isEmpty()) {
+                            Architect.LOGGER.info("Showing UpdateAvailableScreen for version {}", ver);
+                            client.setScreen(new UpdateAvailableScreen(
+                                client.screen, ver, config.getDownloadUrl()));
+                        } else if (config.isCloudDenied()) {
+                            Architect.LOGGER.info("Showing CloudDeniedScreen");
+                            client.setScreen(new CloudDeniedScreen(client.screen));
+                        }
+                    }
+                }
+            });
         });
 
         // Pulisci i dati quando ci disconnettiamo
