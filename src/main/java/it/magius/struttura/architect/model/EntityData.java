@@ -6,6 +6,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.util.ProblemReporter;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.level.storage.TagValueOutput;
@@ -183,7 +184,7 @@ public class EntityData {
 
     /**
      * Verifica se un'entità dovrebbe essere salvata.
-     * Esclude Player e Projectile in volo.
+     * Esclude Player, Projectile in volo e oggetti caduti a terra.
      */
     public static boolean shouldSaveEntity(Entity entity) {
         // Mai salvare i player
@@ -193,6 +194,11 @@ public class EntityData {
 
         // Escludi proiettili in volo
         if (entity instanceof Projectile) {
+            return false;
+        }
+
+        // Escludi oggetti caduti a terra (dropped items)
+        if (entity instanceof ItemEntity) {
             return false;
         }
 

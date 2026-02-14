@@ -624,6 +624,7 @@ public class ConstructionOperations {
             for (int y = bounds.getMinY(); y <= bounds.getMaxY(); y++) {
                 for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
+                    if (!level.isLoaded(pos)) continue;
                     BlockEntity blockEntity = level.getBlockEntity(pos);
                     if (blockEntity instanceof Clearable clearable) {
                         clearable.clearContent();
@@ -681,6 +682,7 @@ public class ConstructionOperations {
             for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) {
                 for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
+                    if (!level.isLoaded(pos)) continue;
                     BlockState currentState = level.getBlockState(pos);
                     if (!currentState.is(Blocks.AIR)) {
                         level.setBlock(pos, Blocks.AIR.defaultBlockState(), SILENT_REMOVE_FLAGS);

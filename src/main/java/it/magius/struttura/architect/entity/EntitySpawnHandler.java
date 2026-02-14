@@ -14,6 +14,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
 
@@ -79,8 +80,8 @@ public class EntitySpawnHandler {
      * Chiamato quando un'entità viene caricata/spawnata nel mondo.
      */
     private void onEntityLoad(Entity entity, ServerLevel level) {
-        // Ignora player e proiettili
-        if (entity instanceof Player || entity instanceof Projectile) {
+        // Ignora player, proiettili e oggetti caduti a terra
+        if (entity instanceof Player || entity instanceof Projectile || entity instanceof ItemEntity) {
             return;
         }
 
