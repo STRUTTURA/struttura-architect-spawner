@@ -1,9 +1,11 @@
 package it.magius.struttura.architect.mixin;
 
+import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.item.ConstructionHammerItem;
 import it.magius.struttura.architect.item.MeasuringTapeItem;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
@@ -27,6 +29,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -241,31 +244,54 @@ public class ServerGamePacketListenerMixin {
                 construction.untrackSpawnedEntity(entityId);
             }
 
+            // Recalculate bounds including remaining entities from the world
+            construction.recalculateBounds(level);
+
             String targetName = ChatMessages.formatTargetName(player, session);
             int entityCount = inRoom && room != null ? room.getEntityCount() : construction.getEntityCount();
             ChatMessages.sendTarget(player, targetName, ChatMessages.Level.ERROR,
                     I18n.tr(player, "entity.removed") + " §7(" + entityCount + ")");
         } else {
-            // Add the entity
-            EntityData data = EntityData.fromEntity(entity, construction.getBounds(), level.registryAccess());
+            // Before adding, check if this entity already exists in the construction's entity list
+            // (can happen after world reload when session tracking is lost)
+            List<EntityData> existingEntities = inRoom && room != null
+                ? room.getEntities() : construction.getEntities();
+            int existingIndex = findMatchingEntityData(entity, existingEntities, construction.getBounds());
 
-            int newIndex;
-            if (inRoom && room != null) {
-                newIndex = room.addEntity(data);
+            if (existingIndex >= 0) {
+                // Entity already in the list - just re-track it, don't add a duplicate
+                session.trackEntity(entityId, existingIndex);
+                construction.trackSpawnedEntity(entityId);
+
+                Architect.LOGGER.info("Re-tracked existing entity {} at index {} (was untracked after reload)",
+                    entityId, existingIndex);
+
+                String targetName = ChatMessages.formatTargetName(player, session);
+                ChatMessages.sendTarget(player, targetName, ChatMessages.Level.INFO,
+                        I18n.tr(player, "entity.already_tracked"));
             } else {
-                newIndex = construction.addEntity(data);
+                // Expand bounds BEFORE creating EntityData so relative positions are always >= 0
+                EntityData.expandBoundsForEntity(entity, construction.getBounds());
+
+                // Add the entity
+                EntityData data = EntityData.fromEntity(entity, construction.getBounds(), level.registryAccess());
+
+                int newIndex;
+                if (inRoom && room != null) {
+                    newIndex = room.addEntity(data);
+                } else {
+                    newIndex = construction.addEntity(data);
+                }
+                // Track the entity with its list index
+                session.trackEntity(entityId, newIndex);
+                // Track the entity UUID in construction (for bounds recalculation)
+                construction.trackSpawnedEntity(entityId);
+
+                String targetName = ChatMessages.formatTargetName(player, session);
+                int entityCount = inRoom && room != null ? room.getEntityCount() : construction.getEntityCount();
+                ChatMessages.sendTarget(player, targetName, ChatMessages.Level.INFO,
+                        I18n.tr(player, "entity.added") + " §7(" + entityCount + ")");
             }
-            // Track the entity with its list index
-            session.trackEntity(entityId, newIndex);
-
-            // Expand bounds if entity is outside
-            net.minecraft.core.BlockPos entityBlockPos = entity.blockPosition();
-            construction.getBounds().expandToInclude(entityBlockPos);
-
-            String targetName = ChatMessages.formatTargetName(player, session);
-            int entityCount = inRoom && room != null ? room.getEntityCount() : construction.getEntityCount();
-            ChatMessages.sendTarget(player, targetName, ChatMessages.Level.INFO,
-                    I18n.tr(player, "entity.added") + " §7(" + entityCount + ")");
         }
 
         // Update UI
@@ -337,6 +363,45 @@ public class ServerGamePacketListenerMixin {
 
             ChatMessages.send(player, ChatMessages.Level.INFO, "entity.killed");
         }
+    }
+
+    /**
+     * Finds a matching EntityData in the list for a world entity by type and position.
+     * Used to detect entities that are already in the construction but lost their
+     * session tracking (e.g., after world reload).
+     * @return The index of the matching EntityData, or -1 if not found
+     */
+    @Unique
+    private int findMatchingEntityData(Entity worldEntity, List<EntityData> entityList, ConstructionBounds bounds) {
+        String entityType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
+            .getKey(worldEntity.getType()).toString();
+        double worldX = worldEntity.getX();
+        double worldY = worldEntity.getY();
+        double worldZ = worldEntity.getZ();
+
+        int originX = bounds.getMinX();
+        int originY = bounds.getMinY();
+        int originZ = bounds.getMinZ();
+
+        for (int i = 0; i < entityList.size(); i++) {
+            EntityData data = entityList.get(i);
+            if (!data.getEntityType().equals(entityType)) {
+                continue;
+            }
+
+            double expectedX = originX + data.getRelativePos().x;
+            double expectedY = originY + data.getRelativePos().y;
+            double expectedZ = originZ + data.getRelativePos().z;
+
+            double dx = Math.abs(worldX - expectedX);
+            double dy = Math.abs(worldY - expectedY);
+            double dz = Math.abs(worldZ - expectedZ);
+
+            if (dx < 1.0 && dy < 1.0 && dz < 1.0) {
+                return i;
+            }
+        }
+        return -1;
     }
 
 }

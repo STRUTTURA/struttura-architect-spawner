@@ -159,6 +159,9 @@ public class EntitySpawnHandler {
             return;
         }
 
+        // Expand bounds BEFORE creating EntityData so relative positions are always >= 0
+        EntityData.expandBoundsForEntity(entity, construction.getBounds());
+
         // Add the entity
         EntityData data = EntityData.fromEntity(entity, construction.getBounds(), level.registryAccess());
 
@@ -180,9 +183,6 @@ public class EntitySpawnHandler {
             mob.setNoAi(true);
         }
         EntityFreezeHandler.getInstance().updateFrozenPosition(entityId, entity.position());
-
-        // Expand bounds if entity is outside (shouldn't happen, but for safety)
-        construction.getBounds().expandToInclude(entity.blockPosition());
 
         // Notify the player
         String targetName = ChatMessages.formatTargetName(player, session);

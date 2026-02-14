@@ -201,13 +201,31 @@ public class Construction {
 
     /**
      * Rimuove un blocco dalla costruzione.
-     * Ricalcola i bounds automaticamente dopo la rimozione.
+     * Ricalcola i bounds automaticamente dopo la rimozione (blocks only).
      */
     public boolean removeBlock(BlockPos pos) {
         boolean removed = blocks.remove(pos) != null;
         if (removed) {
             blockEntityNbt.remove(pos);  // Rimuovi anche l'NBT se presente
             recalculateBounds();
+        }
+        return removed;
+    }
+
+    /**
+     * Rimuove un blocco dalla costruzione.
+     * Ricalcola i bounds includendo le entities presenti nel mondo.
+     * Entity relative positions are NOT updated here - they are recalculated
+     * only at push/save time via refreshEntitiesFromWorld.
+     */
+    public boolean removeBlock(
+        BlockPos pos,
+        net.minecraft.server.level.ServerLevel level
+    ) {
+        boolean removed = blocks.remove(pos) != null;
+        if (removed) {
+            blockEntityNbt.remove(pos);
+            recalculateBounds(level);
         }
         return removed;
     }
@@ -243,13 +261,34 @@ public class Construction {
     }
 
     /**
-     * Ricalcola i bounds dai blocchi correnti.
+     * Ricalcola i bounds dai blocchi correnti (blocks only).
      * Also clears any anchors that are now outside the new bounds.
      */
     public void recalculateBounds() {
         bounds.reset();
         for (BlockPos pos : blocks.keySet()) {
             bounds.expandToInclude(pos);
+        }
+        // Validate anchors against new bounds
+        validateAnchors();
+    }
+
+    /**
+     * Ricalcola i bounds dai blocchi correnti e dalle entities presenti nel mondo.
+     * Usa le posizioni assolute delle entities tracciate in spawnedEntityUuids.
+     * Also clears any anchors that are now outside the new bounds.
+     */
+    public void recalculateBounds(net.minecraft.server.level.ServerLevel level) {
+        bounds.reset();
+        for (BlockPos pos : blocks.keySet()) {
+            bounds.expandToInclude(pos);
+        }
+        // Include spawned entities from the world (including hanging entity block_pos)
+        for (UUID entityUuid : spawnedEntityUuids) {
+            net.minecraft.world.entity.Entity worldEntity = level.getEntity(entityUuid);
+            if (worldEntity != null && EntityData.shouldSaveEntity(worldEntity)) {
+                EntityData.expandBoundsForEntity(worldEntity, bounds);
+            }
         }
         // Validate anchors against new bounds
         validateAnchors();
@@ -285,11 +324,31 @@ public class Construction {
     }
 
     /**
-     * Rimuove tutti i blocchi di un determinato tipo.
+     * Rimuove tutti i blocchi di un determinato tipo (blocks-only bounds recalculation).
      * @param blockId ID del blocco (es: "minecraft:air", "minecraft:stone")
      * @return numero di blocchi rimossi
      */
     public int removeBlocksByType(String blockId) {
+        return removeBlocksByTypeInternal(blockId, null);
+    }
+
+    /**
+     * Rimuove tutti i blocchi di un determinato tipo.
+     * Ricalcola i bounds includendo le entities presenti nel mondo.
+     * Entity relative positions are NOT updated here - they are recalculated
+     * only at push/save time via refreshEntitiesFromWorld.
+     */
+    public int removeBlocksByType(
+        String blockId,
+        net.minecraft.server.level.ServerLevel level
+    ) {
+        return removeBlocksByTypeInternal(blockId, level);
+    }
+
+    private int removeBlocksByTypeInternal(
+        String blockId,
+        net.minecraft.server.level.ServerLevel level
+    ) {
         java.util.List<BlockPos> toRemove = new java.util.ArrayList<>();
 
         for (Map.Entry<BlockPos, BlockState> entry : blocks.entrySet()) {
@@ -308,7 +367,11 @@ public class Construction {
 
         // Ricalcola i bounds dopo la rimozione
         if (!toRemove.isEmpty()) {
-            recalculateBounds();
+            if (level != null) {
+                recalculateBounds(level);
+            } else {
+                recalculateBounds();
+            }
         }
 
         return toRemove.size();

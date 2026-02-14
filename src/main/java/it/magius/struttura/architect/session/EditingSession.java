@@ -192,7 +192,8 @@ public class EditingSession {
                 }
             } else {
                 // In REMOVE nella base: rimuovi dalla costruzione
-                construction.removeBlock(pos);
+                ServerLevel level = (ServerLevel) player.level();
+                construction.removeBlock(pos, level);
             }
             // Aggiorna il wireframe (i bounds sono stati ricalcolati)
             NetworkHandler.sendWireframeSync(player);
@@ -1069,16 +1070,22 @@ public class EditingSession {
     public void trackExistingEntitiesInWorld() {
         var bounds = construction.getBounds();
         if (!bounds.isValid()) {
+            Architect.LOGGER.info("trackExistingEntitiesInWorld: bounds not valid, skipping");
             return;
         }
 
         ServerLevel world = (ServerLevel) player.level();
 
-        // Create AABB from bounds
+        // Create AABB from bounds (original size, no expansion)
+        // TODO: verify if expansion is needed
         AABB area = new AABB(
             bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
             bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
         );
+
+        Architect.LOGGER.info("trackExistingEntitiesInWorld: bounds=({},{},{}) to ({},{},{}), search area={}",
+            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
+            bounds.getMaxX(), bounds.getMaxY(), bounds.getMaxZ(), area);
 
         // Get all entities in the area
         List<Entity> worldEntities = world.getEntities(
@@ -1087,10 +1094,16 @@ public class EditingSession {
             EntityData::shouldSaveEntity
         );
 
+        Architect.LOGGER.info("trackExistingEntitiesInWorld: found {} world entities in area", worldEntities.size());
+
         List<EntityData> constructionEntities = construction.getEntities();
         if (constructionEntities.isEmpty()) {
+            Architect.LOGGER.info("trackExistingEntitiesInWorld: no construction entities, skipping");
             return;
         }
+
+        Architect.LOGGER.info("trackExistingEntitiesInWorld: {} construction entities to match",
+            constructionEntities.size());
 
         int originX = bounds.getMinX();
         int originY = bounds.getMinY();
@@ -1110,7 +1123,11 @@ public class EditingSession {
             double worldY = worldEntity.getY();
             double worldZ = worldEntity.getZ();
 
+            Architect.LOGGER.info("trackExistingEntitiesInWorld: checking world entity {} type={} pos=({},{},{})",
+                worldEntity.getUUID(), entityType, worldX, worldY, worldZ);
+
             // Find matching EntityData by type and approximate position
+            boolean matched = false;
             for (int i = 0; i < constructionEntities.size(); i++) {
                 EntityData data = constructionEntities.get(i);
 
@@ -1129,6 +1146,12 @@ public class EditingSession {
                 double dy = Math.abs(worldY - expectedY);
                 double dz = Math.abs(worldZ - expectedZ);
 
+                Architect.LOGGER.info("  comparing with EntityData[{}] type={} relPos=({},{},{}) " +
+                    "expectedWorldPos=({},{},{}) distance=({},{},{})",
+                    i, data.getEntityType(),
+                    data.getRelativePos().x, data.getRelativePos().y, data.getRelativePos().z,
+                    expectedX, expectedY, expectedZ, dx, dy, dz);
+
                 if (dx < 1.0 && dy < 1.0 && dz < 1.0) {
                     // Check if this index is already used by another entity
                     boolean indexAlreadyUsed = activeEntityToIndex.containsValue(i);
@@ -1137,15 +1160,21 @@ public class EditingSession {
                         // Also track in construction for refreshEntitiesFromWorld before push
                         construction.trackSpawnedEntity(worldEntity.getUUID());
                         trackedCount++;
+                        matched = true;
+                        Architect.LOGGER.info("  MATCHED! Tracked entity {} -> index {}", worldEntity.getUUID(), i);
                         break; // Move to next world entity
+                    } else {
+                        Architect.LOGGER.info("  Position matched but index {} already used", i);
                     }
                 }
             }
+
+            if (!matched) {
+                Architect.LOGGER.info("  NO MATCH found for world entity {}", worldEntity.getUUID());
+            }
         }
 
-        if (trackedCount > 0) {
-            Architect.LOGGER.info("Tracked {} existing entities in world for construction {}",
-                trackedCount, construction.getId());
-        }
+        Architect.LOGGER.info("trackExistingEntitiesInWorld: tracked {} entities for construction {}",
+            trackedCount, construction.getId());
     }
 }

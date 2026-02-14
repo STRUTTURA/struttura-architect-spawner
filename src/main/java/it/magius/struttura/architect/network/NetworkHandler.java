@@ -500,6 +500,9 @@ public class NetworkHandler {
                     continue;
                 }
 
+                // Expand bounds BEFORE creating EntityData so relative positions are always >= 0
+                EntityData.expandBoundsForEntity(entity, bounds);
+
                 EntityData data = EntityData.fromEntity(entity, bounds, level.registryAccess());
                 int newIndex;
                 if (inRoom && room != null) {
@@ -508,6 +511,7 @@ public class NetworkHandler {
                     newIndex = construction.addEntity(data);
                 }
                 session.trackEntity(entity.getUUID(), newIndex);
+                construction.trackSpawnedEntity(entity.getUUID());
                 entitiesAdded++;
             }
 
@@ -539,7 +543,7 @@ public class NetworkHandler {
                             }
                         } else {
                             if (construction.containsBlock(pos)) {
-                                construction.removeBlock(pos);
+                                construction.removeBlock(pos, level);
                                 removedCount++;
                             } else {
                                 skippedNotInTarget++;
@@ -1491,7 +1495,7 @@ public class NetworkHandler {
                 }
 
                 // Remove from construction data
-                construction.removeBlock(pos);
+                construction.removeBlock(pos, world);
 
                 // Place air in world
                 world.setBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);

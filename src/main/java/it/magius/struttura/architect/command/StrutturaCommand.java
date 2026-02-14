@@ -726,7 +726,8 @@ public class StrutturaCommand {
         }
 
         // Rimuovi i blocchi
-        int removed = construction.removeBlocksByType(blockId);
+        net.minecraft.server.level.ServerLevel level = (net.minecraft.server.level.ServerLevel) player.level();
+        int removed = construction.removeBlocksByType(blockId, level);
 
         // Invia sync wireframe aggiornato (bounds potrebbero essere cambiati)
         NetworkHandler.sendWireframeSync(player);

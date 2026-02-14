@@ -125,7 +125,8 @@ public class ConstructionHammerItem extends Item {
                     }
                 } else {
                     if (currentConstruction.containsBlock(pos)) {
-                        currentConstruction.removeBlock(pos);
+                        net.minecraft.server.level.ServerLevel serverLevel = (net.minecraft.server.level.ServerLevel) level;
+                        currentConstruction.removeBlock(pos, serverLevel);
                         removedCount++;
                     }
                 }

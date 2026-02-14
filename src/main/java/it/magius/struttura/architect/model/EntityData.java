@@ -50,6 +50,16 @@ public class EntityData {
             entity.getZ() - bounds.getMinZ()
         );
 
+        // Negative relative positions should never happen - entity is outside bounds
+        if (relativePos.x < -0.5 || relativePos.y < -0.5 || relativePos.z < -0.5) {
+            Architect.LOGGER.error("CRITICAL: Entity {} has negative relativePos ({}, {}, {}) - " +
+                "entity world pos ({}, {}, {}), bounds min ({}, {}, {})",
+                entityType,
+                relativePos.x, relativePos.y, relativePos.z,
+                entity.getX(), entity.getY(), entity.getZ(),
+                bounds.getMinX(), bounds.getMinY(), bounds.getMinZ());
+        }
+
         // Salva l'NBT completo dell'entità usando MC 1.21.11 API
         // IMPORTANTE: usa createWithContext per serializzare correttamente gli ItemStack
         // che in MC 1.21+ usano data components che richiedono il registry context
@@ -179,6 +189,27 @@ public class EntityData {
 
         if (isMap) {
             nbt.remove("Item");
+        }
+    }
+
+    /**
+     * Expands bounds to include all block positions occupied by an entity.
+     * For hanging entities (item frames, paintings), this includes the block_pos
+     * from NBT which may be different from blockPosition().
+     * For all entities, includes the blockPosition() and the AABB bounding box corners.
+     */
+    public static void expandBoundsForEntity(Entity entity, ConstructionBounds bounds) {
+        // Always include the entity's block position
+        bounds.expandToInclude(entity.blockPosition());
+
+        // Include all blocks covered by the entity's bounding box
+        net.minecraft.world.phys.AABB aabb = entity.getBoundingBox();
+        bounds.expandToInclude(net.minecraft.core.BlockPos.containing(aabb.minX, aabb.minY, aabb.minZ));
+        bounds.expandToInclude(net.minecraft.core.BlockPos.containing(aabb.maxX, aabb.maxY, aabb.maxZ));
+
+        // For hanging entities, also include the block they're attached to
+        if (entity instanceof net.minecraft.world.entity.decoration.HangingEntity hanging) {
+            bounds.expandToInclude(hanging.getPos());
         }
     }
 

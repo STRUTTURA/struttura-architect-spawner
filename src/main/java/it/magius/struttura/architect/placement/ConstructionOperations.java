@@ -1570,6 +1570,9 @@ public class ConstructionOperations {
         double pivotCenterX = pivotX + 0.5;
         double pivotCenterZ = pivotZ + 0.5;
 
+        Architect.LOGGER.info("spawnEntitiesFrozenRotated: target=({},{},{}), rotation={}, pivot=({},{}), pivotCenter=({},{}), entities={}",
+            targetX, targetY, targetZ, rotationSteps, pivotX, pivotZ, pivotCenterX, pivotCenterZ, entities.size());
+
         for (EntityData data : entities) {
             try {
                 // Get relative position and rotate it around pivot center
@@ -1586,6 +1589,9 @@ public class ConstructionOperations {
                 double worldX = targetX + rotatedRelX;
                 double worldY = targetY + relY;
                 double worldZ = targetZ + rotatedRelZ;
+
+                Architect.LOGGER.info("  Entity {}: relPos=({},{},{}), rotatedRel=({},{}), worldPos=({},{},{})",
+                    data.getEntityType(), relX, relY, relZ, rotatedRelX, rotatedRelZ, worldX, worldY, worldZ);
 
                 // Copy and clean NBT
                 CompoundTag nbt = data.getNbt().copy();
@@ -1611,7 +1617,25 @@ public class ConstructionOperations {
                 // Update block_pos for hanging entities (item frames, paintings)
                 // Read relative block_pos from NBT, rotate around pivot, add target offset
                 // This must be done BEFORE entity creation since Minecraft validates block_pos
+                // Log block_pos BEFORE update
+                if (nbt.contains("block_pos")) {
+                    Tag bpBefore = nbt.get("block_pos");
+                    if (bpBefore instanceof IntArrayTag bpArr) {
+                        int[] c = bpArr.getAsIntArray();
+                        Architect.LOGGER.info("  block_pos BEFORE update: [{},{},{}]", c[0], c[1], c[2]);
+                    }
+                }
+
                 updateHangingEntityCoordsRotated(nbt, targetX, targetY, targetZ, rotationSteps, pivotX, pivotZ);
+
+                // Log block_pos AFTER update
+                if (nbt.contains("block_pos")) {
+                    Tag bpAfter = nbt.get("block_pos");
+                    if (bpAfter instanceof IntArrayTag bpArr) {
+                        int[] c = bpArr.getAsIntArray();
+                        Architect.LOGGER.info("  block_pos AFTER update: [{},{},{}]", c[0], c[1], c[2]);
+                    }
+                }
 
                 // Update sleeping_pos for villagers (with rotation)
                 updateSleepingPosRotated(nbt, targetX, targetY, targetZ, rotationSteps, pivotX, pivotZ);
@@ -1625,6 +1649,8 @@ public class ConstructionOperations {
                     if (rawTag instanceof IntArrayTag intArrayTag) {
                         int[] coords = intArrayTag.getAsIntArray();
                         if (coords.length >= 3) {
+                            Architect.LOGGER.info("  Pos set from block_pos: ({},{},{})",
+                                coords[0] + 0.5, coords[1] + 0.5, coords[2] + 0.5);
                             net.minecraft.nbt.ListTag posTag = new net.minecraft.nbt.ListTag();
                             posTag.add(net.minecraft.nbt.DoubleTag.valueOf(coords[0] + 0.5));
                             posTag.add(net.minecraft.nbt.DoubleTag.valueOf(coords[1] + 0.5));
@@ -1697,6 +1723,8 @@ public class ConstructionOperations {
                         // Hanging entities (paintings, item frames) calculate their own position
                         // from block_pos + facing in NBT. Do NOT call setPos() or it will
                         // override the correct position and cause them to detach.
+                        Architect.LOGGER.info("  HangingEntity created: finalPos=({},{},{}), blockPos={}",
+                            entity.getX(), entity.getY(), entity.getZ(), entity.blockPosition());
                     } else {
                         entity.setNoGravity(true);
                         entity.setPos(worldX, worldY, worldZ);
@@ -1705,6 +1733,8 @@ public class ConstructionOperations {
                         if (entity instanceof Mob mob) {
                             mob.setNoAi(true);
                         }
+                        Architect.LOGGER.info("  Entity created: finalPos=({},{},{})",
+                            entity.getX(), entity.getY(), entity.getZ());
                     }
 
                     if (keepFrozen) {
