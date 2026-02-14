@@ -4,6 +4,7 @@ import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.ChatMessages;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.EditMode;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
@@ -108,39 +109,33 @@ public class EntitySpawnHandler {
         // Segna l'entità come conosciuta
         knownEntities.add(entityId);
 
-        // Cerca una sessione di editing il cui player è nelle vicinanze
-        // e i cui bounds contengono l'entità appena spawnata
+        // Find an editing session whose player is nearby and in ADD mode.
+        // Any entity placed while editing is auto-added (bounds are expanded).
         for (EditingSession session : EditingSession.getAllSessions()) {
             ServerPlayer editingPlayer = session.getPlayer();
             if (editingPlayer == null) {
                 continue;
             }
 
-            // Verifica che il player sia nello stesso livello
+            // Only auto-add in ADD mode
+            if (session.getMode() != EditMode.ADD) {
+                continue;
+            }
+
+            // Verify player is in the same level
             if (editingPlayer.level() != level) {
                 continue;
             }
 
-            Construction construction = session.getConstruction();
-            var bounds = construction.getBounds();
-
-            if (!bounds.isValid()) {
+            // Verify the entity is near the editing player (within interaction range)
+            double distance = editingPlayer.distanceToSqr(entity);
+            if (distance > 100.0) { // ~10 blocks
                 continue;
             }
 
-            // Verifica se l'entità è nei bounds della costruzione
-            int entityX = entity.blockPosition().getX();
-            int entityY = entity.blockPosition().getY();
-            int entityZ = entity.blockPosition().getZ();
-
-            if (entityX >= bounds.getMinX() && entityX <= bounds.getMaxX() &&
-                entityY >= bounds.getMinY() && entityY <= bounds.getMaxY() &&
-                entityZ >= bounds.getMinZ() && entityZ <= bounds.getMaxZ()) {
-
-                // L'entità è nei bounds - aggiungila automaticamente
-                addEntityToSession(entity, session, editingPlayer, level);
-                return; // Solo una costruzione può contenere l'entità
-            }
+            // Auto-add the entity to the session (bounds will be expanded automatically)
+            addEntityToSession(entity, session, editingPlayer, level);
+            return;
         }
     }
 
