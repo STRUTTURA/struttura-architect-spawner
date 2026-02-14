@@ -1099,6 +1099,8 @@ public class ApiClient {
             blocksConn.setConnectTimeout(config.getRequestTimeout() * 1000);
             blocksConn.setReadTimeout(config.getRequestTimeout() * 1000);
             blocksConn.setRequestProperty("Accept", "application/octet-stream, application/json");
+            blocksConn.setRequestProperty("Authorization", config.getAuth());
+            blocksConn.setRequestProperty("X-Api-Key", config.getApikey());
 
             int blocksStatus = blocksConn.getResponseCode();
 
@@ -1125,6 +1127,8 @@ public class ApiClient {
                 entitiesConn.setConnectTimeout(config.getRequestTimeout() * 1000);
                 entitiesConn.setReadTimeout(config.getRequestTimeout() * 1000);
                 entitiesConn.setRequestProperty("Accept", "application/octet-stream, application/json");
+                entitiesConn.setRequestProperty("Authorization", config.getAuth());
+                entitiesConn.setRequestProperty("X-Api-Key", config.getApikey());
 
                 int entitiesStatus = entitiesConn.getResponseCode();
 

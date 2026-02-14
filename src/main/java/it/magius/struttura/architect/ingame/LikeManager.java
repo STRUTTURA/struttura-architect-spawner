@@ -190,6 +190,7 @@ public class LikeManager {
             conn.setReadTimeout(10000);
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Authorization", config.getAuth());
 
             // Include API key if available (optional)
             String apiKey = config.getApikey();
