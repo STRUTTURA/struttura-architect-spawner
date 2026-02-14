@@ -14,9 +14,11 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -170,6 +172,14 @@ public class EntitySpawnHandler {
         session.trackEntity(entityId, newIndex);
         // Track the entity UUID in construction (for refreshEntitiesFromWorld before push)
         construction.trackSpawnedEntity(entityId);
+
+        // Freeze the entity immediately to prevent it from moving/falling
+        // before the next EntityFreezeHandler tick
+        entity.setDeltaMovement(Vec3.ZERO);
+        if (entity instanceof Mob mob) {
+            mob.setNoAi(true);
+        }
+        EntityFreezeHandler.getInstance().updateFrozenPosition(entityId, entity.position());
 
         // Expand bounds if entity is outside (shouldn't happen, but for safety)
         construction.getBounds().expandToInclude(entity.blockPosition());
