@@ -2471,6 +2471,8 @@ public class ApiClient {
                 long pk = bldgObj.get("pk").getAsLong();
                 long ownerUserId = bldgObj.has("ownerUserId") && !bldgObj.get("ownerUserId").isJsonNull()
                     ? bldgObj.get("ownerUserId").getAsLong() : 0;
+                boolean isPrivate = bldgObj.has("isPrivate") && !bldgObj.get("isPrivate").isJsonNull()
+                    && bldgObj.get("isPrivate").getAsBoolean();
                 String hash = bldgObj.has("hash") && !bldgObj.get("hash").isJsonNull()
                     ? bldgObj.get("hash").getAsString() : null;
                 String author = bldgObj.has("author") && !bldgObj.get("author").isJsonNull()
@@ -2575,7 +2577,7 @@ public class ApiClient {
                     }
                 }
 
-                buildings.add(new SpawnableBuilding(rdns, pk, ownerUserId, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions));
+                buildings.add(new SpawnableBuilding(rdns, pk, ownerUserId, isPrivate, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions));
             }
         }
 

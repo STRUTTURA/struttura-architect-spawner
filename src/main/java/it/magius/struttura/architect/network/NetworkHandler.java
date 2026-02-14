@@ -2660,6 +2660,7 @@ public class NetworkHandler {
             String localizedDescription = "";
             String author = "";
             boolean isOwner = false;
+            boolean isPrivate = false;
             boolean showLikeTutorial = false;
 
             it.magius.struttura.architect.ingame.InGameManager manager =
@@ -2682,6 +2683,9 @@ public class NetworkHandler {
                     if (currentUserId > 0 && building.getOwnerUserId() == currentUserId) {
                         isOwner = true;
                     }
+
+                    // Check if building is private
+                    isPrivate = building.isPrivate();
                 }
             }
 
@@ -2703,13 +2707,13 @@ public class NetworkHandler {
             }
 
             packet = InGameBuildingPacket.entered(buildingInfo.rdns(), buildingInfo.pk(), hasLiked, isOwner,
-                localizedName, localizedDescription, author, showLikeTutorial);
+                isPrivate, localizedName, localizedDescription, author, showLikeTutorial);
         } else {
             packet = InGameBuildingPacket.empty();
         }
         ServerPlayNetworking.send(player, packet);
-        Architect.LOGGER.debug("Sent in-game building state to {}: inBuilding={}, rdns={}, name={}, author={}, isOwner={}",
-            player.getName().getString(), packet.inBuilding(), packet.rdns(), packet.localizedName(), packet.author(), packet.isOwner());
+        Architect.LOGGER.debug("Sent in-game building state to {}: inBuilding={}, rdns={}, name={}, author={}, isOwner={}, isPrivate={}",
+            player.getName().getString(), packet.inBuilding(), packet.rdns(), packet.localizedName(), packet.author(), packet.isOwner(), packet.isPrivate());
     }
 
     /**

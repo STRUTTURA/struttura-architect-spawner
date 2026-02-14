@@ -205,9 +205,9 @@ public class ArchitectClient implements ClientModInitializer {
 
                 if (packet.inBuilding()) {
                     state.enterBuilding(packet.rdns(), packet.pk(), packet.hasLiked(), packet.isOwner(),
-                        packet.localizedName(), packet.localizedDescription(), packet.author());
-                    Architect.LOGGER.debug("Entered building: {} (pk={}, name={}, author={}, isOwner={})",
-                        packet.rdns(), packet.pk(), packet.localizedName(), packet.author(), packet.isOwner());
+                        packet.isPrivate(), packet.localizedName(), packet.localizedDescription(), packet.author());
+                    Architect.LOGGER.debug("Entered building: {} (pk={}, name={}, author={}, isOwner={}, isPrivate={})",
+                        packet.rdns(), packet.pk(), packet.localizedName(), packet.author(), packet.isOwner(), packet.isPrivate());
 
                     // Show like tutorial toast if server says so (first building entry in this world)
                     if (packet.showLikeTutorial()) {

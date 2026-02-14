@@ -94,7 +94,7 @@ public class LikeButton {
     }
 
     /**
-     * Creates a LikeButton positioned in the top-right corner.
+     * Creates a LikeButton positioned in the top-center of the screen.
      *
      * @param screenWidth Screen width for positioning
      * @param buildingName Building name for tooltip
@@ -105,8 +105,8 @@ public class LikeButton {
     public static LikeButton create(int screenWidth, String buildingName, boolean alreadyLiked, boolean canLike, Button.OnPress onPress) {
         int buttonSize = 20; // Same size as accessibility/language buttons
 
-        // Position in top-right corner
-        int buttonX = screenWidth - buttonSize - 4;
+        // Position in top-center of the screen
+        int buttonX = (screenWidth - buttonSize) / 2;
         int buttonY = 4;
 
         // Determine heart state

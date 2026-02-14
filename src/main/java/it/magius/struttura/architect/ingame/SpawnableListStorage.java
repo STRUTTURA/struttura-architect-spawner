@@ -143,6 +143,7 @@ public class SpawnableListStorage {
         json.addProperty("rdns", building.getRdns());
         json.addProperty("pk", building.getPk());
         json.addProperty("ownerUserId", building.getOwnerUserId());
+        json.addProperty("isPrivate", building.isPrivate());
         if (building.getHash() != null) {
             json.addProperty("hash", building.getHash());
         }
@@ -244,6 +245,8 @@ public class SpawnableListStorage {
             long pk = json.get("pk").getAsLong();
             long ownerUserId = json.has("ownerUserId") && !json.get("ownerUserId").isJsonNull()
                 ? json.get("ownerUserId").getAsLong() : 0;
+            boolean isPrivate = json.has("isPrivate") && !json.get("isPrivate").isJsonNull()
+                && json.get("isPrivate").getAsBoolean();
             String hash = json.has("hash") && !json.get("hash").isJsonNull()
                 ? json.get("hash").getAsString() : null;
             String author = json.has("author") && !json.get("author").isJsonNull()
@@ -307,7 +310,7 @@ public class SpawnableListStorage {
                 }
             }
 
-            return new SpawnableBuilding(rdns, pk, ownerUserId, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions);
+            return new SpawnableBuilding(rdns, pk, ownerUserId, isPrivate, hash, author, entrance, entranceYaw, xWorld, rules, bounds, names, descriptions);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to deserialize building", e);
