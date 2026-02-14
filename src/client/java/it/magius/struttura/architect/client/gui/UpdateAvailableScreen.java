@@ -130,17 +130,25 @@ public class UpdateAvailableScreen extends Screen {
                     return;
                 }
 
-                // Build full download URL from the endpoint base + relative path
+                // Build full download URL from the endpoint base host + server path
                 ArchitectConfig config = ArchitectConfig.getInstance();
                 String fullUrl;
                 if (downloadUrl.startsWith("http")) {
                     fullUrl = downloadUrl;
                 } else {
-                    // downloadUrl is a relative path like /struttura/v1/cdn/mod-releases/...
+                    // downloadUrl is like /v1/cdn/mod-releases/... (relative to host root)
+                    // endpoint is like https://api-struttura.magius.it/v1 — extract host base
                     String endpoint = config.getEndpoint();
-                    // endpoint is like https://api-struttura.magius.it/v1, extract base URL
-                    String baseUrl = endpoint.substring(0, endpoint.indexOf("/v1"));
-                    fullUrl = baseUrl + downloadUrl;
+                    try {
+                        java.net.URI uri = URI.create(endpoint);
+                        String baseUrl = uri.getScheme() + "://" + uri.getAuthority();
+                        fullUrl = baseUrl + (downloadUrl.startsWith("/") ? downloadUrl : "/" + downloadUrl);
+                    } catch (Exception e) {
+                        // Fallback: strip /v1 suffix
+                        int idx = endpoint.indexOf("/v1");
+                        String baseUrl = idx >= 0 ? endpoint.substring(0, idx) : endpoint;
+                        fullUrl = baseUrl + (downloadUrl.startsWith("/") ? downloadUrl : "/" + downloadUrl);
+                    }
                 }
 
                 Architect.LOGGER.info("Downloading update from {}", fullUrl);
