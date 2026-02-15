@@ -112,11 +112,11 @@ public class TestRoomsAfterPull4Dir implements DevTest {
                     bounds.getMaxX(), bounds.getMaxY(), bounds.getMaxZ());
 
                 for (var room : construction.getRooms().values()) {
-                    for (var blockEntry : room.getBlockChanges().entrySet()) {
-                        BlockPos pos = blockEntry.getKey();
+                    for (BlockPos pos : room.getChangedBlocks()) {
+                        var worldState = level.getBlockState(pos);
                         Architect.LOGGER.info("[{}] [{}] Room block at: ({},{},{}) state={}",
                             getId(), dirName,
-                            pos.getX(), pos.getY(), pos.getZ(), blockEntry.getValue());
+                            pos.getX(), pos.getY(), pos.getZ(), worldState);
                     }
                 }
 
@@ -139,26 +139,25 @@ public class TestRoomsAfterPull4Dir implements DevTest {
                         }
 
                         // Log room blocks vs world
-                        var updatedBounds = updatedConstruction.getBounds();
                         for (var room : updatedConstruction.getRooms().values()) {
-                            for (var blockEntry : room.getBlockChanges().entrySet()) {
-                                BlockPos pos = blockEntry.getKey();
+                            for (BlockPos pos : room.getChangedBlocks()) {
                                 var worldBlock = level.getBlockState(pos);
-                                Architect.LOGGER.info("[{}] [{}] Room block: pos=({},{},{}), registry={}, WORLD={}",
+                                Architect.LOGGER.info("[{}] [{}] Room block: pos=({},{},{}), WORLD={}",
                                     getId(), dirName,
                                     pos.getX(), pos.getY(), pos.getZ(),
-                                    blockEntry.getValue(), worldBlock);
+                                    worldBlock);
                             }
-                            // Log room entities vs world
-                            for (var entityData : room.getEntities()) {
-                                double expectedX = updatedBounds.getMinX() + entityData.getRelativePos().x;
-                                double expectedY = updatedBounds.getMinY() + entityData.getRelativePos().y;
-                                double expectedZ = updatedBounds.getMinZ() + entityData.getRelativePos().z;
-                                Architect.LOGGER.info("[{}] [{}] Room entity: type={}, expectedPos=({},{},{}), relPos=({},{},{})",
+                            // Log room entity UUIDs
+                            for (var entityUuid : room.getRoomEntities()) {
+                                var entity = level.getEntity(entityUuid);
+                                String entityType = entity != null
+                                    ? entity.getType().toString() : "NOT_FOUND";
+                                String entityPos = entity != null
+                                    ? String.format("(%.1f,%.1f,%.1f)", entity.getX(), entity.getY(), entity.getZ())
+                                    : "N/A";
+                                Architect.LOGGER.info("[{}] [{}] Room entity: uuid={}, type={}, worldPos={}",
                                     getId(), dirName,
-                                    entityData.getEntityType(),
-                                    expectedX, expectedY, expectedZ,
-                                    entityData.getRelativePos().x, entityData.getRelativePos().y, entityData.getRelativePos().z);
+                                    entityUuid, entityType, entityPos);
                             }
                         }
 

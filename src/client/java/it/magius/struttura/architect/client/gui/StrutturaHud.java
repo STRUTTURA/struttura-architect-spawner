@@ -70,7 +70,14 @@ public class StrutturaHud {
         // Calculate panel dimensions
         String idText = pm.getEditingConstructionId();
         String titleText = pm.getEditingTitle().isEmpty() ? "(no title)" : pm.getEditingTitle();
-        String statsText = pm.getBlockCount() + " blocks | " + pm.getBounds() + " | " + pm.getMode();
+        String statsText;
+        if (pm.isInRoom()) {
+            // Room: blocks | entities | mode (no dimension)
+            statsText = pm.getBlockCount() + " blocks | " + pm.getEntityCount() + " entities | " + pm.getMode();
+        } else {
+            // Base construction: blocks | entities | dimension | mode
+            statsText = pm.getBlockCount() + " blocks | " + pm.getEntityCount() + " entities | " + pm.getBounds() + " | " + pm.getMode();
+        }
 
         // Room info line (if in room editing)
         String roomText = null;

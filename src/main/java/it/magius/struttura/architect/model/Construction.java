@@ -1,76 +1,75 @@
 package it.magius.struttura.architect.model;
 
+import it.magius.struttura.architect.Architect;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * Rappresenta una costruzione STRUTTURA.
- * Contiene i blocchi tracciati e i metadata.
+ * Represents a STRUTTURA construction.
+ * Stores only references (BlockPos for blocks, UUID for entities) - all data
+ * is resolved from the world when needed.
  */
 public class Construction {
 
-    // ID formato: namespace.categoria.nome (es: it.magius.medieval.tower)
+    // ID format: namespace.category.name (e.g., it.magius.medieval.tower)
     private final String id;
 
-    // UUID dell'autore
+    // Author UUID
     private final UUID authorId;
 
-    // Nome dell'autore
+    // Author name
     private final String authorName;
 
-    // Timestamp creazione
+    // Creation timestamp
     private final Instant createdAt;
 
-    // Titoli della costruzione per lingua (obbligatorio almeno uno per il push)
-    // Chiave: codice lingua (es: "en", "it"), Valore: titolo
+    // Multilingual titles (required at least one for push)
+    // Key: language code (e.g., "en", "it"), Value: title
     private final Map<String, String> titles = new HashMap<>();
 
-    // Descrizioni brevi della costruzione per lingua (opzionale)
-    // Chiave: codice lingua (es: "en", "it"), Valore: descrizione breve
+    // Multilingual short descriptions (optional)
+    // Key: language code (e.g., "en", "it"), Value: short description
     private final Map<String, String> shortDescriptions = new HashMap<>();
 
-    // Descrizioni complete della costruzione per lingua (opzionale)
-    // Chiave: codice lingua (es: "en", "it"), Valore: descrizione completa
+    // Multilingual full descriptions (optional)
+    // Key: language code (e.g., "en", "it"), Value: full description
     private final Map<String, String> descriptions = new HashMap<>();
 
-    // Blocchi tracciati: posizione -> stato blocco
-    private final Map<BlockPos, BlockState> blocks = new HashMap<>();
+    // Tracked block positions (reference-only, no BlockState stored)
+    private final Set<BlockPos> trackedBlocks = new HashSet<>();
 
-    // NBT dei block entities (casse, furnace, etc.): posizione -> NBT
-    // Solo per blocchi che hanno dati NBT (contenuto inventario, etc.)
-    private final Map<BlockPos, CompoundTag> blockEntityNbt = new HashMap<>();
+    // Tracked entity UUIDs (reference-only, resolved from world when needed)
+    private final Set<UUID> trackedEntities = new HashSet<>();
 
-    // Entities in this construction (type and position data only, no UUID in saved data)
-    private final List<EntityData> entities = new ArrayList<>();
-
-    // UUIDs of spawned entities in the world (saved to file for entity removal after restart)
-    // Used to track and remove entities even if they move outside construction bounds
-    private final Set<UUID> spawnedEntityUuids = new HashSet<>();
-
-    // Bounds calcolati dai blocchi
+    // Bounds calculated from blocks and entities
     private final ConstructionBounds bounds = new ConstructionBounds();
 
-    // Mod richiesti dalla costruzione (namespace -> info mod)
+    // Required mods (namespace -> mod info)
     private Map<String, ModInfo> requiredMods = new HashMap<>();
 
-    // Stanze (varianti) della costruzione: id stanza -> Room
+    // Rooms (variants) of the construction: room id -> Room
     private final Map<String, Room> rooms = new HashMap<>();
 
     // Anchor points for the construction (only for base, not rooms)
     private final Anchors anchors = new Anchors();
+
+    // Cached stats (updated live during editing, full recalc at save/push)
+    private int cachedSolidBlockCount = 0;
+    private int cachedEntityCount = 0;
+    private int cachedMobCount = 0;
+    private int cachedCommandBlockCount = 0;
 
     public Construction(String id, UUID authorId, String authorName) {
         this.id = id;
@@ -105,8 +104,8 @@ public class Construction {
     }
 
     /**
-     * Valida il formato dell'ID costruzione.
-     * Formato: namespace.categoria.nome (minimo 3 segmenti, solo lowercase e underscore)
+     * Validates construction ID format.
+     * Format: namespace.category.name (minimum 3 segments, lowercase and underscore only)
      */
     public static boolean isValidId(String id) {
         if (id == null || id.isEmpty()) return false;
@@ -122,175 +121,113 @@ public class Construction {
         return true;
     }
 
+    // ===== Block management (reference-only) =====
+
     /**
-     * Aggiunge un blocco alla costruzione.
+     * Adds a block position to the construction and expands bounds.
+     * Queries the world to update cached stats (solid/command block counts).
      */
-    public void addBlock(BlockPos pos, BlockState state) {
-        blocks.put(pos.immutable(), state);
+    public void addBlock(BlockPos pos, ServerLevel level) {
+        trackedBlocks.add(pos.immutable());
         bounds.expandToInclude(pos);
-    }
 
-    /**
-     * Aggiunge un blocco con il suo NBT (per block entities come casse, furnace, etc.)
-     */
-    public void addBlock(BlockPos pos, BlockState state, CompoundTag nbt) {
-        blocks.put(pos.immutable(), state);
-        if (nbt != null && !nbt.isEmpty()) {
-            blockEntityNbt.put(pos.immutable(), nbt);
-        }
-        bounds.expandToInclude(pos);
-    }
-
-    /**
-     * Aggiunge un blocco senza espandere i bounds.
-     * Usato quando si caricano blocchi da file/server dove i bounds sono già noti.
-     */
-    public void addBlockRaw(BlockPos pos, BlockState state) {
-        blocks.put(pos.immutable(), state);
-    }
-
-    /**
-     * Aggiunge un blocco con NBT senza espandere i bounds.
-     * Usato quando si caricano blocchi da file/server dove i bounds sono già noti.
-     */
-    public void addBlockRaw(BlockPos pos, BlockState state, CompoundTag nbt) {
-        blocks.put(pos.immutable(), state);
-        if (nbt != null && !nbt.isEmpty()) {
-            blockEntityNbt.put(pos.immutable(), nbt);
+        // Update cached stats from world
+        BlockState state = level.getBlockState(pos);
+        if (!state.isAir()) {
+            cachedSolidBlockCount++;
+            String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+            if (isCommandBlock(blockId)) {
+                cachedCommandBlockCount++;
+            }
         }
     }
 
     /**
-     * Imposta l'NBT di un block entity.
+     * Adds a block position without expanding bounds or updating stats.
+     * Used when loading from file/server where bounds are already known.
      */
-    public void setBlockEntityNbt(BlockPos pos, CompoundTag nbt) {
-        if (nbt != null && !nbt.isEmpty()) {
-            blockEntityNbt.put(pos.immutable(), nbt);
-        } else {
-            blockEntityNbt.remove(pos);
-        }
+    public void addBlockRaw(BlockPos pos) {
+        trackedBlocks.add(pos.immutable());
     }
 
     /**
-     * Ottiene l'NBT di un block entity.
+     * Removes a block from the construction.
+     * Recalculates bounds including entities from the world.
+     * Updates cached stats.
      */
-    public CompoundTag getBlockEntityNbt(BlockPos pos) {
-        return blockEntityNbt.get(pos);
-    }
-
-    /**
-     * Verifica se un blocco ha un NBT associato.
-     */
-    public boolean hasBlockEntityNbt(BlockPos pos) {
-        return blockEntityNbt.containsKey(pos);
-    }
-
-    /**
-     * Ottiene tutti gli NBT dei block entities.
-     */
-    public Map<BlockPos, CompoundTag> getBlockEntityNbtMap() {
-        return blockEntityNbt;
-    }
-
-    /**
-     * Conta i block entities con NBT.
-     */
-    public int getBlockEntityCount() {
-        return blockEntityNbt.size();
-    }
-
-    /**
-     * Rimuove un blocco dalla costruzione.
-     * Ricalcola i bounds automaticamente dopo la rimozione (blocks only).
-     */
-    public boolean removeBlock(BlockPos pos) {
-        boolean removed = blocks.remove(pos) != null;
+    public boolean removeBlock(BlockPos pos, ServerLevel level) {
+        boolean removed = trackedBlocks.remove(pos);
         if (removed) {
-            blockEntityNbt.remove(pos);  // Rimuovi anche l'NBT se presente
-            recalculateBounds();
-        }
-        return removed;
-    }
-
-    /**
-     * Rimuove un blocco dalla costruzione.
-     * Ricalcola i bounds includendo le entities presenti nel mondo.
-     * Entity relative positions are NOT updated here - they are recalculated
-     * only at push/save time via refreshEntitiesFromWorld.
-     */
-    public boolean removeBlock(
-        BlockPos pos,
-        net.minecraft.server.level.ServerLevel level
-    ) {
-        boolean removed = blocks.remove(pos) != null;
-        if (removed) {
-            blockEntityNbt.remove(pos);
+            // Update cached stats before recalculating
+            BlockState state = level.getBlockState(pos);
+            if (!state.isAir()) {
+                cachedSolidBlockCount = Math.max(0, cachedSolidBlockCount - 1);
+                String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                if (isCommandBlock(blockId)) {
+                    cachedCommandBlockCount = Math.max(0, cachedCommandBlockCount - 1);
+                }
+            }
             recalculateBounds(level);
         }
         return removed;
     }
 
     /**
-     * Verifica se una posizione fa parte della costruzione.
+     * Checks if a position is part of the construction.
      */
     public boolean containsBlock(BlockPos pos) {
-        return blocks.containsKey(pos);
+        return trackedBlocks.contains(pos);
     }
 
     /**
-     * Ottiene lo stato del blocco in una posizione.
-     */
-    public BlockState getBlock(BlockPos pos) {
-        return blocks.get(pos);
-    }
-
-    /**
-     * Conta i blocchi totali (inclusa l'aria).
+     * Total block count (including air).
      */
     public int getBlockCount() {
-        return blocks.size();
+        return trackedBlocks.size();
     }
 
     /**
-     * Conta i blocchi solidi (esclude l'aria).
+     * Solid block count (from cached stats).
      */
     public int getSolidBlockCount() {
-        return (int) blocks.values().stream()
-            .filter(state -> !state.isAir())
-            .count();
+        return cachedSolidBlockCount;
     }
 
     /**
-     * Ricalcola i bounds dai blocchi correnti (blocks only).
+     * Gets all tracked block positions.
+     */
+    public Set<BlockPos> getTrackedBlocks() {
+        return trackedBlocks;
+    }
+
+    /**
+     * Recalculates bounds from tracked blocks only (no entities).
      * Also clears any anchors that are now outside the new bounds.
      */
     public void recalculateBounds() {
         bounds.reset();
-        for (BlockPos pos : blocks.keySet()) {
+        for (BlockPos pos : trackedBlocks) {
             bounds.expandToInclude(pos);
         }
-        // Validate anchors against new bounds
         validateAnchors();
     }
 
     /**
-     * Ricalcola i bounds dai blocchi correnti e dalle entities presenti nel mondo.
-     * Usa le posizioni assolute delle entities tracciate in spawnedEntityUuids.
+     * Recalculates bounds from tracked blocks and tracked entities in the world.
      * Also clears any anchors that are now outside the new bounds.
      */
-    public void recalculateBounds(net.minecraft.server.level.ServerLevel level) {
+    public void recalculateBounds(ServerLevel level) {
         bounds.reset();
-        for (BlockPos pos : blocks.keySet()) {
+        for (BlockPos pos : trackedBlocks) {
             bounds.expandToInclude(pos);
         }
-        // Include spawned entities from the world (including hanging entity block_pos)
-        for (UUID entityUuid : spawnedEntityUuids) {
-            net.minecraft.world.entity.Entity worldEntity = level.getEntity(entityUuid);
+        // Include tracked entities from the world
+        for (UUID entityUuid : trackedEntities) {
+            Entity worldEntity = level.getEntity(entityUuid);
             if (worldEntity != null && EntityData.shouldSaveEntity(worldEntity)) {
                 EntityData.expandBoundsForEntity(worldEntity, bounds);
             }
         }
-        // Validate anchors against new bounds
         validateAnchors();
     }
 
@@ -300,17 +237,12 @@ public class Construction {
      */
     private void validateAnchors() {
         if (!bounds.isValid()) {
-            // No valid bounds means no blocks - clear all anchors
             anchors.clearEntrance();
             return;
         }
 
-        // Check entrance anchor (stored as normalized coordinates)
         if (anchors.hasEntrance()) {
             BlockPos entrance = anchors.getEntrance();
-            // Normalized coords are relative to (0,0,0)
-            // X and Z: max valid is sizeX-1, sizeZ-1 (within bounds)
-            // Y: max valid is sizeY (player can stand ON TOP of the construction)
             int maxX = bounds.getSizeX() - 1;
             int maxY = bounds.getSizeY();  // Allow Y up to sizeY (standing on top)
             int maxZ = bounds.getSizeZ() - 1;
@@ -324,71 +256,43 @@ public class Construction {
     }
 
     /**
-     * Rimuove tutti i blocchi di un determinato tipo (blocks-only bounds recalculation).
-     * @param blockId ID del blocco (es: "minecraft:air", "minecraft:stone")
-     * @return numero di blocchi rimossi
+     * Removes all blocks of a given type (querying world for block states).
+     * Recalculates bounds including entities from the world.
+     * @param blockId Block ID (e.g., "minecraft:air", "minecraft:stone")
+     * @return number of blocks removed
      */
-    public int removeBlocksByType(String blockId) {
-        return removeBlocksByTypeInternal(blockId, null);
-    }
-
-    /**
-     * Rimuove tutti i blocchi di un determinato tipo.
-     * Ricalcola i bounds includendo le entities presenti nel mondo.
-     * Entity relative positions are NOT updated here - they are recalculated
-     * only at push/save time via refreshEntitiesFromWorld.
-     */
-    public int removeBlocksByType(
-        String blockId,
-        net.minecraft.server.level.ServerLevel level
-    ) {
-        return removeBlocksByTypeInternal(blockId, level);
-    }
-
-    private int removeBlocksByTypeInternal(
-        String blockId,
-        net.minecraft.server.level.ServerLevel level
-    ) {
+    public int removeBlocksByType(String blockId, ServerLevel level) {
         java.util.List<BlockPos> toRemove = new java.util.ArrayList<>();
 
-        for (Map.Entry<BlockPos, BlockState> entry : blocks.entrySet()) {
-            String entryBlockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
-                .getKey(entry.getValue().getBlock())
-                .toString();
-
+        for (BlockPos pos : trackedBlocks) {
+            BlockState state = level.getBlockState(pos);
+            String entryBlockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
             if (entryBlockId.equals(blockId)) {
-                toRemove.add(entry.getKey());
+                toRemove.add(pos);
             }
         }
 
         for (BlockPos pos : toRemove) {
-            blocks.remove(pos);
+            trackedBlocks.remove(pos);
         }
 
-        // Ricalcola i bounds dopo la rimozione
         if (!toRemove.isEmpty()) {
-            if (level != null) {
-                recalculateBounds(level);
-            } else {
-                recalculateBounds();
-            }
+            recalculateBounds(level);
+            // Full recalc of stats since we may have removed many blocks
+            updateCachedStats(level);
         }
 
         return toRemove.size();
     }
 
     /**
-     * Conta quanti blocchi di un determinato tipo sono presenti.
-     * @param blockId ID del blocco (es: "minecraft:air", "minecraft:stone")
-     * @return numero di blocchi di quel tipo
+     * Counts blocks of a given type by querying the world.
      */
-    public int countBlocksByType(String blockId) {
+    public int countBlocksByType(String blockId, ServerLevel level) {
         int count = 0;
-        for (BlockState state : blocks.values()) {
-            String entryBlockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
-                .getKey(state.getBlock())
-                .toString();
-
+        for (BlockPos pos : trackedBlocks) {
+            BlockState state = level.getBlockState(pos);
+            String entryBlockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
             if (entryBlockId.equals(blockId)) {
                 count++;
             }
@@ -397,17 +301,15 @@ public class Construction {
     }
 
     /**
-     * Ritorna una mappa con il conteggio di tutti i tipi di blocchi.
-     * Include anche i blocchi d'aria per permettere la rimozione dalla GUI.
-     * @return Map blockId -> count (include air)
+     * Returns a map with counts of all block types by querying the world.
+     * Includes air blocks for GUI removal support.
+     * @return Map blockId -> count (includes air)
      */
-    public Map<String, Integer> getBlockCounts() {
+    public Map<String, Integer> getBlockCounts(ServerLevel level) {
         Map<String, Integer> counts = new HashMap<>();
-        for (BlockState state : blocks.values()) {
-            String blockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
-                .getKey(state.getBlock())
-                .toString();
-
+        for (BlockPos pos : trackedBlocks) {
+            BlockState state = level.getBlockState(pos);
+            String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
             counts.merge(blockId, 1, Integer::sum);
         }
         return counts;
@@ -418,205 +320,200 @@ public class Construction {
     public UUID getAuthorId() { return authorId; }
     public String getAuthorName() { return authorName; }
     public Instant getCreatedAt() { return createdAt; }
-    public Map<BlockPos, BlockState> getBlocks() { return blocks; }
     public ConstructionBounds getBounds() { return bounds; }
     public Anchors getAnchors() { return anchors; }
 
-    // ===== Entity management =====
+    // ===== Entity management (reference-only) =====
 
     /**
-     * Adds an entity to this construction.
-     * @param data The entity data (type, position, nbt)
-     * @return The index of the added entity in the list
+     * Adds an entity UUID to this construction and expands bounds.
+     * Updates cached entity/mob stats from world query.
      */
-    public int addEntity(EntityData data) {
-        entities.add(data);
-        return entities.size() - 1;
-    }
+    public void addEntity(UUID uuid, ServerLevel level) {
+        trackedEntities.add(uuid);
 
-    /**
-     * Removes an entity by its index in the list.
-     * @param index The index of the entity to remove
-     * @return true if removed successfully, false if index is invalid
-     */
-    public boolean removeEntity(int index) {
-        if (index >= 0 && index < entities.size()) {
-            entities.remove(index);
-            return true;
-        }
-        return false;
-    }
+        // Expand bounds to include the entity
+        Entity worldEntity = level.getEntity(uuid);
+        if (worldEntity != null && EntityData.shouldSaveEntity(worldEntity)) {
+            EntityData.expandBoundsForEntity(worldEntity, bounds);
 
-    /**
-     * Gets an entity by index.
-     * @param index The index in the list
-     * @return The entity data, or null if index is invalid
-     */
-    public EntityData getEntity(int index) {
-        if (index >= 0 && index < entities.size()) {
-            return entities.get(index);
-        }
-        return null;
-    }
-
-    /**
-     * Clears all entities from this construction.
-     */
-    public void clearEntities() {
-        entities.clear();
-    }
-
-    /**
-     * Refreshes tracked entities from the world.
-     * This re-serializes each tracked entity to capture any modifications
-     * made in the world (like item rotation in item frames, item content changes, etc.).
-     *
-     * IMPORTANT: This method only UPDATES existing entities in the list by matching
-     * world entity UUIDs to the tracked spawnedEntityUuids. It does NOT add new entities
-     * or remove entities from the list - those operations are handled by addEntity/removeEntity.
-     *
-     * The matching works by iterating through the entities list and finding the world entity
-     * that matches each EntityData by type and approximate position.
-     *
-     * @param level The ServerLevel to read entities from
-     * @param registries The registry access for proper NBT serialization
-     * @return Number of entities refreshed
-     */
-    public int refreshEntitiesFromWorld(net.minecraft.server.level.ServerLevel level, net.minecraft.core.HolderLookup.Provider registries) {
-        if (spawnedEntityUuids.isEmpty() || entities.isEmpty() || !bounds.isValid()) {
-            return 0;
-        }
-
-        int originX = bounds.getMinX();
-        int originY = bounds.getMinY();
-        int originZ = bounds.getMinZ();
-
-        int refreshed = 0;
-
-        // For each tracked UUID, find the entity in the world
-        for (UUID entityUuid : spawnedEntityUuids) {
-            net.minecraft.world.entity.Entity worldEntity = level.getEntity(entityUuid);
-            if (worldEntity == null || !EntityData.shouldSaveEntity(worldEntity)) {
-                continue;
-            }
-
-            String entityType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
+            // Update cached stats
+            cachedEntityCount++;
+            String entityType = BuiltInRegistries.ENTITY_TYPE
                 .getKey(worldEntity.getType()).toString();
-            double worldX = worldEntity.getX();
-            double worldY = worldEntity.getY();
-            double worldZ = worldEntity.getZ();
-
-            // Find matching EntityData by type and approximate position
-            for (int i = 0; i < entities.size(); i++) {
-                EntityData data = entities.get(i);
-
-                // Check type match
-                if (!data.getEntityType().equals(entityType)) {
-                    continue;
-                }
-
-                // Calculate expected world position from EntityData
-                double expectedX = originX + data.getRelativePos().x;
-                double expectedY = originY + data.getRelativePos().y;
-                double expectedZ = originZ + data.getRelativePos().z;
-
-                // Check position match (within 1 block tolerance)
-                double dx = Math.abs(worldX - expectedX);
-                double dy = Math.abs(worldY - expectedY);
-                double dz = Math.abs(worldZ - expectedZ);
-
-                if (dx < 1.0 && dy < 1.0 && dz < 1.0) {
-                    // Found matching EntityData - update it with fresh data from world
-                    EntityData newData = EntityData.fromEntity(worldEntity, bounds, registries);
-                    entities.set(i, newData);
-                    refreshed++;
-                    break; // Move to next tracked UUID
-                }
+            if (isMobEntity(entityType)) {
+                cachedMobCount++;
             }
         }
-
-        return refreshed;
     }
 
     /**
-     * Gets all entities in this construction.
-     * @return The list of entities
+     * Adds an entity UUID without expanding bounds or updating stats.
+     * Used when loading from file.
      */
-    public List<EntityData> getEntities() {
-        return entities;
+    public void addEntityRaw(UUID uuid) {
+        trackedEntities.add(uuid);
     }
 
     /**
-     * Counts entities in this construction.
+     * Removes an entity UUID from this construction.
+     * Recalculates bounds and updates cached stats.
      */
-    public int getEntityCount() {
-        return entities.size();
-    }
-
-    /**
-     * Counts mobs (living entities) in this construction.
-     * Excludes non-mob entities like armor_stand, item_frame, painting, etc.
-     */
-    public int getMobCount() {
-        int count = 0;
-        for (EntityData data : entities) {
-            if (isMobEntity(data.getEntityType())) {
-                count++;
+    public boolean removeEntity(UUID uuid, ServerLevel level) {
+        boolean removed = trackedEntities.remove(uuid);
+        if (removed) {
+            // Update cached stats before the entity is gone
+            Entity worldEntity = level.getEntity(uuid);
+            if (worldEntity != null) {
+                cachedEntityCount = Math.max(0, cachedEntityCount - 1);
+                String entityType = BuiltInRegistries.ENTITY_TYPE
+                    .getKey(worldEntity.getType()).toString();
+                if (isMobEntity(entityType)) {
+                    cachedMobCount = Math.max(0, cachedMobCount - 1);
+                }
             }
+            recalculateBounds(level);
         }
-        return count;
+        return removed;
     }
 
-    // ===== Spawned entity UUID tracking (runtime-only) =====
-
     /**
-     * Tracks a spawned entity UUID. Used to find and remove entities even if they move outside bounds.
-     * This data is NOT saved to file - it's runtime-only.
-     * @param uuid The UUID of the spawned entity
+     * Gets all tracked entity UUIDs.
      */
-    public void trackSpawnedEntity(UUID uuid) {
-        spawnedEntityUuids.add(uuid);
+    public Set<UUID> getTrackedEntities() {
+        return trackedEntities;
     }
 
     /**
-     * Untracks a spawned entity UUID.
-     * @param uuid The UUID to untrack
-     */
-    public void untrackSpawnedEntity(UUID uuid) {
-        spawnedEntityUuids.remove(uuid);
-    }
-
-    /**
-     * Gets all tracked spawned entity UUIDs.
-     * @return Set of UUIDs (runtime-only, not saved)
-     */
-    public Set<UUID> getSpawnedEntityUuids() {
-        return spawnedEntityUuids;
-    }
-
-    /**
-     * Clears all tracked spawned entity UUIDs.
-     */
-    public void clearSpawnedEntityUuids() {
-        spawnedEntityUuids.clear();
-    }
-
-    /**
-     * Checks if an entity UUID is tracked as spawned by this construction.
-     * @param uuid The UUID to check
-     * @return true if tracked
+     * Checks if an entity UUID is tracked.
      */
     public boolean isEntityTracked(UUID uuid) {
-        return spawnedEntityUuids.contains(uuid);
+        return trackedEntities.contains(uuid);
+    }
+
+    /**
+     * Clears all tracked entities.
+     */
+    public void clearTrackedEntities() {
+        trackedEntities.clear();
+        cachedEntityCount = 0;
+        cachedMobCount = 0;
+    }
+
+    /**
+     * Entity count (from cached stats).
+     */
+    public int getEntityCount() {
+        return cachedEntityCount;
+    }
+
+    /**
+     * Mob count (from cached stats).
+     */
+    public int getMobCount() {
+        return cachedMobCount;
+    }
+
+    // ===== Cached stats management =====
+
+    /**
+     * Full recalculation of all cached stats from the world.
+     * Called at save/push time and after bulk operations.
+     */
+    public void updateCachedStats(ServerLevel level) {
+        cachedSolidBlockCount = 0;
+        cachedCommandBlockCount = 0;
+        cachedEntityCount = 0;
+        cachedMobCount = 0;
+
+        // Count block stats from world
+        for (BlockPos pos : trackedBlocks) {
+            BlockState state = level.getBlockState(pos);
+            if (!state.isAir()) {
+                cachedSolidBlockCount++;
+                String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                if (isCommandBlock(blockId)) {
+                    cachedCommandBlockCount++;
+                }
+            }
+        }
+
+        // Count entity stats from world
+        for (UUID entityUuid : trackedEntities) {
+            Entity worldEntity = level.getEntity(entityUuid);
+            if (worldEntity != null && EntityData.shouldSaveEntity(worldEntity)) {
+                cachedEntityCount++;
+                String entityType = BuiltInRegistries.ENTITY_TYPE
+                    .getKey(worldEntity.getType()).toString();
+                if (isMobEntity(entityType)) {
+                    cachedMobCount++;
+                }
+            }
+        }
+    }
+
+    /**
+     * Sets cached stats directly (used when loading from metadata).
+     */
+    public void setCachedStats(int solidBlockCount, int entityCount, int mobCount, int commandBlockCount) {
+        this.cachedSolidBlockCount = solidBlockCount;
+        this.cachedEntityCount = entityCount;
+        this.cachedMobCount = mobCount;
+        this.cachedCommandBlockCount = commandBlockCount;
+    }
+
+    /**
+     * Computes required mods by querying the world for block/entity namespaces.
+     */
+    public void computeRequiredMods(ServerLevel level) {
+        requiredMods.clear();
+
+        // Count blocks for each non-vanilla mod
+        for (BlockPos pos : trackedBlocks) {
+            BlockState state = level.getBlockState(pos);
+            Identifier blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+            String namespace = blockId.getNamespace();
+
+            if (!"minecraft".equals(namespace)) {
+                ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
+                info.incrementBlockCount();
+            }
+        }
+
+        // Count entities for each non-vanilla mod
+        for (UUID entityUuid : trackedEntities) {
+            Entity worldEntity = level.getEntity(entityUuid);
+            if (worldEntity != null && EntityData.shouldSaveEntity(worldEntity)) {
+                String entityType = BuiltInRegistries.ENTITY_TYPE
+                    .getKey(worldEntity.getType()).toString();
+                int colonIndex = entityType.indexOf(':');
+                String namespace = colonIndex > 0 ? entityType.substring(0, colonIndex) : "minecraft";
+
+                if (!"minecraft".equals(namespace)) {
+                    ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
+                    info.incrementEntitiesCount();
+                }
+            }
+        }
+
+        // Populate displayName, version and downloadUrl from loaded mods
+        for (ModInfo info : requiredMods.values()) {
+            FabricLoader.getInstance().getModContainer(info.getModId()).ifPresent(container -> {
+                info.setDisplayName(container.getMetadata().getName());
+                info.setVersion(container.getMetadata().getVersion().getFriendlyString());
+                container.getMetadata().getContact().get("homepage")
+                    .ifPresent(info::setDownloadUrl);
+            });
+        }
     }
 
     // ===== Total stats (base + all rooms) =====
 
     /**
-     * Conta i blocchi totali della costruzione (base + tutte le room).
+     * Total block count (base + all rooms).
      */
     public int getTotalBlockCount() {
-        int total = blocks.size();
+        int total = trackedBlocks.size();
         for (Room room : rooms.values()) {
             total += room.getChangedBlockCount();
         }
@@ -624,40 +521,32 @@ public class Construction {
     }
 
     /**
-     * Conta i blocchi solidi totali (base + tutte le room).
+     * Total solid block count (base + all rooms).
      */
     public int getTotalSolidBlockCount() {
-        int total = getSolidBlockCount();
+        int total = cachedSolidBlockCount;
         for (Room room : rooms.values()) {
-            for (var state : room.getBlockChanges().values()) {
-                if (!state.isAir()) {
-                    total++;
-                }
-            }
+            total += room.getCachedSolidBlockCount();
         }
         return total;
     }
 
     /**
-     * Conta i blocchi aria totali (base + tutte le room).
+     * Total air block count (base + all rooms).
      */
     public int getTotalAirBlockCount() {
-        int total = getBlockCount() - getSolidBlockCount();
+        int total = getBlockCount() - cachedSolidBlockCount;
         for (Room room : rooms.values()) {
-            for (var state : room.getBlockChanges().values()) {
-                if (state.isAir()) {
-                    total++;
-                }
-            }
+            total += room.getChangedBlockCount() - room.getCachedSolidBlockCount();
         }
         return total;
     }
 
     /**
-     * Conta le entità totali (base + tutte le room).
+     * Total entity count (base + all rooms).
      */
     public int getTotalEntityCount() {
-        int total = entities.size();
+        int total = cachedEntityCount;
         for (Room room : rooms.values()) {
             total += room.getEntityCount();
         }
@@ -665,47 +554,30 @@ public class Construction {
     }
 
     /**
-     * Counts total mobs (base + all rooms).
+     * Total mob count (base + all rooms).
      */
     public int getTotalMobCount() {
-        int total = getMobCount();
+        int total = cachedMobCount;
         for (Room room : rooms.values()) {
-            for (EntityData data : room.getEntities()) {
-                if (data != null && isMobEntity(data.getEntityType())) {
-                    total++;
-                }
-            }
+            total += room.getCachedMobCount();
         }
         return total;
     }
 
     /**
-     * Counts command blocks in base construction.
-     * Includes all types: command_block, chain_command_block, repeating_command_block.
+     * Command blocks in base construction (from cached stats).
      */
     public int getCommandBlockCount() {
-        int count = 0;
-        for (BlockState state : blocks.values()) {
-            String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-            if (isCommandBlock(blockId)) {
-                count++;
-            }
-        }
-        return count;
+        return cachedCommandBlockCount;
     }
 
     /**
-     * Counts total command blocks (base + all rooms).
+     * Total command blocks (base + all rooms).
      */
     public int getTotalCommandBlockCount() {
-        int total = getCommandBlockCount();
+        int total = cachedCommandBlockCount;
         for (Room room : rooms.values()) {
-            for (BlockState state : room.getBlockChanges().values()) {
-                String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                if (isCommandBlock(blockId)) {
-                    total++;
-                }
-            }
+            total += room.getCachedCommandBlockCount();
         }
         return total;
     }
@@ -720,11 +592,10 @@ public class Construction {
     }
 
     /**
-     * Verifica se un tipo di entità è un mob (entità vivente).
-     * Metodo pubblico per essere utilizzabile anche da altre classi (es: NetworkHandler).
+     * Checks if an entity type is a mob (living entity).
+     * Public for use by other classes (e.g., NetworkHandler).
      */
     public static boolean isMobEntity(String entityType) {
-        // Lista di entità NON-mob comuni
         return !entityType.equals("minecraft:armor_stand") &&
                !entityType.equals("minecraft:item_frame") &&
                !entityType.equals("minecraft:glow_item_frame") &&
@@ -749,7 +620,7 @@ public class Construction {
                !entityType.equals("minecraft:display.text");
     }
 
-    // Getter/Setter multilingua per titoli
+    // Multilingual title getters/setters
     public Map<String, String> getTitles() { return titles; }
     public String getTitle(String lang) { return titles.getOrDefault(lang, ""); }
     public void setTitle(String lang, String title) {
@@ -760,7 +631,7 @@ public class Construction {
         }
     }
 
-    // Getter/Setter multilingua per descrizioni brevi
+    // Multilingual short description getters/setters
     public Map<String, String> getShortDescriptions() { return shortDescriptions; }
     public String getShortDescription(String lang) { return shortDescriptions.getOrDefault(lang, ""); }
     public void setShortDescription(String lang, String shortDescription) {
@@ -771,7 +642,7 @@ public class Construction {
         }
     }
 
-    // Getter/Setter multilingua per descrizioni complete
+    // Multilingual full description getters/setters
     public Map<String, String> getDescriptions() { return descriptions; }
     public String getDescription(String lang) { return descriptions.getOrDefault(lang, ""); }
     public void setDescription(String lang, String description) {
@@ -783,14 +654,14 @@ public class Construction {
     }
 
     /**
-     * Verifica se la costruzione ha almeno un titolo valido (obbligatorio per il push).
+     * Checks if the construction has at least one valid title (required for push).
      */
     public boolean hasValidTitle() {
         return !titles.isEmpty() && titles.values().stream().anyMatch(t -> t != null && !t.trim().isEmpty());
     }
 
     /**
-     * Ottiene il titolo nella lingua preferita, con fallback a inglese o prima disponibile.
+     * Gets the title in the preferred language, with fallback to English or first available.
      */
     public String getTitleWithFallback(String preferredLang) {
         if (titles.containsKey(preferredLang) && !titles.get(preferredLang).isEmpty()) {
@@ -803,7 +674,7 @@ public class Construction {
     }
 
     /**
-     * Ottiene la descrizione breve nella lingua preferita, con fallback a inglese o prima disponibile.
+     * Gets the short description in the preferred language, with fallback.
      */
     public String getShortDescriptionWithFallback(String preferredLang) {
         if (shortDescriptions.containsKey(preferredLang) && !shortDescriptions.get(preferredLang).isEmpty()) {
@@ -816,7 +687,7 @@ public class Construction {
     }
 
     /**
-     * Ottiene la descrizione completa nella lingua preferita, con fallback a inglese o prima disponibile.
+     * Gets the full description in the preferred language, with fallback.
      */
     public String getDescriptionWithFallback(String preferredLang) {
         if (descriptions.containsKey(preferredLang) && !descriptions.get(preferredLang).isEmpty()) {
@@ -830,27 +701,29 @@ public class Construction {
 
     /**
      * Creates a copy of this construction with a new ID.
-     * All data (blocks, entities, titles, descriptions, etc.) is copied.
+     * Copies tracked positions and entity UUIDs (NOT world data).
      */
     public Construction copyWithNewId(String newId) {
         Construction copy = new Construction(newId, this.authorId, this.authorName, this.createdAt,
             this.titles, this.shortDescriptions, this.descriptions);
 
-        // Copy all blocks with their NBT
-        for (Map.Entry<BlockPos, BlockState> entry : this.blocks.entrySet()) {
-            BlockPos pos = entry.getKey();
-            CompoundTag nbt = this.blockEntityNbt.get(pos);
-            if (nbt != null) {
-                copy.addBlock(pos, entry.getValue(), nbt.copy());
-            } else {
-                copy.addBlock(pos, entry.getValue());
-            }
+        // Copy tracked block positions
+        copy.trackedBlocks.addAll(this.trackedBlocks);
+
+        // Copy tracked entity UUIDs
+        copy.trackedEntities.addAll(this.trackedEntities);
+
+        // Copy bounds
+        if (this.bounds.isValid()) {
+            copy.bounds.set(bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
+                bounds.getMaxX(), bounds.getMaxY(), bounds.getMaxZ());
         }
 
-        // Copy all entities
-        for (EntityData data : this.entities) {
-            copy.addEntity(data);
-        }
+        // Copy cached stats
+        copy.cachedSolidBlockCount = this.cachedSolidBlockCount;
+        copy.cachedEntityCount = this.cachedEntityCount;
+        copy.cachedMobCount = this.cachedMobCount;
+        copy.cachedCommandBlockCount = this.cachedCommandBlockCount;
 
         // Copy required mods
         copy.setRequiredMods(this.requiredMods);
@@ -863,7 +736,7 @@ public class Construction {
         return copy;
     }
 
-    // Getter/Setter per mod richiesti
+    // Getter/Setter for required mods
     public Map<String, ModInfo> getRequiredMods() {
         return requiredMods;
     }
@@ -873,48 +746,7 @@ public class Construction {
     }
 
     /**
-     * Calcola i mod richiesti analizzando i blocchi e le entità della costruzione.
-     * Per ogni blocco/entità non vanilla, estrae il namespace e popola le info del mod.
-     */
-    public void computeRequiredMods() {
-        requiredMods.clear();
-
-        // Conta i blocchi per ogni mod non-vanilla
-        for (BlockState state : blocks.values()) {
-            Identifier blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-            String namespace = blockId.getNamespace();
-
-            // Ignora i blocchi vanilla
-            if (!"minecraft".equals(namespace)) {
-                ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
-                info.incrementBlockCount();
-            }
-        }
-
-        // Count entities and mobs for each non-vanilla mod
-        for (EntityData entityData : entities) {
-            String namespace = entityData.getModNamespace();
-
-            // Skip vanilla entities
-            if (!"minecraft".equals(namespace)) {
-                ModInfo info = requiredMods.computeIfAbsent(namespace, ModInfo::new);
-                info.incrementEntitiesCount();
-            }
-        }
-
-        // Popola displayName, version e downloadUrl dai mod caricati (se disponibili)
-        for (ModInfo info : requiredMods.values()) {
-            FabricLoader.getInstance().getModContainer(info.getModId()).ifPresent(container -> {
-                info.setDisplayName(container.getMetadata().getName());
-                info.setVersion(container.getMetadata().getVersion().getFriendlyString());
-                container.getMetadata().getContact().get("homepage")
-                    .ifPresent(info::setDownloadUrl);
-            });
-        }
-    }
-
-    /**
-     * Verifica se la costruzione richiede mod non-vanilla.
+     * Checks if the construction requires non-vanilla mods.
      */
     public boolean hasModdedBlocks() {
         return !requiredMods.isEmpty();
@@ -922,51 +754,30 @@ public class Construction {
 
     // ===== Room management =====
 
-    /**
-     * Aggiunge una stanza alla costruzione.
-     */
     public void addRoom(Room room) {
         rooms.put(room.getId(), room);
     }
 
-    /**
-     * Ottiene una stanza per ID.
-     */
     public Room getRoom(String id) {
         return rooms.get(id);
     }
 
-    /**
-     * Rimuove una stanza dalla costruzione.
-     */
     public boolean removeRoom(String id) {
         return rooms.remove(id) != null;
     }
 
-    /**
-     * Ottiene tutte le stanze.
-     */
     public Map<String, Room> getRooms() {
         return rooms;
     }
 
-    /**
-     * Verifica se esiste una stanza con l'ID specificato.
-     */
     public boolean hasRoom(String id) {
         return rooms.containsKey(id);
     }
 
-    /**
-     * Conta le stanze.
-     */
     public int getRoomCount() {
         return rooms.size();
     }
 
-    /**
-     * Trova una stanza per nome (case insensitive).
-     */
     public Room getRoomByName(String name) {
         for (Room room : rooms.values()) {
             if (room.getName().equalsIgnoreCase(name)) {

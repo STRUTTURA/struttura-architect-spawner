@@ -48,17 +48,14 @@ public class ServerPlayerGameModeMixin {
     private void onBlockDestroy(BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
         EditingSession session = EditingSession.getSession(player);
         if (session != null) {
-            BlockState previousState = level.getBlockState(pos);
-
             // Get all positions for multi-block structures BEFORE destruction
             List<BlockPos> allPositions = BlockUtils.getMultiBlockPositions(level, pos);
 
             for (BlockPos blockPos : allPositions) {
-                BlockState state = level.getBlockState(blockPos);
-                if (!state.isAir()) {
-                    session.onBlockBroken(blockPos, state);
-                    Architect.LOGGER.debug("Block broken at {}: {} (mode: {})",
-                        blockPos, state, session.getMode());
+                if (!level.getBlockState(blockPos).isAir()) {
+                    session.onBlockBroken(blockPos);
+                    Architect.LOGGER.debug("Block broken at {} (mode: {})",
+                        blockPos, session.getMode());
                 }
             }
 
@@ -100,11 +97,10 @@ public class ServerPlayerGameModeMixin {
                 List<BlockPos> allPositions = BlockUtils.getMultiBlockPositions(world, placedPos);
 
                 for (BlockPos pos : allPositions) {
-                    BlockState state = world.getBlockState(pos);
-                    if (!state.isAir()) {
-                        session.onBlockPlaced(pos, state);
-                        Architect.LOGGER.debug("Block placed at {}: {} (mode: {})",
-                            pos, state, session.getMode());
+                    if (!world.getBlockState(pos).isAir()) {
+                        session.onBlockPlaced(pos);
+                        Architect.LOGGER.debug("Block placed at {} (mode: {})",
+                            pos, session.getMode());
                     }
                 }
 

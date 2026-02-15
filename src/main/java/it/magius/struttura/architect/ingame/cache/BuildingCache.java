@@ -2,6 +2,7 @@ package it.magius.struttura.architect.ingame.cache;
 
 import it.magius.struttura.architect.config.ArchitectConfig;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ConstructionSnapshot;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -24,6 +25,10 @@ public class BuildingCache {
 
     // Hash tracking for cache invalidation
     private final Map<String, String> hashByRdns = new ConcurrentHashMap<>();
+
+    // Snapshot storage for InGame spawner (full block/entity data for placement)
+    // TODO: Refactor to use ConstructionSnapshot as the primary cache entry instead of Construction
+    private final Map<String, ConstructionSnapshot> snapshotByRdns = new ConcurrentHashMap<>();
 
     // Track buildings currently being downloaded to prevent duplicate download requests
     private final Set<String> downloading = ConcurrentHashMap.newKeySet();
@@ -129,12 +134,33 @@ public class BuildingCache {
     }
 
     /**
+     * Stores a snapshot for a building (full block/entity data for spawning).
+     * TODO: Refactor to use ConstructionSnapshot as the primary cache type.
+     * @param rdns the building's reverse DNS identifier
+     * @param snapshot the snapshot containing block states, NBT, and entity data
+     */
+    public void putSnapshot(String rdns, ConstructionSnapshot snapshot) {
+        snapshotByRdns.put(rdns, snapshot);
+    }
+
+    /**
+     * Gets the cached snapshot for a building.
+     * TODO: Refactor to use ConstructionSnapshot as the primary cache type.
+     * @param rdns the building's reverse DNS identifier
+     * @return the cached snapshot, or null if not available
+     */
+    public ConstructionSnapshot getSnapshot(String rdns) {
+        return snapshotByRdns.get(rdns);
+    }
+
+    /**
      * Removes a building from the cache.
      * @param rdns the building's reverse DNS identifier
      */
     public void remove(String rdns) {
         cache.remove(rdns);
         hashByRdns.remove(rdns);
+        snapshotByRdns.remove(rdns);
     }
 
     /**
@@ -156,6 +182,7 @@ public class BuildingCache {
     public void clear() {
         cache.clear();
         hashByRdns.clear();
+        snapshotByRdns.clear();
         downloading.clear();
     }
 

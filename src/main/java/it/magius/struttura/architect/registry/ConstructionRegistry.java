@@ -219,6 +219,14 @@ public class ConstructionRegistry {
     }
 
     /**
+     * Gets the underlying storage instance.
+     * Returns null if storage is not initialized.
+     */
+    public ConstructionStorage getStorage() {
+        return storage;
+    }
+
+    /**
      * Pulisce il registro (usato quando si cambia mondo).
      */
     public void clear() {

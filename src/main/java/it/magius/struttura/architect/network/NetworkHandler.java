@@ -5,9 +5,9 @@ import it.magius.struttura.architect.api.ApiClient;
 import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
+import it.magius.struttura.architect.model.ConstructionSnapshot;
 import it.magius.struttura.architect.model.EditMode;
 import it.magius.struttura.architect.model.EntityData;
-import it.magius.struttura.architect.model.ModInfo;
 import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.placement.ConstructionOperations;
 import it.magius.struttura.architect.registry.ConstructionRegistry;
@@ -20,20 +20,14 @@ import it.magius.struttura.architect.ChatMessages;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntitySpawnReason;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.Vec3;
-
 import java.util.ArrayList;
 import java.util.UUID;
 import java.util.HashSet;
@@ -190,16 +184,17 @@ public class NetworkHandler {
         }
 
         Construction construction = session.getConstruction();
-        Map<BlockPos, BlockState> blocks = construction.getBlocks();
+        ServerLevel level = (ServerLevel) session.getPlayer().level();
 
         List<BlockPos> solidBlocks = new ArrayList<>();
         List<BlockPos> airBlocks = new ArrayList<>();
 
-        for (Map.Entry<BlockPos, BlockState> entry : blocks.entrySet()) {
-            if (entry.getValue().isAir()) {
-                airBlocks.add(entry.getKey());
+        for (BlockPos pos : construction.getTrackedBlocks()) {
+            BlockState state = level.getBlockState(pos);
+            if (state.isAir()) {
+                airBlocks.add(pos);
             } else {
-                solidBlocks.add(entry.getKey());
+                solidBlocks.add(pos);
             }
         }
 
@@ -212,7 +207,7 @@ public class NetworkHandler {
         if (session.isInRoom()) {
             Room room = session.getCurrentRoomObject();
             if (room != null) {
-                roomBlocks.addAll(room.getBlockChanges().keySet());
+                roomBlocks.addAll(room.getChangedBlocks());
             }
         }
 
@@ -469,10 +464,10 @@ public class NetworkHandler {
 
                         // Add block to construction or room
                         if (inRoom && room != null) {
-                            room.setBlockChange(pos, state);
+                            room.setBlockChange(pos);
                             construction.getBounds().expandToInclude(pos);
                         } else {
-                            construction.addBlock(pos, state);
+                            construction.addBlock(pos, level);
                         }
                         addedCount++;
                     }
@@ -492,7 +487,6 @@ public class NetworkHandler {
             );
 
             int entitiesAdded = 0;
-            var bounds = construction.getBounds();
 
             for (Entity entity : worldEntities) {
                 // Skip if entity is already tracked in the session
@@ -500,18 +494,15 @@ public class NetworkHandler {
                     continue;
                 }
 
-                // Expand bounds BEFORE creating EntityData so relative positions are always >= 0
-                EntityData.expandBoundsForEntity(entity, bounds);
+                // Expand bounds to include the entity
+                EntityData.expandBoundsForEntity(entity, construction.getBounds());
 
-                EntityData data = EntityData.fromEntity(entity, bounds, level.registryAccess());
-                int newIndex;
+                // Add entity UUID to construction or room
                 if (inRoom && room != null) {
-                    newIndex = room.addEntity(data);
+                    room.addEntity(entity.getUUID());
                 } else {
-                    newIndex = construction.addEntity(data);
+                    construction.addEntity(entity.getUUID(), level);
                 }
-                session.trackEntity(entity.getUUID(), newIndex);
-                construction.trackSpawnedEntity(entity.getUUID());
                 entitiesAdded++;
             }
 
@@ -646,13 +637,14 @@ public class NetworkHandler {
             return;
         }
 
+        // Create snapshot from world for placement
+        ServerLevel level = (ServerLevel) player.level();
+        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, level);
+
         // Use centralized placement with SHOW mode (original position)
         var result = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.SHOW, false
+            player, construction, snapshot, ConstructionOperations.PlacementMode.SHOW, false
         );
-
-        // Validate coherence after show
-        ServerLevel level = (ServerLevel) player.level();
         it.magius.struttura.architect.validation.CoherenceChecker.validateConstruction(
             level, construction, true);
 
@@ -771,7 +763,7 @@ public class NetworkHandler {
 
         // Se nomob, rimuovi le entità dalla costruzione prima di salvare
         if (!saveEntities) {
-            construction.clearEntities();
+            construction.clearTrackedEntities();
             Architect.LOGGER.info("Cleared entities from construction {} (done nomob)",
                 construction.getId());
         }
@@ -991,11 +983,33 @@ public class NetworkHandler {
             return;
         }
 
-        // Refresh entities from world before push to capture any modifications
+        // Create snapshot from world on server thread (needed for async push serialization)
         ServerLevel level = (ServerLevel) player.level();
-        int refreshed = construction.refreshEntitiesFromWorld(level, level.registryAccess());
-        if (refreshed > 0) {
-            Architect.LOGGER.info("Refreshed {} entities from world before push", refreshed);
+        construction.updateCachedStats(level);
+        construction.computeRequiredMods(level);
+        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, level);
+
+        // Load room entity data from disk and merge into the snapshot.
+        // fromWorld returns empty room entities because room entities are not spawned
+        // in the world during normal operation - they only exist on disk.
+        if (!construction.getRooms().isEmpty()) {
+            var storage = ConstructionRegistry.getInstance().getStorage();
+            for (var roomEntry : construction.getRooms().entrySet()) {
+                String roomId = roomEntry.getKey();
+                List<EntityData> roomEntities = storage.loadRoomEntities(construction, roomId);
+                if (!roomEntities.isEmpty()) {
+                    ConstructionSnapshot.RoomSnapshot existing = snapshot.rooms().get(roomId);
+                    if (existing != null) {
+                        // Merge: keep block data from world snapshot, add entities from disk
+                        snapshot.rooms().put(roomId, new ConstructionSnapshot.RoomSnapshot(
+                            existing.blocks(), existing.blockEntityNbt(), roomEntities));
+                    } else {
+                        // Room has entities but no block changes from world
+                        snapshot.rooms().put(roomId, new ConstructionSnapshot.RoomSnapshot(
+                            java.util.Map.of(), java.util.Map.of(), roomEntities));
+                    }
+                }
+            }
         }
 
         // Messaggio di invio
@@ -1008,7 +1022,7 @@ public class NetworkHandler {
         var server = level.getServer();
 
         // Esegui push asincrono
-        boolean started = ApiClient.pushConstruction(construction, response -> {
+        boolean started = ApiClient.pushConstruction(construction, snapshot, response -> {
             // Callback viene eseguito su thread async, schedula sul main thread
             if (server != null) {
                 server.execute(() -> {
@@ -1086,23 +1100,39 @@ public class NetworkHandler {
                         ConstructionRegistry.getInstance().register(construction);
 
                         // Use centralized placement with PULL mode (updates construction coordinates)
+                        // Pull response already contains deserialized snapshot
+                        ConstructionSnapshot pullSnapshot = response.snapshot();
                         var placementResult = ConstructionOperations.placeConstruction(
-                            player, construction, ConstructionOperations.PlacementMode.PULL, true,
+                            player, construction, pullSnapshot, ConstructionOperations.PlacementMode.PULL, true,
                             null, player.getYRot(), false
                         );
 
-                        // Validate coherence after pull (blocks should be in world now)
+                        // Update cached stats after placement (block/entity counts)
                         ServerLevel level = (ServerLevel) player.level();
+                        construction.updateCachedStats(level);
+
+                        // Save blocks/entities to disk so room data is available for room editing.
+                        // Create a snapshot from world for base blocks/entities (now at world coords).
+                        ConstructionSnapshot worldSnapshot = ConstructionSnapshot.fromWorld(construction, level);
+                        // Use transformed room snapshots from placeConstructionAt Phase 4b
+                        // (positions already transformed with offset + rotation, paired with block states).
+                        if (!placementResult.transformedRoomSnapshots().isEmpty()) {
+                            worldSnapshot.rooms().putAll(placementResult.transformedRoomSnapshots());
+                        }
+                        ConstructionRegistry.getInstance().getStorage().save(construction, worldSnapshot);
+
+                        // Validate coherence after pull (blocks should be in world now)
                         it.magius.struttura.architect.validation.CoherenceChecker.validateConstruction(
                             level, construction, true);
 
-                        ChatMessages.send(player, ChatMessages.Level.INFO, "pull.success", id, placementResult.blocksPlaced());
+                        ChatMessages.send(player, ChatMessages.Level.INFO, "pull.success", id,
+                            placementResult.blocksPlaced(), placementResult.entitiesSpawned());
 
                         // Update construction list
                         sendConstructionList(player);
 
-                        Architect.LOGGER.info("Pull successful for {}: {} blocks placed",
-                            id, placementResult.blocksPlaced());
+                        Architect.LOGGER.info("Pull successful for {}: {} blocks placed, {} entities spawned",
+                            id, placementResult.blocksPlaced(), placementResult.entitiesSpawned());
                     } else {
                         sendGuiError(player, "pull.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Pull failed for {}: {} - {}",
@@ -1119,254 +1149,6 @@ public class NetworkHandler {
             PULLING_CONSTRUCTIONS.remove(id);
             sendGuiError(player, "push.request_in_progress");
         }
-    }
-
-    /**
-     * Piazza una costruzione di fronte al giocatore e aggiorna le coordinate interne.
-     * Usato da PULL per aggiornare la costruzione dopo il download.
-     */
-    private static int spawnConstructionInFrontOfPlayer(ServerPlayer player, Construction construction) {
-        return spawnConstructionInFrontOfPlayer(player, construction, true);
-    }
-
-    /**
-     * Piazza una costruzione di fronte al giocatore.
-     *
-     * @param player Il giocatore
-     * @param construction La costruzione da piazzare
-     * @param updateConstruction Se true, aggiorna la costruzione con le nuove coordinate (usato per PULL).
-     *                           Se false, piazza solo i blocchi senza modificare la costruzione (usato per SPAWN).
-     * @return Il numero di blocchi piazzati
-     */
-    public static int spawnConstructionInFrontOfPlayer(ServerPlayer player, Construction construction, boolean updateConstruction) {
-        if (construction.getBlockCount() == 0) {
-            return 0;
-        }
-
-        ServerLevel level = (ServerLevel) player.level();
-        var bounds = construction.getBounds();
-        int sizeX = bounds.getSizeX();
-        int sizeZ = bounds.getSizeZ();
-
-        // Salva i bounds originali PRIMA di modificare la costruzione
-        int originalMinX = bounds.getMinX();
-        int originalMinY = bounds.getMinY();
-        int originalMinZ = bounds.getMinZ();
-
-        // Calcola la posizione di spawn di fronte al giocatore
-        float yaw = player.getYRot();
-        double radians = Math.toRadians(yaw);
-        double dirX = -Math.sin(radians);
-        double dirZ = Math.cos(radians);
-
-        // Calcola la distanza minima per garantire che il player sia fuori dai bounds di 2 blocchi
-        // La costruzione viene centrata sulla direzione del player, quindi dobbiamo considerare
-        // metà della dimensione nella direzione di sguardo + metà della dimensione perpendicolare
-        // per coprire il caso peggiore (angoli)
-        int halfSizeX = (sizeX + 1) / 2;
-        int halfSizeZ = (sizeZ + 1) / 2;
-
-        // Distanza dal centro della costruzione al bordo più vicino nella direzione del player
-        // Usiamo il massimo delle due metà per sicurezza
-        int halfSize = Math.max(halfSizeX, halfSizeZ);
-
-        // Distanza totale: metà dimensione + 2 blocchi di margine
-        int distance = halfSize + 2;
-
-        int offsetX = (int) Math.round(player.getX() + dirX * distance) - originalMinX;
-        int offsetY = (int) player.getY() - originalMinY;
-        int offsetZ = (int) Math.round(player.getZ() + dirZ * distance) - originalMinZ;
-
-        // Piazza i blocchi
-        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
-        // UPDATE_SKIP_ON_PLACE previene che onPlace() venga chiamato, evitando che le rotaie
-        // si auto-connettano ai vicini durante il piazzamento
-        // UPDATE_SUPPRESS_DROPS previene che i blocchi sostituiti droppino item
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE | Block.UPDATE_SUPPRESS_DROPS;
-
-        java.util.Map<BlockPos, BlockState> newBlocks = new java.util.HashMap<>();
-        int placedCount = 0;
-        int blockEntityCount = 0;
-
-        // Ordina i blocchi per Y crescente per piazzare prima i blocchi di supporto
-        // (es. trapdoor prima dei carpet che ci stanno sopra)
-        java.util.List<java.util.Map.Entry<BlockPos, BlockState>> sortedBlocks =
-            new java.util.ArrayList<>(construction.getBlocks().entrySet());
-        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
-
-        for (java.util.Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
-            BlockPos originalPos = entry.getKey();
-            BlockState state = entry.getValue();
-            BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
-            newBlocks.put(newPos, state);
-            if (!state.isAir()) {
-                level.setBlock(newPos, state, placementFlags);
-                placedCount++;
-
-                // Applica l'NBT del block entity se presente (casse, furnace, etc.)
-                CompoundTag blockNbt = construction.getBlockEntityNbt(originalPos);
-                if (blockNbt != null) {
-                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(newPos);
-                    if (blockEntity != null) {
-                        // Crea una copia dell'NBT e aggiorna le coordinate
-                        CompoundTag nbtCopy = blockNbt.copy();
-                        nbtCopy.putInt("x", newPos.getX());
-                        nbtCopy.putInt("y", newPos.getY());
-                        nbtCopy.putInt("z", newPos.getZ());
-                        // MC 1.21.11: usa TagValueInput per creare un ValueInput dal CompoundTag
-                        net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
-                            net.minecraft.util.ProblemReporter.DISCARDING,
-                            level.registryAccess(),
-                            nbtCopy
-                        );
-                        blockEntity.loadCustomOnly(input);
-                        blockEntity.setChanged();
-                        blockEntityCount++;
-                    }
-                }
-            }
-        }
-
-        if (blockEntityCount > 0) {
-            Architect.LOGGER.info("Applied NBT to {} block entities", blockEntityCount);
-        }
-
-        // Aggiorna la costruzione con le nuove coordinate assolute (solo se richiesto)
-        if (updateConstruction) {
-            // Crea una nuova mappa per l'NBT con le coordinate aggiornate
-            java.util.Map<BlockPos, CompoundTag> newBlockEntityNbt = new java.util.HashMap<>();
-            for (java.util.Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
-                BlockPos originalPos = entry.getKey();
-                CompoundTag nbt = construction.getBlockEntityNbt(originalPos);
-                if (nbt != null) {
-                    BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
-                    // Aggiorna le coordinate nell'NBT
-                    CompoundTag nbtCopy = nbt.copy();
-                    nbtCopy.putInt("x", newPos.getX());
-                    nbtCopy.putInt("y", newPos.getY());
-                    nbtCopy.putInt("z", newPos.getZ());
-                    newBlockEntityNbt.put(newPos, nbtCopy);
-                }
-            }
-
-            // Aggiorna i blocchi
-            construction.getBlocks().clear();
-            construction.getBounds().reset();
-            for (java.util.Map.Entry<BlockPos, BlockState> entry : newBlocks.entrySet()) {
-                construction.addBlock(entry.getKey(), entry.getValue());
-            }
-
-            // Aggiorna l'NBT dei block entity
-            construction.getBlockEntityNbtMap().clear();
-            construction.getBlockEntityNbtMap().putAll(newBlockEntityNbt);
-
-            // Aggiorna anche le coordinate delle room (traslate insieme alla costruzione)
-            for (Room room : construction.getRooms().values()) {
-                java.util.Map<BlockPos, BlockState> newRoomBlocks = new java.util.HashMap<>();
-                java.util.Map<BlockPos, CompoundTag> newRoomNbt = new java.util.HashMap<>();
-
-                for (java.util.Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
-                    BlockPos originalPos = entry.getKey();
-                    BlockPos newPos = originalPos.offset(offsetX, offsetY, offsetZ);
-                    newRoomBlocks.put(newPos, entry.getValue());
-
-                    CompoundTag nbt = room.getBlockEntityNbt(originalPos);
-                    if (nbt != null) {
-                        CompoundTag nbtCopy = nbt.copy();
-                        nbtCopy.putInt("x", newPos.getX());
-                        nbtCopy.putInt("y", newPos.getY());
-                        nbtCopy.putInt("z", newPos.getZ());
-                        newRoomNbt.put(newPos, nbtCopy);
-                    }
-                }
-
-                // Sostituisci i blocchi della room con quelli traslati
-                room.getBlockChanges().clear();
-                room.getBlockChanges().putAll(newRoomBlocks);
-                room.getBlockEntityNbtMap().clear();
-                room.getBlockEntityNbtMap().putAll(newRoomNbt);
-            }
-        }
-
-        // Spawna le entità con l'offset appropriato
-        // Le coordinate delle entità sono relative ai bounds minimi originali,
-        // quindi usiamo l'offset + bounds originali = posizione assoluta nel mondo
-        int originX = offsetX + originalMinX;
-        int originY = offsetY + originalMinY;
-        int originZ = offsetZ + originalMinZ;
-        spawnConstructionEntities(construction, level, originX, originY, originZ);
-
-        return placedCount;
-    }
-
-    /**
-     * Mostra una costruzione nella sua posizione originale (usato per SHOW dopo HIDE).
-     * Piazza i blocchi nelle coordinate memorizzate, applica NBT dei block entity e spawna le entità.
-     *
-     * @param level Il ServerLevel
-     * @param construction La costruzione da mostrare
-     * @return Il numero di blocchi piazzati
-     */
-    public static int showConstructionInPlace(ServerLevel level, Construction construction) {
-        if (construction == null || construction.getBlockCount() == 0) {
-            return 0;
-        }
-
-        var bounds = construction.getBounds();
-        if (!bounds.isValid()) {
-            return 0;
-        }
-
-        // Piazza i blocchi nelle loro posizioni originali
-        // Usa UPDATE_CLIENTS | UPDATE_SKIP_ON_PLACE per preservare l'orientamento delle rotaie
-        // UPDATE_SUPPRESS_DROPS previene che i blocchi sostituiti droppino item
-        int placementFlags = Block.UPDATE_CLIENTS | Block.UPDATE_SKIP_ON_PLACE | Block.UPDATE_SUPPRESS_DROPS;
-        int placedCount = 0;
-        int blockEntityCount = 0;
-
-        // Ordina i blocchi per Y crescente per piazzare prima i blocchi di supporto
-        java.util.List<java.util.Map.Entry<BlockPos, BlockState>> sortedBlocks =
-            new java.util.ArrayList<>(construction.getBlocks().entrySet());
-        sortedBlocks.sort((a, b) -> Integer.compare(a.getKey().getY(), b.getKey().getY()));
-
-        for (java.util.Map.Entry<BlockPos, BlockState> entry : sortedBlocks) {
-            BlockPos pos = entry.getKey();
-            BlockState state = entry.getValue();
-            if (!state.isAir()) {
-                level.setBlock(pos, state, placementFlags);
-                placedCount++;
-
-                // Applica l'NBT del block entity se presente (casse, furnace, etc.)
-                CompoundTag blockNbt = construction.getBlockEntityNbt(pos);
-                if (blockNbt != null) {
-                    net.minecraft.world.level.block.entity.BlockEntity blockEntity = level.getBlockEntity(pos);
-                    if (blockEntity != null) {
-                        // L'NBT è già nelle coordinate corrette
-                        net.minecraft.world.level.storage.ValueInput input = net.minecraft.world.level.storage.TagValueInput.create(
-                            net.minecraft.util.ProblemReporter.DISCARDING,
-                            level.registryAccess(),
-                            blockNbt
-                        );
-                        blockEntity.loadCustomOnly(input);
-                        blockEntity.setChanged();
-                        blockEntityCount++;
-                    }
-                }
-            }
-        }
-
-        if (blockEntityCount > 0) {
-            Architect.LOGGER.info("ShowInPlace: Applied NBT to {} block entities", blockEntityCount);
-        }
-
-        // Spawna le entità nelle loro posizioni originali
-        // Le coordinate delle entità sono relative ai bounds minimi
-        int entityCount = spawnConstructionEntities(construction, level,
-            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ());
-
-        Architect.LOGGER.info("ShowInPlace: placed {} blocks, {} entities", placedCount, entityCount);
-
-        return placedCount;
     }
 
     // ===== GUI Spawn/Move handlers =====
@@ -1389,9 +1171,13 @@ public class NetworkHandler {
             return;
         }
 
+        // Create snapshot from world for architect spawn
+        ServerLevel spawnLevel = (ServerLevel) player.level();
+        ConstructionSnapshot spawnSnapshot = ConstructionSnapshot.fromWorld(construction, spawnLevel);
+
         // Use ArchitectSpawn mode for GUI (allows testing room variations)
         var result = ConstructionOperations.architectSpawn(
-            player, construction, player.getYRot()
+            player, construction, spawnSnapshot, player.getYRot()
         );
 
         Architect.LOGGER.info("Player {} architect-spawned {} via GUI ({} blocks, {} rooms)",
@@ -1452,15 +1238,18 @@ public class NetworkHandler {
         int removedCount = 0;
         java.util.List<BlockPos> toRemove = new java.util.ArrayList<>();
 
+        ServerLevel world = (ServerLevel) player.level();
+
         if (inRoom && room != null) {
-            // Remove from room's block changes
-            for (java.util.Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
+            // Remove from room's block changes (query world for block type)
+            for (BlockPos pos : room.getChangedBlocks()) {
+                BlockState state = world.getBlockState(pos);
                 String entryBlockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
-                    .getKey(entry.getValue().getBlock())
+                    .getKey(state.getBlock())
                     .toString();
 
                 if (entryBlockId.equals(blockId)) {
-                    toRemove.add(entry.getKey());
+                    toRemove.add(pos);
                 }
             }
 
@@ -1470,23 +1259,30 @@ public class NetworkHandler {
                 removedCount++;
             }
 
-            // Restore base blocks in world using centralized method
-            ServerLevel world = (ServerLevel) player.level();
-            ConstructionOperations.restoreBaseBlocksAt(world, toRemove, construction);
+            // Restore base blocks in world - read current world state at those positions
+            // (base blocks are tracked in construction, so we can read them from world)
+            // Note: room blocks are placed OVER base blocks, so we need to restore base state
+            // For now, just set to air - the proper restore happens via EditingSession
+            for (BlockPos pos : toRemove) {
+                if (construction.containsBlock(pos)) {
+                    // Base block exists but we can't read it since room block is there
+                    // The block will be properly restored when exiting the room
+                } else {
+                    world.setBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+                }
+            }
         } else {
-            // Remove from construction base
-            for (java.util.Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+            // Remove from construction base (query world for block type)
+            for (BlockPos pos : construction.getTrackedBlocks()) {
+                BlockState state = world.getBlockState(pos);
                 String entryBlockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
-                    .getKey(entry.getValue().getBlock())
+                    .getKey(state.getBlock())
                     .toString();
 
                 if (entryBlockId.equals(blockId)) {
-                    toRemove.add(entry.getKey());
+                    toRemove.add(pos);
                 }
             }
-
-            // Remove from construction data and place air in world
-            ServerLevel world = (ServerLevel) player.level();
             for (BlockPos pos : toRemove) {
                 // Clear container contents first
                 net.minecraft.world.level.block.entity.BlockEntity be = world.getBlockEntity(pos);
@@ -1540,6 +1336,8 @@ public class NetworkHandler {
     /**
      * Handles remove_entity action via GUI.
      * Removes ALL entities of a specific type from the construction or room.
+     * Uses UUID-based tracking: finds matching entities in the world, removes their UUIDs
+     * from tracking, and discards them.
      */
     private static void handleGuiRemoveEntity(ServerPlayer player, String entityType) {
         if (!EditingSession.hasSession(player)) {
@@ -1551,71 +1349,38 @@ public class NetworkHandler {
         Construction construction = session.getConstruction();
         boolean inRoom = session.isInRoom();
         it.magius.struttura.architect.model.Room room = inRoom ? session.getCurrentRoomObject() : null;
-
-        // Get the entity list
-        java.util.List<it.magius.struttura.architect.model.EntityData> entityList;
-        if (inRoom && room != null) {
-            entityList = room.getEntities();
-        } else {
-            entityList = construction.getEntities();
-        }
-
-        // Find indices of all entities matching this type (iterate in reverse to safely remove)
-        java.util.List<Integer> indicesToRemove = new java.util.ArrayList<>();
-        for (int i = 0; i < entityList.size(); i++) {
-            if (entityList.get(i).getEntityType().equals(entityType)) {
-                indicesToRemove.add(i);
-            }
-        }
-
-        // Remove all matching entities from construction/room (in reverse order to maintain correct indices)
-        int removedCount = 0;
-        for (int i = indicesToRemove.size() - 1; i >= 0; i--) {
-            int indexToRemove = indicesToRemove.get(i);
-            boolean removed;
-            if (inRoom && room != null) {
-                removed = room.removeEntity(indexToRemove);
-            } else {
-                removed = construction.removeEntity(indexToRemove);
-            }
-            if (removed) {
-                removedCount++;
-            }
-        }
-
-        // Clear all tracking since we're removing entities (simpler than tracking each index shift)
-        // The tracking will be rebuilt when entities are spawned again if needed
-
-        // Also discard all entities of this type in the world within construction bounds
         ServerLevel world = (ServerLevel) player.level();
-        var bounds = construction.getBounds();
-        if (bounds.isValid()) {
-            net.minecraft.world.phys.AABB aabb = new net.minecraft.world.phys.AABB(
-                bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
-                bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
-            );
 
-            // Find all entities of this type in the bounds
-            java.util.List<Entity> entitiesToDiscard = world.getEntitiesOfClass(
-                Entity.class,
-                aabb,
-                e -> {
-                    if (e instanceof net.minecraft.world.entity.player.Player) return false;
-                    String eType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
-                        .getKey(e.getType()).toString();
-                    return eType.equals(entityType);
-                }
-            );
+        // Get the tracked entity UUIDs
+        java.util.Set<java.util.UUID> trackedUuids;
+        if (inRoom && room != null) {
+            trackedUuids = new java.util.HashSet<>(room.getRoomEntities());
+        } else {
+            trackedUuids = new java.util.HashSet<>(construction.getTrackedEntities());
+        }
 
-            for (Entity entity : entitiesToDiscard) {
-                java.util.UUID uuid = entity.getUUID();
-                // Untrack the entity from session and construction
-                session.untrackEntity(uuid);
-                construction.untrackSpawnedEntity(uuid);
-                it.magius.struttura.architect.entity.EntityFreezeHandler.getInstance().unfreezeEntity(uuid);
-                it.magius.struttura.architect.entity.EntitySpawnHandler.getInstance().unignoreEntity(uuid);
-                entity.discard();
+        // Find all tracked entities of the matching type in the world and remove them
+        int removedCount = 0;
+        for (java.util.UUID uuid : trackedUuids) {
+            Entity entity = world.getEntity(uuid);
+            if (entity == null) continue;
+
+            String eType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
+                .getKey(entity.getType()).toString();
+            if (!eType.equals(entityType)) continue;
+
+            // Remove from tracking
+            if (inRoom && room != null) {
+                room.removeEntity(uuid);
+            } else {
+                construction.removeEntity(uuid, world);
             }
+
+            // Unfreeze and discard
+            it.magius.struttura.architect.entity.EntityFreezeHandler.getInstance().unfreezeEntity(uuid);
+            it.magius.struttura.architect.entity.EntitySpawnHandler.getInstance().unignoreEntity(uuid);
+            entity.discard();
+            removedCount++;
         }
 
         if (removedCount > 0) {
@@ -2027,8 +1792,23 @@ public class NetworkHandler {
 
         ServerLevel level = (ServerLevel) player.level();
 
-        // 1. Save old bounds BEFORE removing the construction
+        // 1. Save old bounds and create snapshot BEFORE removing the construction
         ConstructionBounds oldBounds = construction.getBounds().copy();
+        ConstructionSnapshot moveSnapshot = ConstructionSnapshot.fromWorld(construction, level);
+
+        // 1b. Load room data from disk instead of from world.
+        // fromWorld captures base blocks (not room deltas) at room positions, and returns
+        // empty room entities (they're not spawned in the world during normal operation).
+        // Disk data has the correct room delta block states and entity data.
+        if (!construction.getRooms().isEmpty()) {
+            var storage = ConstructionRegistry.getInstance().getStorage();
+            ConstructionSnapshot diskSnapshot = storage.loadNbtOnly(id, oldBounds);
+            if (diskSnapshot != null && !diskSnapshot.rooms().isEmpty()) {
+                moveSnapshot.rooms().clear();
+                moveSnapshot.rooms().putAll(diskSnapshot.rooms());
+                Architect.LOGGER.debug("Move: loaded room data from disk for {} rooms", diskSnapshot.rooms().size());
+            }
+        }
 
         // 2. Remove from old position first (use MOVE_CLEAR mode with old bounds)
         ConstructionOperations.removeConstruction(
@@ -2037,18 +1817,31 @@ public class NetworkHandler {
 
         // 3. Place at new position in front of player (updates construction coordinates)
         var placementResult = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.MOVE, true,
+            player, construction, moveSnapshot, ConstructionOperations.PlacementMode.MOVE, true,
             null, player.getYRot(), false
         );
 
-        // 4. Validate coherence after move
+        // 4. Update cached stats after placement (block/entity counts)
+        construction.updateCachedStats(level);
+
+        // 5. Validate coherence after move
         it.magius.struttura.architect.validation.CoherenceChecker.validateConstruction(
             level, construction, true);
 
-        // 5. Save the updated construction
+        // 5b. Save blocks/entities to disk with updated room data.
+        // Create worldSnapshot from world (base blocks/entities at new positions),
+        // then merge transformed room snapshots from Phase 4b (correctly rotated positions,
+        // block states, and entity data).
+        ConstructionSnapshot worldSnapshot = ConstructionSnapshot.fromWorld(construction, level);
+        if (!placementResult.transformedRoomSnapshots().isEmpty()) {
+            worldSnapshot.rooms().putAll(placementResult.transformedRoomSnapshots());
+        }
+        ConstructionRegistry.getInstance().getStorage().save(construction, worldSnapshot);
+
+        // 6. Save the updated construction
         ConstructionRegistry.getInstance().register(construction);
 
-        // 6. Update visibility state
+        // 7. Update visibility state
         VISIBLE_CONSTRUCTIONS.add(id);
 
         Architect.LOGGER.info("Player {} moved construction {} via GUI to new position ({} blocks, {} entities)",
@@ -2141,11 +1934,13 @@ public class NetworkHandler {
                 currentRoomName = room.getName();
                 roomBlockChanges = room.getChangedBlockCount();
 
-                // Calculate room-specific stats
+                // Calculate room-specific stats by querying the world
+                ServerLevel roomLevel = (ServerLevel) player.level();
                 int roomSolidBlocks = 0;
                 int roomAirBlocks = 0;
-                for (var entry : room.getBlockChanges().entrySet()) {
-                    if (entry.getValue().isAir()) {
+                for (BlockPos pos : room.getChangedBlocks()) {
+                    BlockState state = roomLevel.getBlockState(pos);
+                    if (state.isAir()) {
                         roomAirBlocks++;
                     } else {
                         roomSolidBlocks++;
@@ -2157,11 +1952,16 @@ public class NetworkHandler {
                 statsSolidBlockCount = roomSolidBlocks;
                 statsAirCount = roomAirBlocks;
                 statsEntityCount = room.getEntityCount();
-                // Count mobs in room entities
+                // Count mobs in room entities by looking up UUIDs in the world
                 statsMobCount = 0;
-                for (var entityData : room.getEntities()) {
-                    if (entityData != null && Construction.isMobEntity(entityData.getEntityType())) {
-                        statsMobCount++;
+                for (java.util.UUID entityUuid : room.getRoomEntities()) {
+                    Entity entity = roomLevel.getEntity(entityUuid);
+                    if (entity != null) {
+                        String eType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
+                            .getKey(entity.getType()).toString();
+                        if (Construction.isMobEntity(eType)) {
+                            statsMobCount++;
+                        }
                     }
                 }
                 // Calculate room bounds from its block changes and entities
@@ -2273,16 +2073,18 @@ public class NetworkHandler {
 
         // --- Build block list ---
         // Use room blocks if editing a room, otherwise use construction blocks
+        ServerLevel blockListLevel = (ServerLevel) player.level();
         java.util.Map<String, Integer> blockCounts;
         if (inRoom && room != null) {
-            // Count blocks in the room's changes
+            // Count blocks in the room's changes by querying the world
             blockCounts = new java.util.HashMap<>();
-            for (BlockState state : room.getBlockChanges().values()) {
+            for (BlockPos pos : room.getChangedBlocks()) {
+                BlockState state = blockListLevel.getBlockState(pos);
                 String blockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
                 blockCounts.merge(blockId, 1, Integer::sum);
             }
         } else {
-            blockCounts = construction.getBlockCounts();
+            blockCounts = construction.getBlockCounts(blockListLevel);
         }
 
         List<BlockListPacket.BlockInfo> blocks = new ArrayList<>();
@@ -2307,19 +2109,23 @@ public class NetworkHandler {
         blocks.sort((a, b) -> Integer.compare(b.count(), a.count()));
 
         // --- Build entity list (grouped by type) ---
-        java.util.List<it.magius.struttura.architect.model.EntityData> entityList;
-
+        // Get tracked entity UUIDs and look them up in the world to get their types
+        java.util.Set<java.util.UUID> entityUuids;
         if (inRoom && room != null) {
-            entityList = room.getEntities();
+            entityUuids = room.getRoomEntities();
         } else {
-            entityList = construction.getEntities();
+            entityUuids = construction.getTrackedEntities();
         }
 
-        // Count entities by type
+        // Count entities by type by looking up UUIDs in the world
         java.util.Map<String, Integer> entityCounts = new java.util.HashMap<>();
-        for (it.magius.struttura.architect.model.EntityData data : entityList) {
-            String entityType = data.getEntityType();
-            entityCounts.merge(entityType, 1, Integer::sum);
+        for (java.util.UUID uuid : entityUuids) {
+            Entity entity = blockListLevel.getEntity(uuid);
+            if (entity != null) {
+                String entityType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
+                    .getKey(entity.getType()).toString();
+                entityCounts.merge(entityType, 1, Integer::sum);
+            }
         }
 
         // Build entity info list
@@ -2460,132 +2266,6 @@ public class NetworkHandler {
     private static void handleGuiPullConfirm(ServerPlayer player, String id) {
         // Il flusso è identico a handleGuiPull, ma viene chiamato solo dopo conferma
         handleGuiPull(player, id);
-    }
-
-    // ===== Entity spawning =====
-
-    /**
-     * Spawns entities of a construction into the world.
-     *
-     * @param construction the construction
-     * @param level the ServerLevel to spawn into
-     * @param originX X offset for coordinates (0 for original placement)
-     * @param originY Y offset for coordinates (0 for original placement)
-     * @param originZ Z offset for coordinates (0 for original placement)
-     * @return the number of spawned entities
-     */
-    public static int spawnConstructionEntities(Construction construction, ServerLevel level,
-                                                 int originX, int originY, int originZ) {
-        if (construction.getEntities().isEmpty()) {
-            return 0;
-        }
-
-        int spawnedCount = 0;
-
-        for (EntityData data : construction.getEntities()) {
-
-            try {
-                // Calcola la posizione nel mondo
-                double worldX = originX + data.getRelativePos().x;
-                double worldY = originY + data.getRelativePos().y;
-                double worldZ = originZ + data.getRelativePos().z;
-
-                // Copia l'NBT e rimuovi/aggiorna i tag di posizione
-                CompoundTag nbt = data.getNbt().copy();
-                nbt.remove("Pos");      // Rimuovi posizione originale
-                nbt.remove("Motion");   // Rimuovi movimento
-                nbt.remove("UUID");     // UUID sarà generato nuovo
-
-                // Per item frame: rimuovi le mappe dall'NBT (le mappe non possono essere trasferite)
-                // L'item frame verrà spawnato vuoto invece che saltato
-                String entityType = data.getEntityType();
-                if (entityType.equals("minecraft:item_frame") || entityType.equals("minecraft:glow_item_frame")) {
-                    EntityData.removeMapFromItemFrameNbt(nbt);
-                }
-
-                // IMPORTANTE: Assicuriamoci che l'NBT contenga il tag "id" per EntityType.loadEntityRecursive
-                if (!nbt.contains("id")) {
-                    nbt.putString("id", data.getEntityType());
-                }
-
-                // Per le entità "hanging" (item frame, painting, etc.) aggiorna block_pos o TileX/Y/Z
-                // MC 1.21.11 usa "block_pos" come IntArrayTag [x, y, z], non CompoundTag!
-                if (nbt.contains("block_pos")) {
-                    net.minecraft.nbt.Tag rawTag = nbt.get("block_pos");
-                    if (rawTag instanceof net.minecraft.nbt.IntArrayTag intArrayTag) {
-                        int[] coords = intArrayTag.getAsIntArray();
-                        if (coords.length >= 3) {
-                            int relX = coords[0];
-                            int relY = coords[1];
-                            int relZ = coords[2];
-
-                            int newX = originX + relX;
-                            int newY = originY + relY;
-                            int newZ = originZ + relZ;
-
-                            // Crea un nuovo IntArrayTag con le coordinate assolute
-                            nbt.putIntArray("block_pos", new int[] { newX, newY, newZ });
-                        }
-                    }
-                }
-                // Fallback per vecchi formati (TileX/Y/Z)
-                else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
-                    int relativeTileX = nbt.getIntOr("TileX", 0);
-                    int relativeTileY = nbt.getIntOr("TileY", 0);
-                    int relativeTileZ = nbt.getIntOr("TileZ", 0);
-
-                    int newTileX = originX + relativeTileX;
-                    int newTileY = originY + relativeTileY;
-                    int newTileZ = originZ + relativeTileZ;
-
-                    nbt.putInt("TileX", newTileX);
-                    nbt.putInt("TileY", newTileY);
-                    nbt.putInt("TileZ", newTileZ);
-                }
-
-                // Converti sleeping_pos per villager che dormono (da coordinate relative ad assolute)
-                // MC 1.21.11 usa IntArrayTag per sleeping_pos, come block_pos
-                if (nbt.contains("sleeping_pos")) {
-                    net.minecraft.nbt.Tag sleepingTag = nbt.get("sleeping_pos");
-                    if (sleepingTag instanceof net.minecraft.nbt.IntArrayTag sleepingIntArray) {
-                        int[] coords = sleepingIntArray.getAsIntArray();
-                        if (coords.length >= 3) {
-                            int relX = coords[0];
-                            int relY = coords[1];
-                            int relZ = coords[2];
-
-                            int newX = originX + relX;
-                            int newY = originY + relY;
-                            int newZ = originZ + relZ;
-
-                            nbt.putIntArray("sleeping_pos", new int[] { newX, newY, newZ });
-                        }
-                    }
-                }
-
-                // Crea l'entità dall'NBT (MC 1.21+ richiede EntitySpawnReason)
-                Entity entity = EntityType.loadEntityRecursive(nbt, level, EntitySpawnReason.LOAD, e -> e);
-
-                if (entity != null) {
-                    // Imposta posizione e rotazione DOPO la creazione
-                    entity.setPos(worldX, worldY, worldZ);
-                    entity.setYRot(data.getYaw());
-                    entity.setXRot(data.getPitch());
-                    // Genera un nuovo UUID per evitare conflitti
-                    entity.setUUID(UUID.randomUUID());
-
-                    level.addFreshEntity(entity);
-                    spawnedCount++;
-                } else {
-                    Architect.LOGGER.warn("Failed to create entity of type {}", data.getEntityType());
-                }
-            } catch (Exception e) {
-                Architect.LOGGER.error("Failed to spawn entity of type {}: {}",
-                    data.getEntityType(), e.getMessage());
-            }
-        }
-
-        return spawnedCount;
     }
 
     // ===== Centralized teleport logic =====

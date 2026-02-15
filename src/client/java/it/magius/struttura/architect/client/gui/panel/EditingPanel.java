@@ -998,7 +998,10 @@ public class EditingPanel {
                 int roomIdx = selectedRoomIndex - 1;
                 if (roomIdx < roomListData.size()) {
                     PanelManager.RoomInfo ri = roomListData.get(roomIdx);
-                    selectedRoomText = truncate(ri.name() + " (" + ri.blockCount() + "b)", roomDropdownWidth - 15, font);
+                    String counts = ri.entityCount() > 0
+                        ? ri.blockCount() + "b/" + ri.entityCount() + "e"
+                        : ri.blockCount() + "b";
+                    selectedRoomText = truncate(ri.name() + " (" + counts + ")", roomDropdownWidth - 15, font);
                 } else {
                     selectedRoomText = "+++ new +++";
                     selectedRoomIndex = 0;
@@ -1218,7 +1221,10 @@ public class EditingPanel {
                 int roomIdx = idx - 1;
                 if (roomIdx < roomList.size()) {
                     PanelManager.RoomInfo ri = roomList.get(roomIdx);
-                    itemText = truncate(ri.name() + " (" + ri.blockCount() + "b)", cachedRoomDropdownWidth - 10, font);
+                    String counts = ri.entityCount() > 0
+                        ? ri.blockCount() + "b/" + ri.entityCount() + "e"
+                        : ri.blockCount() + "b";
+                    itemText = truncate(ri.name() + " (" + counts + ")", cachedRoomDropdownWidth - 10, font);
                     itemColor = 0xFFCCCCCC;
                 } else {
                     itemText = "???";

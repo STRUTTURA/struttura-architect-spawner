@@ -13,6 +13,8 @@ import it.magius.struttura.architect.ingame.model.SpawnRule;
 import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
 import it.magius.struttura.architect.ingame.model.SpawnableList;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ConstructionBounds;
+import it.magius.struttura.architect.model.ConstructionSnapshot;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
 import it.magius.struttura.architect.model.Room;
@@ -52,8 +54,11 @@ public class ApiClient {
 
     /**
      * Risultato di una richiesta pull con i dati della costruzione.
+     * The construction contains metadata only (id, titles, bounds, rooms, anchors).
+     * The snapshot contains the deserialized block/entity data for placement.
      */
-    public record PullResponse(int statusCode, String message, boolean success, Construction construction) {}
+    public record PullResponse(int statusCode, String message, boolean success,
+                                Construction construction, ConstructionSnapshot snapshot) {}
 
     /**
      * Verifica se una richiesta è attualmente in corso.
@@ -73,36 +78,39 @@ public class ApiClient {
     /**
      * Esegue il push di una costruzione al server in modo asincrono.
      *
-     * @param construction la costruzione da inviare
+     * @param construction la costruzione da inviare (metadata only)
+     * @param snapshot the snapshot with block/entity data (created on server thread)
      * @param onComplete callback chiamato al completamento (sul main thread)
      * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
      */
-    public static boolean pushConstruction(Construction construction, Consumer<ApiResponse> onComplete) {
-        return pushConstruction(construction, false, false, onComplete);
+    public static boolean pushConstruction(Construction construction, ConstructionSnapshot snapshot, Consumer<ApiResponse> onComplete) {
+        return pushConstruction(construction, snapshot, false, false, onComplete);
     }
 
     /**
      * Esegue il push di una costruzione al server in modo asincrono.
      *
-     * @param construction la costruzione da inviare
+     * @param construction la costruzione da inviare (metadata only)
+     * @param snapshot the snapshot with block/entity data (created on server thread)
      * @param purge se true, elimina tutti i dati esistenti della costruzione prima di aggiungere i nuovi
      * @param onComplete callback chiamato al completamento (sul main thread)
      * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
      */
-    public static boolean pushConstruction(Construction construction, boolean purge, Consumer<ApiResponse> onComplete) {
-        return pushConstruction(construction, purge, false, onComplete);
+    public static boolean pushConstruction(Construction construction, ConstructionSnapshot snapshot, boolean purge, Consumer<ApiResponse> onComplete) {
+        return pushConstruction(construction, snapshot, purge, false, onComplete);
     }
 
     /**
      * Esegue il push di una costruzione al server in modo asincrono.
      *
-     * @param construction la costruzione da inviare
+     * @param construction la costruzione da inviare (metadata only)
+     * @param snapshot the snapshot with block/entity data (created on server thread)
      * @param purge se true, elimina tutti i dati esistenti della costruzione prima di aggiungere i nuovi
      * @param jsonFormat se true, serializza blocchi/entita in formato JSON invece che NBT
      * @param onComplete callback chiamato al completamento (sul main thread)
      * @return true se la richiesta è stata avviata, false se c'è già una richiesta in corso
      */
-    public static boolean pushConstruction(Construction construction, boolean purge, boolean jsonFormat, Consumer<ApiResponse> onComplete) {
+    public static boolean pushConstruction(Construction construction, ConstructionSnapshot snapshot, boolean purge, boolean jsonFormat, Consumer<ApiResponse> onComplete) {
         if (isCloudDenied()) {
             onComplete.accept(new ApiResponse(403, "Cloud access denied: mod version too old", false, 0));
             return true;
@@ -113,7 +121,7 @@ public class ApiClient {
 
         CompletableFuture.supplyAsync(() -> {
             try {
-                return executePush(construction, purge, jsonFormat);
+                return executePush(construction, snapshot, purge, jsonFormat);
             } catch (Exception e) {
                 Architect.LOGGER.error("Push request failed", e);
                 return new ApiResponse(0, "Error: " + e.getMessage(), false, 0);
@@ -125,7 +133,7 @@ public class ApiClient {
         return true;
     }
 
-    private static ApiResponse executePush(Construction construction, boolean purge, boolean jsonFormat) throws Exception {
+    private static ApiResponse executePush(Construction construction, ConstructionSnapshot snapshot, boolean purge, boolean jsonFormat) throws Exception {
         ArchitectConfig config = ArchitectConfig.getInstance();
         String endpoint = config.getEndpoint();
         String url = endpoint + "/building/add/" + construction.getId();
@@ -136,7 +144,7 @@ public class ApiClient {
         Architect.LOGGER.info("Pushing construction {} to {}", construction.getId(), url);
 
         // Build JSON payload (blocks/entities as base64 NBT or JSON based on format flag)
-        JsonObject payload = buildPayload(construction, jsonFormat);
+        JsonObject payload = buildPayload(construction, snapshot, jsonFormat);
         byte[] jsonBytes = GSON.toJson(payload).getBytes(StandardCharsets.UTF_8);
 
         Architect.LOGGER.info("Payload size: {} bytes ({} KB)", jsonBytes.length, jsonBytes.length / 1024);
@@ -184,9 +192,11 @@ public class ApiClient {
 
     /**
      * Costruisce il payload JSON per il push.
+     * @param construction the construction metadata
+     * @param snapshot the snapshot with block/entity data
      * @param jsonFormat if true, blocks/entities are serialized as JSON with type hints instead of compressed NBT base64
      */
-    private static JsonObject buildPayload(Construction construction, boolean jsonFormat) throws IOException {
+    private static JsonObject buildPayload(Construction construction, ConstructionSnapshot snapshot, boolean jsonFormat) throws IOException {
         JsonObject json = new JsonObject();
 
         // Titoli multilingua: { "en": "Medieval Tower", "it": "Torre Medievale" }
@@ -227,18 +237,17 @@ public class ApiClient {
         json.addProperty("roomsCount", roomsCount);
 
         // Bounds (dimensions)
-        JsonObject bounds = new JsonObject();
+        JsonObject boundsJson = new JsonObject();
         var b = construction.getBounds();
         if (b.isValid()) {
             // bounds.x/y/z are the dimensions (width, height, depth)
-            bounds.addProperty("x", b.getSizeX());
-            bounds.addProperty("y", b.getSizeY());
-            bounds.addProperty("z", b.getSizeZ());
+            boundsJson.addProperty("x", b.getSizeX());
+            boundsJson.addProperty("y", b.getSizeY());
+            boundsJson.addProperty("z", b.getSizeZ());
         }
-        json.add("bounds", bounds);
+        json.add("bounds", boundsJson);
 
-        // Calcola e aggiungi i mod richiesti
-        construction.computeRequiredMods();
+        // Required mods (already computed on server thread before push)
         JsonObject modsObject = new JsonObject();
         for (ModInfo mod : construction.getRequiredMods().values()) {
             JsonObject modJson = new JsonObject();
@@ -285,34 +294,36 @@ public class ApiClient {
         json.addProperty("modVersion", Architect.MOD_VERSION);
 
         // Check if any entities exist (base + rooms)
-        boolean hasEntities = !construction.getEntities().isEmpty();
+        boolean hasEntities = !snapshot.entities().isEmpty();
         if (!hasEntities) {
-            for (Room room : construction.getRooms().values()) {
-                if (!room.getEntities().isEmpty()) {
+            for (var roomSnapshot : snapshot.rooms().values()) {
+                if (!roomSnapshot.entities().isEmpty()) {
                     hasEntities = true;
                     break;
                 }
             }
         }
 
+        ConstructionBounds bounds = construction.getBounds();
+
         if (jsonFormat) {
             // JSON format: blocks/entities as JSON objects (REST API expects objects, not strings)
             json.addProperty("contentType", "application/json");
 
-            JsonObject blocksJson = serializeBlocksToJson(construction);
+            JsonObject blocksJson = serializeBlocksToJson(snapshot, bounds);
             json.add("blocks", blocksJson);
 
             Architect.LOGGER.debug("Blocks JSON size: {} bytes", GSON.toJson(blocksJson).length());
 
             if (hasEntities) {
-                JsonObject entitiesJson = serializeEntitiesToJson(construction);
+                JsonObject entitiesJson = serializeEntitiesToJson(snapshot, bounds);
                 json.add("entities", entitiesJson);
 
                 Architect.LOGGER.debug("Entities JSON size: {} bytes", GSON.toJson(entitiesJson).length());
             }
         } else {
             // NBT format: blocks/entities as base64-encoded compressed NBT (default)
-            byte[] nbtBytes = serializeBlocksToNbt(construction);
+            byte[] nbtBytes = serializeBlocksToNbt(snapshot, bounds);
             String blocksBase64 = Base64.getEncoder().encodeToString(nbtBytes);
             json.addProperty("blocks", blocksBase64);
 
@@ -320,7 +331,7 @@ public class ApiClient {
                 nbtBytes.length, blocksBase64.length());
 
             if (hasEntities) {
-                byte[] entitiesNbtBytes = serializeEntitiesToNbt(construction);
+                byte[] entitiesNbtBytes = serializeEntitiesToNbt(snapshot, bounds);
                 String entitiesBase64 = Base64.getEncoder().encodeToString(entitiesNbtBytes);
                 json.addProperty("entities", entitiesBase64);
 
@@ -336,11 +347,10 @@ public class ApiClient {
      * Serializza i blocchi della costruzione in formato NBT compresso.
      * Le coordinate vengono normalizzate (relative a 0,0,0) sottraendo i bounds minimi.
      */
-    private static byte[] serializeBlocksToNbt(Construction construction) throws IOException {
+    private static byte[] serializeBlocksToNbt(ConstructionSnapshot snapshot, ConstructionBounds bounds) throws IOException {
         CompoundTag root = new CompoundTag();
 
         // Ottieni i bounds per normalizzare le coordinate
-        var bounds = construction.getBounds();
         int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
         int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
         int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
@@ -354,7 +364,7 @@ public class ApiClient {
         // Blocchi
         ListTag blocksList = new ListTag();
 
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+        for (Map.Entry<BlockPos, BlockState> entry : snapshot.blocks().entrySet()) {
             BlockPos pos = entry.getKey();
             BlockState state = entry.getValue();
 
@@ -377,7 +387,7 @@ public class ApiClient {
             blockTag.putInt("p", paletteIndex);
 
             // Se il blocco ha un NBT associato (block entity), includilo
-            CompoundTag blockEntityNbt = construction.getBlockEntityNbt(pos);
+            CompoundTag blockEntityNbt = snapshot.blockEntityNbt().get(pos);
             if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
                 blockTag.put("nbt", blockEntityNbt);
             }
@@ -391,12 +401,13 @@ public class ApiClient {
 
         // Salva i delta delle stanze
         CompoundTag roomsTag = new CompoundTag();
-        for (Room room : construction.getRooms().values()) {
-            if (room.getChangedBlockCount() > 0) {
+        for (Map.Entry<String, ConstructionSnapshot.RoomSnapshot> roomEntry : snapshot.rooms().entrySet()) {
+            ConstructionSnapshot.RoomSnapshot roomSnapshot = roomEntry.getValue();
+            if (!roomSnapshot.blocks().isEmpty()) {
                 CompoundTag roomTag = new CompoundTag();
                 ListTag roomBlocksList = new ListTag();
 
-                for (Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
+                for (Map.Entry<BlockPos, BlockState> entry : roomSnapshot.blocks().entrySet()) {
                     BlockPos pos = entry.getKey();
                     BlockState state = entry.getValue();
 
@@ -418,7 +429,7 @@ public class ApiClient {
                     blockTag.putInt("p", paletteIndex);
 
                     // NBT del block entity se presente
-                    CompoundTag blockEntityNbt = room.getBlockEntityNbt(pos);
+                    CompoundTag blockEntityNbt = roomSnapshot.blockEntityNbt().get(pos);
                     if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
                         blockTag.put("nbt", blockEntityNbt);
                     }
@@ -427,7 +438,7 @@ public class ApiClient {
                 }
 
                 roomTag.put("blocks", roomBlocksList);
-                roomsTag.put(room.getId(), roomTag);
+                roomsTag.put(roomEntry.getKey(), roomTag);
             }
         }
         if (!roomsTag.isEmpty()) {
@@ -445,18 +456,17 @@ public class ApiClient {
      * Le coordinate vengono normalizzate (relative a 0,0,0) sottraendo i bounds minimi.
      * Anche i tag TileX/Y/Z delle entità hanging vengono normalizzati.
      */
-    private static byte[] serializeEntitiesToNbt(Construction construction) throws IOException {
+    private static byte[] serializeEntitiesToNbt(ConstructionSnapshot snapshot, ConstructionBounds bounds) throws IOException {
         CompoundTag root = new CompoundTag();
         root.putInt("version", 1);
 
-        var bounds = construction.getBounds();
         int minX = bounds.isValid() ? bounds.getMinX() : 0;
         int minY = bounds.isValid() ? bounds.getMinY() : 0;
         int minZ = bounds.isValid() ? bounds.getMinZ() : 0;
 
         ListTag entitiesList = new ListTag();
 
-        for (EntityData data : construction.getEntities()) {
+        for (EntityData data : snapshot.entities()) {
             CompoundTag entityTag = new CompoundTag();
             entityTag.putString("type", data.getEntityType());
             entityTag.putDouble("x", data.getRelativePos().x);
@@ -465,35 +475,9 @@ public class ApiClient {
             entityTag.putFloat("yaw", data.getYaw());
             entityTag.putFloat("pitch", data.getPitch());
 
-            // Copia l'NBT e normalizza coordinate per entità hanging
-            // Le coordinate sono già normalizzate in EntityData.fromEntity(), ma ri-normalizziamo
-            // per sicurezza nel caso vengano aggiunte entità in modo diverso
+            // Copy NBT and normalize coordinates for hanging entities
             CompoundTag nbt = data.getNbt().copy();
-
-            // MC 1.21+ usa "block_pos" (CompoundTag con X, Y, Z)
-            if (nbt.contains("block_pos")) {
-                nbt.getCompound("block_pos").ifPresent(blockPos -> {
-                    int x = blockPos.getIntOr("X", 0);
-                    int y = blockPos.getIntOr("Y", 0);
-                    int z = blockPos.getIntOr("Z", 0);
-
-                    // Normalizza sottraendo i bounds minimi
-                    blockPos.putInt("X", x - minX);
-                    blockPos.putInt("Y", y - minY);
-                    blockPos.putInt("Z", z - minZ);
-                });
-            }
-            // Fallback per vecchi formati (TileX/Y/Z)
-            else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
-                int tileX = nbt.getIntOr("TileX", 0);
-                int tileY = nbt.getIntOr("TileY", 0);
-                int tileZ = nbt.getIntOr("TileZ", 0);
-
-                // Normalizza sottraendo i bounds minimi
-                nbt.putInt("TileX", tileX - minX);
-                nbt.putInt("TileY", tileY - minY);
-                nbt.putInt("TileZ", tileZ - minZ);
-            }
+            normalizeEntityNbtCoordinates(nbt, minX, minY, minZ);
             entityTag.put("nbt", nbt);
 
             entitiesList.add(entityTag);
@@ -501,14 +485,15 @@ public class ApiClient {
 
         root.put("entities", entitiesList);
 
-        // Entità delle stanze
+        // Room entities
         CompoundTag roomsTag = new CompoundTag();
-        for (Room room : construction.getRooms().values()) {
-            if (!room.getEntities().isEmpty()) {
+        for (Map.Entry<String, ConstructionSnapshot.RoomSnapshot> roomEntry : snapshot.rooms().entrySet()) {
+            ConstructionSnapshot.RoomSnapshot roomSnapshot = roomEntry.getValue();
+            if (!roomSnapshot.entities().isEmpty()) {
                 CompoundTag roomTag = new CompoundTag();
                 ListTag roomEntitiesList = new ListTag();
 
-                for (EntityData data : room.getEntities()) {
+                for (EntityData data : roomSnapshot.entities()) {
                     CompoundTag entityTag = new CompoundTag();
                     entityTag.putString("type", data.getEntityType());
                     entityTag.putDouble("x", data.getRelativePos().x);
@@ -517,40 +502,16 @@ public class ApiClient {
                     entityTag.putFloat("yaw", data.getYaw());
                     entityTag.putFloat("pitch", data.getPitch());
 
-                    // Copia l'NBT e normalizza coordinate per entità hanging
+                    // Copy NBT and normalize coordinates for hanging entities
                     CompoundTag nbt = data.getNbt().copy();
-
-                    // MC 1.21+ usa "block_pos" (CompoundTag con X, Y, Z)
-                    if (nbt.contains("block_pos")) {
-                        nbt.getCompound("block_pos").ifPresent(blockPos -> {
-                            int x = blockPos.getIntOr("X", 0);
-                            int y = blockPos.getIntOr("Y", 0);
-                            int z = blockPos.getIntOr("Z", 0);
-
-                            // Normalizza sottraendo i bounds minimi
-                            blockPos.putInt("X", x - minX);
-                            blockPos.putInt("Y", y - minY);
-                            blockPos.putInt("Z", z - minZ);
-                        });
-                    }
-                    // Fallback per vecchi formati (TileX/Y/Z)
-                    else if (nbt.contains("TileX") && nbt.contains("TileY") && nbt.contains("TileZ")) {
-                        int tileX = nbt.getIntOr("TileX", 0);
-                        int tileY = nbt.getIntOr("TileY", 0);
-                        int tileZ = nbt.getIntOr("TileZ", 0);
-
-                        // Normalizza sottraendo i bounds minimi
-                        nbt.putInt("TileX", tileX - minX);
-                        nbt.putInt("TileY", tileY - minY);
-                        nbt.putInt("TileZ", tileZ - minZ);
-                    }
+                    normalizeEntityNbtCoordinates(nbt, minX, minY, minZ);
                     entityTag.put("nbt", nbt);
 
                     roomEntitiesList.add(entityTag);
                 }
 
                 roomTag.put("entities", roomEntitiesList);
-                roomsTag.put(room.getId(), roomTag);
+                roomsTag.put(roomEntry.getKey(), roomTag);
             }
         }
         if (!roomsTag.isEmpty()) {
@@ -569,11 +530,10 @@ public class ApiClient {
      * Top-level fields (x, y, z, p) are plain JSON numbers.
      * Block entity NBT uses NbtJsonConverter type-hint suffixes.
      */
-    private static JsonObject serializeBlocksToJson(Construction construction) {
+    private static JsonObject serializeBlocksToJson(ConstructionSnapshot snapshot, ConstructionBounds bounds) {
         JsonObject root = new JsonObject();
         root.addProperty("version", 1);
 
-        var bounds = construction.getBounds();
         int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
         int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
         int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
@@ -585,7 +545,7 @@ public class ApiClient {
         // Blocks
         com.google.gson.JsonArray blocksArray = new com.google.gson.JsonArray();
 
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+        for (Map.Entry<BlockPos, BlockState> entry : snapshot.blocks().entrySet()) {
             BlockPos pos = entry.getKey();
             BlockState state = entry.getValue();
 
@@ -604,7 +564,7 @@ public class ApiClient {
             blockObj.addProperty("z", pos.getZ() - offsetZ);
             blockObj.addProperty("p", paletteIndex);
 
-            CompoundTag blockEntityNbt = construction.getBlockEntityNbt(pos);
+            CompoundTag blockEntityNbt = snapshot.blockEntityNbt().get(pos);
             if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
                 blockObj.add("nbt", NbtJsonConverter.compoundTagToJson(blockEntityNbt));
             }
@@ -617,12 +577,13 @@ public class ApiClient {
 
         // Room deltas
         JsonObject roomsObj = new JsonObject();
-        for (Room room : construction.getRooms().values()) {
-            if (room.getChangedBlockCount() > 0) {
+        for (Map.Entry<String, ConstructionSnapshot.RoomSnapshot> roomEntry : snapshot.rooms().entrySet()) {
+            ConstructionSnapshot.RoomSnapshot roomSnapshot = roomEntry.getValue();
+            if (!roomSnapshot.blocks().isEmpty()) {
                 JsonObject roomObj = new JsonObject();
                 com.google.gson.JsonArray roomBlocksArray = new com.google.gson.JsonArray();
 
-                for (Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
+                for (Map.Entry<BlockPos, BlockState> entry : roomSnapshot.blocks().entrySet()) {
                     BlockPos pos = entry.getKey();
                     BlockState state = entry.getValue();
 
@@ -641,7 +602,7 @@ public class ApiClient {
                     blockObj.addProperty("z", pos.getZ() - offsetZ);
                     blockObj.addProperty("p", paletteIndex);
 
-                    CompoundTag blockEntityNbt = room.getBlockEntityNbt(pos);
+                    CompoundTag blockEntityNbt = roomSnapshot.blockEntityNbt().get(pos);
                     if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
                         blockObj.add("nbt", NbtJsonConverter.compoundTagToJson(blockEntityNbt));
                     }
@@ -650,7 +611,7 @@ public class ApiClient {
                 }
 
                 roomObj.add("blocks", roomBlocksArray);
-                roomsObj.add(room.getId(), roomObj);
+                roomsObj.add(roomEntry.getKey(), roomObj);
             }
         }
         if (roomsObj.size() > 0) {
@@ -666,18 +627,17 @@ public class ApiClient {
      * Top-level fields (type, x, y, z, yaw, pitch) are plain JSON values.
      * Entity NBT uses NbtJsonConverter type-hint suffixes.
      */
-    private static JsonObject serializeEntitiesToJson(Construction construction) {
+    private static JsonObject serializeEntitiesToJson(ConstructionSnapshot snapshot, ConstructionBounds bounds) {
         JsonObject root = new JsonObject();
         root.addProperty("version", 1);
 
-        var bounds = construction.getBounds();
         int minX = bounds.isValid() ? bounds.getMinX() : 0;
         int minY = bounds.isValid() ? bounds.getMinY() : 0;
         int minZ = bounds.isValid() ? bounds.getMinZ() : 0;
 
         com.google.gson.JsonArray entitiesArray = new com.google.gson.JsonArray();
 
-        for (EntityData data : construction.getEntities()) {
+        for (EntityData data : snapshot.entities()) {
             JsonObject entityObj = new JsonObject();
             entityObj.addProperty("type", data.getEntityType());
             entityObj.addProperty("x", data.getRelativePos().x);
@@ -698,12 +658,13 @@ public class ApiClient {
 
         // Room entities
         JsonObject roomsObj = new JsonObject();
-        for (Room room : construction.getRooms().values()) {
-            if (!room.getEntities().isEmpty()) {
+        for (Map.Entry<String, ConstructionSnapshot.RoomSnapshot> roomEntry : snapshot.rooms().entrySet()) {
+            ConstructionSnapshot.RoomSnapshot roomSnapshot = roomEntry.getValue();
+            if (!roomSnapshot.entities().isEmpty()) {
                 JsonObject roomObj = new JsonObject();
                 com.google.gson.JsonArray roomEntitiesArray = new com.google.gson.JsonArray();
 
-                for (EntityData data : room.getEntities()) {
+                for (EntityData data : roomSnapshot.entities()) {
                     JsonObject entityObj = new JsonObject();
                     entityObj.addProperty("type", data.getEntityType());
                     entityObj.addProperty("x", data.getRelativePos().x);
@@ -720,7 +681,7 @@ public class ApiClient {
                 }
 
                 roomObj.add("entities", roomEntitiesArray);
-                roomsObj.add(room.getId(), roomObj);
+                roomsObj.add(roomEntry.getKey(), roomObj);
             }
         }
         if (roomsObj.size() > 0) {
@@ -996,7 +957,7 @@ public class ApiClient {
      */
     public static boolean pullConstruction(String constructionId, Consumer<PullResponse> onComplete) {
         if (isCloudDenied()) {
-            onComplete.accept(new PullResponse(403, "Cloud access denied: mod version too old", false, null));
+            onComplete.accept(new PullResponse(403, "Cloud access denied: mod version too old", false, null, null));
             return true;
         }
         if (!REQUEST_IN_PROGRESS.compareAndSet(false, true)) {
@@ -1008,7 +969,7 @@ public class ApiClient {
                 return executePull(constructionId);
             } catch (Exception e) {
                 Architect.LOGGER.error("Pull request failed", e);
-                return new PullResponse(0, "Error: " + e.getMessage(), false, null);
+                return new PullResponse(0, "Error: " + e.getMessage(), false, null, null);
             } finally {
                 REQUEST_IN_PROGRESS.set(false);
             }
@@ -1027,7 +988,7 @@ public class ApiClient {
      */
     public static void downloadConstruction(String constructionId, Consumer<PullResponse> onComplete) {
         if (isCloudDenied()) {
-            onComplete.accept(new PullResponse(403, "Cloud access denied: mod version too old", false, null));
+            onComplete.accept(new PullResponse(403, "Cloud access denied: mod version too old", false, null, null));
             return;
         }
         CompletableFuture.supplyAsync(() -> {
@@ -1035,7 +996,7 @@ public class ApiClient {
                 return executeInGameDownload(constructionId);
             } catch (Exception e) {
                 Architect.LOGGER.error("InGame download request failed for {}", constructionId, e);
-                return new PullResponse(0, "Error: " + e.getMessage(), false, null);
+                return new PullResponse(0, "Error: " + e.getMessage(), false, null, null);
             }
         }).thenAccept(onComplete);
     }
@@ -1072,7 +1033,7 @@ public class ApiClient {
             if (status < 200 || status >= 300) {
                 String errorBody = readResponse(conn);
                 String message = parseResponseMessage(errorBody, status);
-                return new PullResponse(status, message, false, null);
+                return new PullResponse(status, message, false, null, null);
             }
 
             // Parse JSON response with CDN URLs
@@ -1107,7 +1068,7 @@ public class ApiClient {
             if (blocksStatus < 200 || blocksStatus >= 300) {
                 String errorBody = readResponse(blocksConn);
                 String message = parseResponseMessage(errorBody, blocksStatus);
-                return new PullResponse(blocksStatus, message, false, null);
+                return new PullResponse(blocksStatus, message, false, null, null);
             }
 
             blocksData = readBinaryResponse(blocksConn);
@@ -1146,20 +1107,26 @@ public class ApiClient {
             }
         }
 
-        // Step 4: Parse the NBT data (reuse existing parsing logic)
-        Construction construction = parseConstructionFromNbt(constructionId, blocksData, entitiesData);
-        if (construction == null) {
-            return new PullResponse(200, "Failed to parse NBT data", false, null);
+        // Step 4: Parse the NBT data into a snapshot (reuse existing parsing logic)
+        ParsedConstructionData parsed = parseConstructionFromNbt(constructionId, blocksData, entitiesData);
+        if (parsed == null) {
+            return new PullResponse(200, "Failed to parse NBT data", false, null, null);
         }
 
-        return new PullResponse(200, "Success", true, construction);
+        return new PullResponse(200, "Success", true, parsed.construction(), parsed.snapshot());
     }
 
     /**
-     * Parses blocks from JSON format (with type-hinted NBT).
+     * Parses blocks from JSON format (with type-hinted NBT) into snapshot data structures.
      * Mirrors the NBT block deserialization but reads from JSON.
+     * Populates the provided maps/rooms with deserialized data.
      */
-    private static void deserializeBlocksFromJson(Construction construction, String jsonString) {
+    private static void deserializeBlocksFromJson(String jsonString,
+                                                   Map<BlockPos, BlockState> blocks,
+                                                   Map<BlockPos, CompoundTag> blockEntityNbt,
+                                                   Map<String, ConstructionSnapshot.RoomSnapshot> roomSnapshots,
+                                                   Construction construction,
+                                                   int offsetX, int offsetY, int offsetZ) {
         JsonObject root = GSON.fromJson(jsonString, JsonObject.class);
 
         // Parse palette
@@ -1175,19 +1142,18 @@ public class ApiClient {
         com.google.gson.JsonArray blocksArray = root.getAsJsonArray("blocks");
         for (int i = 0; i < blocksArray.size(); i++) {
             JsonObject blockObj = blocksArray.get(i).getAsJsonObject();
-            int x = blockObj.get("x").getAsInt();
-            int y = blockObj.get("y").getAsInt();
-            int z = blockObj.get("z").getAsInt();
+            int x = blockObj.get("x").getAsInt() + offsetX;
+            int y = blockObj.get("y").getAsInt() + offsetY;
+            int z = blockObj.get("z").getAsInt() + offsetZ;
             int paletteIndex = blockObj.get("p").getAsInt();
 
             BlockPos pos = new BlockPos(x, y, z);
             BlockState state = palette.get(paletteIndex);
+            blocks.put(pos, state);
 
             if (blockObj.has("nbt")) {
                 CompoundTag nbt = NbtJsonConverter.jsonToCompoundTag(blockObj.getAsJsonObject("nbt"));
-                construction.addBlockRaw(pos, state, nbt);
-            } else {
-                construction.addBlockRaw(pos, state);
+                blockEntityNbt.put(pos, nbt);
             }
         }
 
@@ -1195,42 +1161,57 @@ public class ApiClient {
         if (root.has("rooms")) {
             JsonObject roomsObj = root.getAsJsonObject("rooms");
             for (String roomId : roomsObj.keySet()) {
-                Room room = construction.getRoom(roomId);
-                if (room == null) {
-                    room = new Room(roomId, roomId, java.time.Instant.now());
+                // Ensure room exists in construction metadata
+                if (construction != null && construction.getRoom(roomId) == null) {
+                    Room room = new Room(roomId, roomId, java.time.Instant.now());
                     construction.addRoom(room);
                 }
 
                 JsonObject roomObj = roomsObj.getAsJsonObject(roomId);
                 if (roomObj == null || !roomObj.has("blocks")) continue;
 
+                Map<BlockPos, BlockState> roomBlocks = new HashMap<>();
+                Map<BlockPos, CompoundTag> roomBlockEntityNbt = new HashMap<>();
+
                 com.google.gson.JsonArray roomBlocksArray = roomObj.getAsJsonArray("blocks");
                 for (int i = 0; i < roomBlocksArray.size(); i++) {
                     JsonObject blockObj = roomBlocksArray.get(i).getAsJsonObject();
-                    int x = blockObj.get("x").getAsInt();
-                    int y = blockObj.get("y").getAsInt();
-                    int z = blockObj.get("z").getAsInt();
+                    int x = blockObj.get("x").getAsInt() + offsetX;
+                    int y = blockObj.get("y").getAsInt() + offsetY;
+                    int z = blockObj.get("z").getAsInt() + offsetZ;
                     int paletteIndex = blockObj.get("p").getAsInt();
 
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = palette.get(paletteIndex);
+                    roomBlocks.put(pos, state);
 
                     if (blockObj.has("nbt")) {
                         CompoundTag nbt = NbtJsonConverter.jsonToCompoundTag(blockObj.getAsJsonObject("nbt"));
-                        room.setBlockChange(pos, state, nbt);
-                    } else {
-                        room.setBlockChange(pos, state);
+                        roomBlockEntityNbt.put(pos, nbt);
                     }
+                }
+
+                // Merge with existing room snapshot or create new
+                ConstructionSnapshot.RoomSnapshot existing = roomSnapshots.get(roomId);
+                if (existing != null) {
+                    existing.blocks().putAll(roomBlocks);
+                    existing.blockEntityNbt().putAll(roomBlockEntityNbt);
+                } else {
+                    roomSnapshots.put(roomId, new ConstructionSnapshot.RoomSnapshot(
+                        roomBlocks, roomBlockEntityNbt, new ArrayList<>()));
                 }
             }
         }
     }
 
     /**
-     * Parses entities from JSON format (with type-hinted NBT).
+     * Parses entities from JSON format (with type-hinted NBT) into snapshot data structures.
      * Mirrors the NBT entity deserialization but reads from JSON.
      */
-    private static void deserializeEntitiesFromJson(Construction construction, String jsonString) {
+    private static void deserializeEntitiesFromJson(String jsonString,
+                                                     List<EntityData> entities,
+                                                     Map<String, ConstructionSnapshot.RoomSnapshot> roomSnapshots,
+                                                     Construction construction) {
         JsonObject root = GSON.fromJson(jsonString, JsonObject.class);
 
         // Base entities
@@ -1238,27 +1219,37 @@ public class ApiClient {
         for (int i = 0; i < entitiesArray.size(); i++) {
             JsonObject entityObj = entitiesArray.get(i).getAsJsonObject();
             EntityData data = parseEntityDataFromJson(entityObj);
-            construction.addEntity(data);
+            entities.add(data);
         }
 
         // Room entities
         if (root.has("rooms")) {
             JsonObject roomsObj = root.getAsJsonObject("rooms");
             for (String roomId : roomsObj.keySet()) {
-                Room room = construction.getRoom(roomId);
-                if (room == null) {
-                    room = new Room(roomId, roomId, java.time.Instant.now());
+                // Ensure room exists in construction metadata
+                if (construction != null && construction.getRoom(roomId) == null) {
+                    Room room = new Room(roomId, roomId, java.time.Instant.now());
                     construction.addRoom(room);
                 }
 
                 JsonObject roomObj = roomsObj.getAsJsonObject(roomId);
                 if (roomObj == null || !roomObj.has("entities")) continue;
 
+                List<EntityData> roomEntities = new ArrayList<>();
                 com.google.gson.JsonArray roomEntitiesArray = roomObj.getAsJsonArray("entities");
                 for (int i = 0; i < roomEntitiesArray.size(); i++) {
                     JsonObject entityObj = roomEntitiesArray.get(i).getAsJsonObject();
                     EntityData data = parseEntityDataFromJson(entityObj);
-                    room.addEntity(data);
+                    roomEntities.add(data);
+                }
+
+                // Merge with existing room snapshot or create new
+                ConstructionSnapshot.RoomSnapshot existing = roomSnapshots.get(roomId);
+                if (existing != null) {
+                    existing.entities().addAll(roomEntities);
+                } else {
+                    roomSnapshots.put(roomId, new ConstructionSnapshot.RoomSnapshot(
+                        new HashMap<>(), new HashMap<>(), roomEntities));
                 }
             }
         }
@@ -1283,6 +1274,12 @@ public class ApiClient {
     }
 
     /**
+     * Internal helper: holds a parsed construction (metadata-only) and its snapshot (block/entity data).
+     * Used by parse methods to return both pieces of data.
+     */
+    private record ParsedConstructionData(Construction construction, ConstructionSnapshot snapshot) {}
+
+    /**
      * Detects whether binary data is JSON (starts with '{') or compressed NBT (GZIP magic bytes 0x1F 0x8B).
      */
     private static boolean isJsonFormat(byte[] data) {
@@ -1290,155 +1287,54 @@ public class ApiClient {
     }
 
     /**
-     * Parses blocks and entities data into a Construction object.
+     * Parses blocks and entities data into a Construction (metadata) and ConstructionSnapshot (data).
      * Auto-detects format: JSON (starts with '{') or compressed NBT (GZIP).
      * Used by InGame download (no metadata needed).
      */
-    private static Construction parseConstructionFromNbt(String constructionId, byte[] blocksData, byte[] entitiesData) {
+    private static ParsedConstructionData parseConstructionFromNbt(String constructionId, byte[] blocksData, byte[] entitiesData) {
         try {
             // Create minimal construction (metadata comes from list export)
             Construction construction = new Construction(constructionId, new java.util.UUID(0, 0), "ingame");
 
+            // Snapshot data structures
+            Map<BlockPos, BlockState> blocks = new HashMap<>();
+            Map<BlockPos, CompoundTag> blockEntityNbt = new HashMap<>();
+            List<EntityData> entities = new ArrayList<>();
+            Map<String, ConstructionSnapshot.RoomSnapshot> roomSnapshots = new HashMap<>();
+
+            // InGame data has no bounds offset (coordinates are already relative to 0,0,0)
+            int offsetX = 0, offsetY = 0, offsetZ = 0;
+
             // Auto-detect blocks format and parse
             if (isJsonFormat(blocksData)) {
                 String jsonString = new String(blocksData, StandardCharsets.UTF_8);
-                deserializeBlocksFromJson(construction, jsonString);
+                deserializeBlocksFromJson(jsonString, blocks, blockEntityNbt, roomSnapshots, construction, offsetX, offsetY, offsetZ);
                 Architect.LOGGER.info("Parsed InGame blocks from JSON for {}", constructionId);
             } else {
-                // Parse blocks NBT (existing logic)
-                ByteArrayInputStream blocksStream = new ByteArrayInputStream(blocksData);
-                CompoundTag blocksRoot = NbtIo.readCompressed(blocksStream, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
-
-                ListTag paletteList = blocksRoot.getList("palette").orElse(new ListTag());
-                List<BlockState> palette = new ArrayList<>();
-                for (int i = 0; i < paletteList.size(); i++) {
-                    CompoundTag paletteEntry = paletteList.getCompound(i).orElseThrow();
-                    String stateString = paletteEntry.getString("state").orElse("");
-                    BlockState state = parseBlockState(stateString);
-                    palette.add(state);
-                }
-
-                ListTag blocksList = blocksRoot.getList("blocks").orElse(new ListTag());
-                for (int i = 0; i < blocksList.size(); i++) {
-                    CompoundTag blockTag = blocksList.getCompound(i).orElseThrow();
-                    int x = blockTag.getInt("x").orElse(0);
-                    int y = blockTag.getInt("y").orElse(0);
-                    int z = blockTag.getInt("z").orElse(0);
-                    int paletteIndex = blockTag.getInt("p").orElse(0);
-
-                    BlockPos pos = new BlockPos(x, y, z);
-                    BlockState state = palette.get(paletteIndex);
-
-                    CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
-                    if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                        construction.addBlockRaw(pos, state, blockEntityNbt);
-                    } else {
-                        construction.addBlockRaw(pos, state);
-                    }
-                }
-
-                CompoundTag roomsTag = blocksRoot.getCompound("rooms").orElse(null);
-                if (roomsTag != null) {
-                    for (String roomId : roomsTag.keySet()) {
-                        Room room = construction.getRoom(roomId);
-                        if (room == null) {
-                            room = new Room(roomId, roomId, java.time.Instant.now());
-                            construction.addRoom(room);
-                        }
-
-                        CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
-                        if (roomTag == null) continue;
-
-                        ListTag roomBlocksList = roomTag.getList("blocks").orElse(new ListTag());
-                        for (int i = 0; i < roomBlocksList.size(); i++) {
-                            CompoundTag blockTag = roomBlocksList.getCompound(i).orElseThrow();
-                            int x = blockTag.getInt("x").orElse(0);
-                            int y = blockTag.getInt("y").orElse(0);
-                            int z = blockTag.getInt("z").orElse(0);
-                            int paletteIndex = blockTag.getInt("p").orElse(0);
-
-                            BlockPos pos = new BlockPos(x, y, z);
-                            BlockState state = palette.get(paletteIndex);
-
-                            CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
-                            if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                                room.setBlockChange(pos, state, blockEntityNbt);
-                            } else {
-                                room.setBlockChange(pos, state);
-                            }
-                        }
-                    }
-                }
+                deserializeBlocksFromNbtData(blocksData, blocks, blockEntityNbt, roomSnapshots, construction, offsetX, offsetY, offsetZ);
             }
 
             // Auto-detect entities format and parse
             if (entitiesData != null && entitiesData.length > 0) {
                 if (isJsonFormat(entitiesData)) {
                     String jsonString = new String(entitiesData, StandardCharsets.UTF_8);
-                    deserializeEntitiesFromJson(construction, jsonString);
+                    deserializeEntitiesFromJson(jsonString, entities, roomSnapshots, construction);
                     Architect.LOGGER.info("Parsed InGame entities from JSON for {}", constructionId);
                 } else {
-                    // Parse entities NBT (existing logic)
-                    ByteArrayInputStream entitiesStream = new ByteArrayInputStream(entitiesData);
-                    CompoundTag entitiesRoot = NbtIo.readCompressed(entitiesStream, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
-
-                    ListTag entitiesList = entitiesRoot.getList("entities").orElse(new ListTag());
-                    for (int i = 0; i < entitiesList.size(); i++) {
-                        CompoundTag entityTag = entitiesList.getCompound(i).orElseThrow();
-
-                        String type = entityTag.getString("type").orElse("");
-                        double ex = entityTag.getDouble("x").orElse(0.0);
-                        double ey = entityTag.getDouble("y").orElse(0.0);
-                        double ez = entityTag.getDouble("z").orElse(0.0);
-                        float yaw = entityTag.getFloat("yaw").orElse(0.0f);
-                        float pitch = entityTag.getFloat("pitch").orElse(0.0f);
-                        CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
-
-                        Vec3 relativePos = new Vec3(ex, ey, ez);
-                        EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
-                        construction.addEntity(data);
-                    }
-
-                    CompoundTag roomsEntitiesTag = entitiesRoot.getCompound("rooms").orElse(null);
-                    if (roomsEntitiesTag != null) {
-                        for (String roomId : roomsEntitiesTag.keySet()) {
-                            Room room = construction.getRoom(roomId);
-                            if (room == null) {
-                                room = new Room(roomId, roomId, java.time.Instant.now());
-                                construction.addRoom(room);
-                            }
-
-                            CompoundTag roomTag = roomsEntitiesTag.getCompound(roomId).orElse(null);
-                            if (roomTag == null) continue;
-
-                            ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
-                            for (int i = 0; i < roomEntitiesList.size(); i++) {
-                                CompoundTag entityTag = roomEntitiesList.getCompound(i).orElseThrow();
-
-                                String type = entityTag.getString("type").orElse("");
-                                double ex = entityTag.getDouble("x").orElse(0.0);
-                                double ey = entityTag.getDouble("y").orElse(0.0);
-                                double ez = entityTag.getDouble("z").orElse(0.0);
-                                float yaw = entityTag.getFloat("yaw").orElse(0.0f);
-                                float pitch = entityTag.getFloat("pitch").orElse(0.0f);
-                                CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
-
-                                Vec3 relativePos = new Vec3(ex, ey, ez);
-                                EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
-                                room.addEntity(data);
-                            }
-                        }
-                    }
+                    deserializeEntitiesFromNbtData(entitiesData, entities, roomSnapshots, construction);
                 }
             }
 
             // Note: Bounds are NOT set here - they come from SpawnableBuilding metadata
             // and will be applied in InGameBuildingSpawner.doSpawn before architectSpawn
 
-            Architect.LOGGER.info("Parsed InGame construction: {} blocks, {} entities",
-                construction.getBlockCount(), construction.getEntityCount());
+            ConstructionSnapshot snapshot = ConstructionSnapshot.fromDeserialized(
+                blocks, blockEntityNbt, entities, roomSnapshots);
 
-            return construction;
+            Architect.LOGGER.info("Parsed InGame construction: {} blocks, {} entities",
+                blocks.size(), entities.size());
+
+            return new ParsedConstructionData(construction, snapshot);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to parse InGame data for {}", constructionId, e);
@@ -1480,7 +1376,7 @@ public class ApiClient {
 
             if (metadataStatus < 200 || metadataStatus >= 300) {
                 String message = parseResponseMessage(metadataBody, metadataStatus);
-                return new PullResponse(metadataStatus, message, false, null);
+                return new PullResponse(metadataStatus, message, false, null, null);
             }
         } finally {
             metadataConn.disconnect();
@@ -1508,7 +1404,7 @@ public class ApiClient {
             if (blocksStatus < 200 || blocksStatus >= 300) {
                 String errorBody = readResponse(blocksConn);
                 String message = parseResponseMessage(errorBody, blocksStatus);
-                return new PullResponse(blocksStatus, message, false, null);
+                return new PullResponse(blocksStatus, message, false, null, null);
             }
 
             // Leggi i dati binari
@@ -1553,12 +1449,12 @@ public class ApiClient {
         }
 
         // 4. Parse e combina i dati
-        Construction construction = parseConstructionFromResponses(constructionId, metadataBody, blocksData, entitiesData);
-        if (construction == null) {
-            return new PullResponse(metadataStatus, "Failed to parse construction data", false, null);
+        ParsedConstructionData parsed = parseConstructionFromResponses(constructionId, metadataBody, blocksData, entitiesData);
+        if (parsed == null) {
+            return new PullResponse(metadataStatus, "Failed to parse construction data", false, null, null);
         }
 
-        return new PullResponse(metadataStatus, "Success", true, construction);
+        return new PullResponse(metadataStatus, "Success", true, parsed.construction(), parsed.snapshot());
     }
 
     /**
@@ -1577,15 +1473,15 @@ public class ApiClient {
     }
 
     /**
-     * Parsa le risposte (metadati JSON, blocchi e entità NBT binari) e crea un oggetto Construction.
+     * Parses metadata JSON + blocks/entities binary data into a Construction (metadata) and ConstructionSnapshot (data).
      *
      * @param constructionId l'ID della costruzione
      * @param metadataBody la risposta JSON di /building/:id/metadata
-     * @param blocksData i dati NBT binari compressi di /building/:id/blocks
-     * @param entitiesData i dati NBT binari compressi di /building/:id/entities (può essere null)
+     * @param blocksData i dati binari di /building/:id/blocks (NBT o JSON, auto-detected)
+     * @param entitiesData i dati binari di /building/:id/entities (può essere null)
      */
-    private static Construction parseConstructionFromResponses(String constructionId, String metadataBody,
-                                                                byte[] blocksData, byte[] entitiesData) {
+    private static ParsedConstructionData parseConstructionFromResponses(String constructionId, String metadataBody,
+                                                                         byte[] blocksData, byte[] entitiesData) {
         try {
             JsonObject metadata = GSON.fromJson(metadataBody, JsonObject.class);
 
@@ -1698,14 +1594,26 @@ public class ApiClient {
                 }
             }
 
+            // Snapshot data structures
+            Map<BlockPos, BlockState> snapshotBlocks = new HashMap<>();
+            Map<BlockPos, CompoundTag> snapshotBlockEntityNbt = new HashMap<>();
+            List<EntityData> snapshotEntities = new ArrayList<>();
+            Map<String, ConstructionSnapshot.RoomSnapshot> roomSnapshots = new HashMap<>();
+
+            // Coordinate offset for denormalization (from bounds)
+            var bounds = construction.getBounds();
+            int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
+            int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
+            int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
+
             // Deserialize blocks (auto-detect format: JSON or compressed NBT)
             if (blocksData != null && blocksData.length > 0) {
                 if (isJsonFormat(blocksData)) {
                     String jsonString = new String(blocksData, StandardCharsets.UTF_8);
-                    deserializeBlocksFromJson(construction, jsonString);
+                    deserializeBlocksFromJson(jsonString, snapshotBlocks, snapshotBlockEntityNbt, roomSnapshots, construction, offsetX, offsetY, offsetZ);
                     Architect.LOGGER.info("Parsed blocks from JSON for pull of {}", constructionId);
                 } else {
-                    deserializeBlocksFromNbt(construction, blocksData);
+                    deserializeBlocksFromNbtData(blocksData, snapshotBlocks, snapshotBlockEntityNbt, roomSnapshots, construction, offsetX, offsetY, offsetZ);
                 }
             }
 
@@ -1713,14 +1621,17 @@ public class ApiClient {
             if (entitiesData != null && entitiesData.length > 0) {
                 if (isJsonFormat(entitiesData)) {
                     String jsonString = new String(entitiesData, StandardCharsets.UTF_8);
-                    deserializeEntitiesFromJson(construction, jsonString);
+                    deserializeEntitiesFromJson(jsonString, snapshotEntities, roomSnapshots, construction);
                     Architect.LOGGER.info("Parsed entities from JSON for pull of {}", constructionId);
                 } else {
-                    deserializeEntitiesFromNbt(construction, entitiesData);
+                    deserializeEntitiesFromNbtData(entitiesData, snapshotEntities, roomSnapshots, construction);
                 }
             }
 
-            return construction;
+            ConstructionSnapshot snapshot = ConstructionSnapshot.fromDeserialized(
+                snapshotBlocks, snapshotBlockEntityNbt, snapshotEntities, roomSnapshots);
+
+            return new ParsedConstructionData(construction, snapshot);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to parse construction response", e);
@@ -1729,21 +1640,19 @@ public class ApiClient {
     }
 
     /**
-     * Deserializza i blocchi da NBT compresso e li aggiunge alla costruzione.
-     * I blocchi nel file hanno coordinate relative (normalizzate a 0,0,0).
-     * Vengono denormalizzati usando i bounds della costruzione.
+     * Deserializes blocks from compressed NBT data into snapshot data structures.
+     * Block coordinates are denormalized using the provided offset.
      */
-    private static void deserializeBlocksFromNbt(Construction construction, byte[] nbtBytes) throws IOException {
+    private static void deserializeBlocksFromNbtData(byte[] nbtBytes,
+                                                      Map<BlockPos, BlockState> blocks,
+                                                      Map<BlockPos, CompoundTag> blockEntityNbt,
+                                                      Map<String, ConstructionSnapshot.RoomSnapshot> roomSnapshots,
+                                                      Construction construction,
+                                                      int offsetX, int offsetY, int offsetZ) throws IOException {
         ByteArrayInputStream bais = new ByteArrayInputStream(nbtBytes);
         CompoundTag root = NbtIo.readCompressed(bais, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
 
-        // Ottieni i bounds per denormalizzare le coordinate (caricati dal metadata)
-        var bounds = construction.getBounds();
-        int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
-        int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
-        int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
-
-        // Leggi la palette - MC 1.21 API con Optional
+        // Read palette
         ListTag paletteList = root.getList("palette").orElse(new ListTag());
         List<BlockState> palette = new ArrayList<>();
 
@@ -1754,7 +1663,7 @@ public class ApiClient {
             palette.add(state);
         }
 
-        // Leggi i blocchi (denormalizzando le coordinate)
+        // Read blocks (denormalizing coordinates)
         ListTag blocksList = root.getList("blocks").orElse(new ListTag());
         for (int i = 0; i < blocksList.size(); i++) {
             CompoundTag blockTag = blocksList.getCompound(i).orElseThrow();
@@ -1765,32 +1674,30 @@ public class ApiClient {
 
             BlockPos pos = new BlockPos(x, y, z);
             BlockState state = palette.get(paletteIndex);
+            blocks.put(pos, state);
 
-            // Se presente, leggi l'NBT del block entity
-            // Usa addBlockRaw per non alterare i bounds già caricati dal metadata
-            CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
-            if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                construction.addBlockRaw(pos, state, blockEntityNbt);
-            } else {
-                construction.addBlockRaw(pos, state);
+            CompoundTag beNbt = blockTag.getCompound("nbt").orElse(null);
+            if (beNbt != null && !beNbt.isEmpty()) {
+                blockEntityNbt.put(pos, beNbt);
             }
         }
 
-        // Carica i delta delle stanze (denormalizzando le coordinate)
+        // Load room block deltas (denormalizing coordinates)
         CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
         if (roomsTag != null) {
             for (String roomId : roomsTag.keySet()) {
-                Room room = construction.getRoom(roomId);
-                if (room == null) {
-                    Architect.LOGGER.warn("Room {} not found in metadata, skipping blocks", roomId);
-                    continue;
+                if (construction != null && construction.getRoom(roomId) == null) {
+                    Architect.LOGGER.warn("Room {} not found in metadata, creating placeholder", roomId);
+                    construction.addRoom(new Room(roomId, roomId, java.time.Instant.now()));
                 }
 
                 CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
                 if (roomTag == null) continue;
 
-                ListTag roomBlocksList = roomTag.getList("blocks").orElse(new ListTag());
+                Map<BlockPos, BlockState> roomBlocks = new HashMap<>();
+                Map<BlockPos, CompoundTag> roomBlockEntityNbt = new HashMap<>();
 
+                ListTag roomBlocksList = roomTag.getList("blocks").orElse(new ListTag());
                 for (int i = 0; i < roomBlocksList.size(); i++) {
                     CompoundTag blockTag = roomBlocksList.getCompound(i).orElseThrow();
                     int x = blockTag.getInt("x").orElse(0) + offsetX;
@@ -1800,22 +1707,34 @@ public class ApiClient {
 
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = palette.get(paletteIndex);
+                    roomBlocks.put(pos, state);
 
-                    CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
-                    if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                        room.setBlockChange(pos, state, blockEntityNbt);
-                    } else {
-                        room.setBlockChange(pos, state);
+                    CompoundTag beNbt = blockTag.getCompound("nbt").orElse(null);
+                    if (beNbt != null && !beNbt.isEmpty()) {
+                        roomBlockEntityNbt.put(pos, beNbt);
                     }
+                }
+
+                // Merge with existing room snapshot or create new
+                ConstructionSnapshot.RoomSnapshot existing = roomSnapshots.get(roomId);
+                if (existing != null) {
+                    existing.blocks().putAll(roomBlocks);
+                    existing.blockEntityNbt().putAll(roomBlockEntityNbt);
+                } else {
+                    roomSnapshots.put(roomId, new ConstructionSnapshot.RoomSnapshot(
+                        roomBlocks, roomBlockEntityNbt, new ArrayList<>()));
                 }
             }
         }
     }
 
     /**
-     * Deserializza le entità da NBT compresso e le aggiunge alla costruzione.
+     * Deserializes entities from compressed NBT data into snapshot data structures.
      */
-    private static void deserializeEntitiesFromNbt(Construction construction, byte[] nbtBytes) throws IOException {
+    private static void deserializeEntitiesFromNbtData(byte[] nbtBytes,
+                                                        List<EntityData> entities,
+                                                        Map<String, ConstructionSnapshot.RoomSnapshot> roomSnapshots,
+                                                        Construction construction) throws IOException {
         ByteArrayInputStream bais = new ByteArrayInputStream(nbtBytes);
         CompoundTag root = NbtIo.readCompressed(bais, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
 
@@ -1834,24 +1753,22 @@ public class ApiClient {
 
             Vec3 relativePos = new Vec3(x, y, z);
             EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
-
-            // No UUID needed - just add to list
-            construction.addEntity(data);
+            entities.add(data);
         }
 
-        // Carica le entità delle stanze
+        // Load room entities
         CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
         if (roomsTag != null) {
             for (String roomId : roomsTag.keySet()) {
-                Room room = construction.getRoom(roomId);
-                if (room == null) {
-                    Architect.LOGGER.warn("Room {} not found in metadata, skipping entities", roomId);
-                    continue;
+                if (construction != null && construction.getRoom(roomId) == null) {
+                    Architect.LOGGER.warn("Room {} not found in metadata, creating placeholder", roomId);
+                    construction.addRoom(new Room(roomId, roomId, java.time.Instant.now()));
                 }
 
                 CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
                 if (roomTag == null) continue;
 
+                List<EntityData> roomEntities = new ArrayList<>();
                 ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
 
                 for (int i = 0; i < roomEntitiesList.size(); i++) {
@@ -1867,9 +1784,16 @@ public class ApiClient {
 
                     Vec3 relativePos = new Vec3(x, y, z);
                     EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+                    roomEntities.add(data);
+                }
 
-                    // No UUID needed - just add to list
-                    room.addEntity(data);
+                // Merge with existing room snapshot or create new
+                ConstructionSnapshot.RoomSnapshot existing = roomSnapshots.get(roomId);
+                if (existing != null) {
+                    existing.entities().addAll(roomEntities);
+                } else {
+                    roomSnapshots.put(roomId, new ConstructionSnapshot.RoomSnapshot(
+                        new HashMap<>(), new HashMap<>(), roomEntities));
                 }
             }
         }

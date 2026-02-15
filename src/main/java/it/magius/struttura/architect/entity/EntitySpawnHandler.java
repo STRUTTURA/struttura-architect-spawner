@@ -10,7 +10,6 @@ import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.session.EditingSession;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
-import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
@@ -25,38 +24,38 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Gestisce l'aggiunta automatica di entità spawnate dal giocatore
- * all'interno dei bounds di una costruzione in editing.
+ * Handles auto-adding entities spawned by the player
+ * inside the bounds of a construction being edited.
  *
- * IMPORTANTE: Aggiunge automaticamente SOLO entità appena spawnate (nuove).
- * Le entità già esistenti nel mondo non vengono aggiunte automaticamente.
+ * IMPORTANT: Only auto-adds newly spawned entities.
+ * Existing entities in the world are not auto-added.
  */
 public class EntitySpawnHandler {
 
     private static EntitySpawnHandler INSTANCE;
 
-    // Set di entità già viste - per evitare di riaggiungere entità già esistenti
-    // quando ENTITY_LOAD viene chiamato per altri motivi (es. cambio chunk)
+    // Set of already-seen entities - to avoid re-adding existing entities
+    // when ENTITY_LOAD is called for other reasons (e.g., chunk change)
     private final Set<UUID> knownEntities = new HashSet<>();
 
-    // Set di entità da ignorare temporaneamente (spawnate dal sistema di editing)
-    // Queste entità non devono essere aggiunte automaticamente alla construction/room
+    // Set of entities to temporarily ignore (spawned by the editing system)
+    // These entities should not be auto-added to the construction/room
     private final Set<UUID> ignoredEntities = new HashSet<>();
 
     private EntitySpawnHandler() {
     }
 
     /**
-     * Registra un'entità da ignorare (non deve essere aggiunta automaticamente).
-     * Usato quando il sistema spawna entità durante l'editing (enterRoom, show, etc.)
+     * Registers an entity to ignore (should not be auto-added).
+     * Used when the system spawns entities during editing (enterRoom, show, etc.)
      */
     public void ignoreEntity(UUID entityId) {
         ignoredEntities.add(entityId);
-        knownEntities.add(entityId); // Segnala anche come conosciuta
+        knownEntities.add(entityId);
     }
 
     /**
-     * Rimuove un'entità dalla lista di quelle ignorate.
+     * Removes an entity from the ignore list.
      */
     public void unignoreEntity(UUID entityId) {
         ignoredEntities.remove(entityId);
@@ -70,8 +69,8 @@ public class EntitySpawnHandler {
     }
 
     /**
-     * Registra l'evento di spawn entità.
-     * Chiamato durante l'inizializzazione del mod.
+     * Registers the entity spawn event.
+     * Called during mod initialization.
      */
     public void register() {
         ServerEntityEvents.ENTITY_LOAD.register(this::onEntityLoad);
@@ -79,41 +78,35 @@ public class EntitySpawnHandler {
     }
 
     /**
-     * Chiamato quando un'entità viene caricata/spawnata nel mondo.
+     * Called when an entity is loaded/spawned in the world.
      */
     private void onEntityLoad(Entity entity, ServerLevel level) {
-        // Ignora player, proiettili e oggetti caduti a terra
+        // Ignore player, projectiles and dropped items
         if (entity instanceof Player || entity instanceof Projectile || entity instanceof ItemEntity) {
             return;
         }
 
-        // Ignora entità MARKER (sono usate internamente da Minecraft per template, non hanno senso in costruzioni)
+        // Ignore MARKER entities (used internally by Minecraft for templates)
         if (entity.getType().toString().contains("marker")) {
             return;
         }
 
-        // Accept all entity types (mobs, item frames, armor stands, paintings, etc.)
-        // The previous LivingEntity filter was too restrictive
-
         UUID entityId = entity.getUUID();
 
-        // Se l'entità è nella lista di quelle da ignorare (spawnate dal sistema), non fare nulla
+        // If the entity is in the ignore list (spawned by editing system), do nothing
         if (ignoredEntities.contains(entityId)) {
             return;
         }
 
-        // Se l'entità è già conosciuta, non fare nulla
-        // Questo evita di riaggiungere entità quando ENTITY_LOAD viene chiamato
-        // per motivi diversi dallo spawn (es. cambio chunk, setPos del freeze handler)
+        // If the entity is already known, do nothing
         if (knownEntities.contains(entityId)) {
             return;
         }
 
-        // Segna l'entità come conosciuta
+        // Mark the entity as known
         knownEntities.add(entityId);
 
-        // Find an editing session whose player is nearby and in ADD mode.
-        // Any entity placed while editing is auto-added (bounds are expanded).
+        // Find an editing session whose player is nearby and in ADD mode
         for (EditingSession session : EditingSession.getAllSessions()) {
             ServerPlayer editingPlayer = session.getPlayer();
             if (editingPlayer == null) {
@@ -136,7 +129,7 @@ public class EntitySpawnHandler {
                 continue;
             }
 
-            // Auto-add the entity to the session (bounds will be expanded automatically)
+            // Auto-add the entity to the session
             addEntityToSession(entity, session, editingPlayer, level);
             return;
         }
@@ -144,7 +137,7 @@ public class EntitySpawnHandler {
 
     /**
      * Adds an entity to the construction or room in editing.
-     * Uses the same logic as right-click with hammer.
+     * Simply adds the UUID to tracked entities - no EntityData creation needed.
      */
     private void addEntityToSession(Entity entity, EditingSession session, ServerPlayer player, ServerLevel level) {
         Construction construction = session.getConstruction();
@@ -153,31 +146,22 @@ public class EntitySpawnHandler {
 
         UUID entityId = entity.getUUID();
 
-        // Check if entity is already tracked (shouldn't be, but verify)
+        // Check if entity is already tracked
         if (session.isEntityTracked(entityId)) {
-            // Already tracked, do nothing
             return;
         }
 
-        // Expand bounds BEFORE creating EntityData so relative positions are always >= 0
+        // Expand bounds to include the entity
         EntityData.expandBoundsForEntity(entity, construction.getBounds());
 
-        // Add the entity
-        EntityData data = EntityData.fromEntity(entity, construction.getBounds(), level.registryAccess());
-
-        int newIndex;
+        // Add entity UUID to construction or room
         if (inRoom && room != null) {
-            newIndex = room.addEntity(data);
+            room.addEntity(entityId);
         } else {
-            newIndex = construction.addEntity(data);
+            construction.addEntity(entityId, level);
         }
-        // Track the entity with its list index (session tracking for UI)
-        session.trackEntity(entityId, newIndex);
-        // Track the entity UUID in construction (for refreshEntitiesFromWorld before push)
-        construction.trackSpawnedEntity(entityId);
 
         // Freeze the entity immediately to prevent it from moving/falling
-        // before the next EntityFreezeHandler tick
         entity.setDeltaMovement(Vec3.ZERO);
         if (entity instanceof Mob mob) {
             mob.setNoAi(true);

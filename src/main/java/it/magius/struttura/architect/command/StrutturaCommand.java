@@ -17,6 +17,7 @@ import it.magius.struttura.architect.ingame.model.SpawnableList;
 import it.magius.struttura.architect.ingame.model.SpawnRule;
 import it.magius.struttura.architect.model.Construction;
 import it.magius.struttura.architect.model.ConstructionBounds;
+import it.magius.struttura.architect.model.ConstructionSnapshot;
 import it.magius.struttura.architect.model.EditMode;
 import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.FirstPushDisclaimerPacket;
@@ -338,11 +339,13 @@ public class StrutturaCommand {
         (context, builder) -> {
             java.util.Set<String> suggestions = new java.util.LinkedHashSet<>();
 
-            // Suggerisci solo i tipi di blocco presenti nella costruzione corrente
+            // Suggest only block types present in the current construction
             if (context.getSource().getEntity() instanceof ServerPlayer player) {
                 EditingSession session = EditingSession.getSession(player);
                 if (session != null) {
-                    for (net.minecraft.world.level.block.state.BlockState state : session.getConstruction().getBlocks().values()) {
+                    ServerLevel level = (ServerLevel) player.level();
+                    for (BlockPos pos : session.getConstruction().getTrackedBlocks()) {
+                        BlockState state = level.getBlockState(pos);
                         String blockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
                             .getKey(state.getBlock())
                             .toString();
@@ -452,9 +455,9 @@ public class StrutturaCommand {
         EditingSession session = EditingSession.endSession(player);
         Construction construction = session.getConstruction();
 
-        // Se nomob, rimuovi le entità dalla costruzione prima di salvare
+        // If nomob, remove entities from the construction before saving
         if (!saveEntities) {
-            construction.clearEntities();
+            construction.clearTrackedEntities();
             Architect.LOGGER.info("Cleared entities from construction {} (done nomob)",
                 construction.getId());
         }
@@ -716,8 +719,10 @@ public class StrutturaCommand {
         EditingSession session = EditingSession.getSession(player);
         Construction construction = session.getConstruction();
 
-        // Conta prima quanti blocchi ci sono di quel tipo
-        int countBefore = construction.countBlocksByType(blockId);
+        // Count how many blocks of this type exist
+        ServerLevel level = (ServerLevel) player.level();
+        Map<String, Integer> blockCounts = construction.getBlockCounts(level);
+        int countBefore = blockCounts.getOrDefault(blockId, 0);
 
         if (countBefore == 0) {
             final String finalBlockId = blockId;
@@ -725,8 +730,7 @@ public class StrutturaCommand {
             return 0;
         }
 
-        // Rimuovi i blocchi
-        net.minecraft.server.level.ServerLevel level = (net.minecraft.server.level.ServerLevel) player.level();
+        // Remove the blocks
         int removed = construction.removeBlocksByType(blockId, level);
 
         // Invia sync wireframe aggiornato (bounds potrebbero essere cambiati)
@@ -796,8 +800,9 @@ public class StrutturaCommand {
     private static int executeArchitectSpawn(ServerPlayer player, Construction construction,
                                               CommandSourceStack source, java.util.List<String> forcedRoomIds) {
         // Delegate to ConstructionOperations.architectSpawn
+        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, (ServerLevel) player.level());
         var result = ConstructionOperations.architectSpawn(
-            player, construction, player.getYRot(), forcedRoomIds
+            player, construction, snapshot, player.getYRot(), forcedRoomIds
         );
 
         if (result.blocksPlaced() > 0) {
@@ -823,8 +828,9 @@ public class StrutturaCommand {
     private static int executeInGameSpawn(ServerPlayer player, Construction construction, CommandSourceStack source) {
         // For now, fallback to regular spawn behavior
         // In the future, this will be used by the spawning engine with world-specific criteria
+        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, (ServerLevel) player.level());
         var result = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.SPAWN, false,
+            player, construction, snapshot, ConstructionOperations.PlacementMode.SPAWN, false,
             null, player.getYRot(), false
         );
 
@@ -878,8 +884,9 @@ public class StrutturaCommand {
         }
 
         // Use centralized placement function with SHOW mode (original position)
+        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, (ServerLevel) player.level());
         var result = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.SHOW, false
+            player, construction, snapshot, ConstructionOperations.PlacementMode.SHOW, false
         );
 
         VISIBLE_CONSTRUCTIONS.add(id);
@@ -1093,12 +1100,9 @@ public class StrutturaCommand {
             return 0;
         }
 
-        // Refresh entities from world before push to capture any modifications
+        // Create snapshot from world before push (captures current block/entity state)
         ServerLevel level = (ServerLevel) player.level();
-        int refreshed = construction.refreshEntitiesFromWorld(level, level.registryAccess());
-        if (refreshed > 0) {
-            Architect.LOGGER.info("Refreshed {} entities from world before push", refreshed);
-        }
+        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, level);
 
         // Messaggio di invio
         String formatLabel = jsonFormat ? " (JSON)" : "";
@@ -1113,7 +1117,7 @@ public class StrutturaCommand {
         var server = level.getServer();
 
         // Esegui push asincrono
-        boolean started = ApiClient.pushConstruction(construction, false, jsonFormat, response -> {
+        boolean started = ApiClient.pushConstruction(construction, snapshot, false, jsonFormat, response -> {
             // Callback viene eseguito su thread async, schedula sul main thread
             if (server != null) {
                 server.execute(() -> {
@@ -1731,15 +1735,17 @@ public class StrutturaCommand {
                         ConstructionRegistry.getInstance().register(construction);
 
                         // Use centralized placement with PULL mode (updates construction coordinates)
+                        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, (ServerLevel) player.level());
                         var placementResult = ConstructionOperations.placeConstruction(
-                            player, construction, ConstructionOperations.PlacementMode.PULL, true,
+                            player, construction, snapshot, ConstructionOperations.PlacementMode.PULL, true,
                             null, player.getYRot(), false
                         );
 
-                        ChatMessages.send(player, ChatMessages.Level.INFO, "pull.success", id, placementResult.blocksPlaced());
+                        ChatMessages.send(player, ChatMessages.Level.INFO, "pull.success", id,
+                            placementResult.blocksPlaced(), placementResult.entitiesSpawned());
 
-                        Architect.LOGGER.info("Pull successful for {}: {} blocks placed",
-                            id, placementResult.blocksPlaced());
+                        Architect.LOGGER.info("Pull successful for {}: {} blocks placed, {} entities spawned",
+                            id, placementResult.blocksPlaced(), placementResult.entitiesSpawned());
                     } else {
                         ChatMessages.send(player, ChatMessages.Level.ERROR, "pull.failed", id, response.statusCode(), response.message());
                         Architect.LOGGER.warn("Pull failed for {}: {} - {}",
@@ -1819,8 +1825,9 @@ public class StrutturaCommand {
         );
 
         // 3. Place at new position in front of player (updates construction coordinates)
+        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, level);
         var placementResult = ConstructionOperations.placeConstruction(
-            player, construction, ConstructionOperations.PlacementMode.MOVE, true,
+            player, construction, snapshot, ConstructionOperations.PlacementMode.MOVE, true,
             null, player.getYRot(), false
         );
 
@@ -2389,7 +2396,8 @@ public class StrutturaCommand {
         BlockPos targetPos = calculateScreenshotPosition(player, construction.getBounds());
 
         // Use centralized placement (no coordinate update needed for temporary screenshot spawn)
-        var result = ConstructionOperations.placeConstructionAt(level, construction, targetPos, false);
+        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, level);
+        var result = ConstructionOperations.placeConstructionAt(level, construction, snapshot, targetPos, false);
 
         return result.newOrigin();
     }
@@ -2455,6 +2463,9 @@ public class StrutturaCommand {
         ServerLevel level = state.getLevel();
         ServerPlayer player = state.getPlayer();
 
+        // Create snapshot on server thread before going async
+        ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, level);
+
         // Run uploads in a separate thread to not block the main thread
         java.util.concurrent.CompletableFuture.runAsync(() -> {
             try {
@@ -2463,7 +2474,7 @@ public class StrutturaCommand {
                 final boolean[] pushSuccess = {false};
                 final String[] pushError = {null};
 
-                boolean pushStarted = ApiClient.pushConstruction(construction, true, response -> {
+                boolean pushStarted = ApiClient.pushConstruction(construction, snapshot, true, response -> {
                     pushSuccess[0] = response.success();
                     if (!response.success()) {
                         pushError[0] = "Push failed: " + response.statusCode() + " - " + response.message();
@@ -2474,7 +2485,7 @@ public class StrutturaCommand {
                 if (!pushStarted) {
                     // Retry after a short delay
                     Thread.sleep(100);
-                    pushStarted = ApiClient.pushConstruction(construction, true, response -> {
+                    pushStarted = ApiClient.pushConstruction(construction, snapshot, true, response -> {
                         pushSuccess[0] = response.success();
                         if (!response.success()) {
                             pushError[0] = "Push failed: " + response.statusCode() + " - " + response.message();

@@ -3,6 +3,7 @@ package it.magius.struttura.architect.vanilla;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.i18n.LanguageUtils;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ConstructionSnapshot;
 import it.magius.struttura.architect.model.EntityData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -26,8 +27,10 @@ public class VanillaStructureLoader {
 
     /**
      * Result of loading a vanilla structure.
+     * Includes the snapshot with block states, NBT and entity data from the template,
+     * since the construction only tracks positions (reference-only storage).
      */
-    public record LoadResult(boolean success, String message, Construction construction) {}
+    public record LoadResult(boolean success, String message, Construction construction, ConstructionSnapshot snapshot) {}
 
     /**
      * Information about a discovered vanilla structure template.
@@ -210,7 +213,7 @@ public class VanillaStructureLoader {
             // Load the template
             Optional<StructureTemplate> templateOpt = manager.get(info.templateId());
             if (templateOpt.isEmpty()) {
-                return new LoadResult(false, "Template not found: " + info.templateId(), null);
+                return new LoadResult(false, "Template not found: " + info.templateId(), null, null);
             }
 
             StructureTemplate template = templateOpt.get();
@@ -235,13 +238,16 @@ public class VanillaStructureLoader {
             Architect.LOGGER.debug("Loading template {} with size {}x{}x{}",
                 info.templateId(), size.getX(), size.getY(), size.getZ());
 
-            // Process blocks from template palettes
+            // Collect block data for the snapshot (block states, NBT)
+            // Construction only tracks positions (reference-only storage)
+            Map<BlockPos, BlockState> snapshotBlocks = new HashMap<>();
+            Map<BlockPos, CompoundTag> snapshotBlockEntityNbt = new HashMap<>();
             int blocksAdded = 0;
             int chestsSkipped = 0;
 
             var palettes = template.palettes;
             if (palettes.isEmpty()) {
-                return new LoadResult(false, "Template has no block palettes: " + info.templateId(), null);
+                return new LoadResult(false, "Template has no block palettes: " + info.templateId(), null, null);
             }
 
             // Use the first palette (index 0)
@@ -269,26 +275,31 @@ public class VanillaStructureLoader {
                         cleanNbt.remove("LootTableSeed");
                         cleanNbt.remove("loot_table_seed");
 
-                        if (cleanNbt.isEmpty()) {
-                            construction.addBlock(pos, state);
-                        } else {
-                            construction.addBlock(pos, state, cleanNbt);
+                        // Track position in construction, store state in snapshot
+                        construction.addBlockRaw(pos);
+                        snapshotBlocks.put(pos, state);
+                        if (!cleanNbt.isEmpty()) {
+                            snapshotBlockEntityNbt.put(pos, cleanNbt);
                         }
                         blocksAdded++;
                         continue;
                     }
                 }
 
-                // Add block with or without NBT
+                // Track position in construction, store state/NBT in snapshot
+                construction.addBlockRaw(pos);
+                snapshotBlocks.put(pos, state);
                 if (nbt != null && !nbt.isEmpty()) {
-                    construction.addBlock(pos, state, nbt);
-                } else {
-                    construction.addBlock(pos, state);
+                    snapshotBlockEntityNbt.put(pos, nbt);
                 }
                 blocksAdded++;
             }
 
-            // Process entities from template
+            // Recalculate bounds from all tracked positions
+            construction.recalculateBounds();
+
+            // Process entities from template into snapshot data
+            List<EntityData> snapshotEntities = new ArrayList<>();
             int entitiesAdded = 0;
             for (StructureTemplate.StructureEntityInfo entityInfo : template.entityInfoList) {
                 String entityType = getEntityTypeFromNbt(entityInfo.nbt);
@@ -310,31 +321,36 @@ public class VanillaStructureLoader {
                     entityNbt
                 );
 
-                construction.addEntity(data);
+                snapshotEntities.add(data);
                 entitiesAdded++;
             }
 
             // Validate that we have at least one block with valid bounds
             if (blocksAdded == 0) {
-                return new LoadResult(false, "Template has no blocks: " + info.templateId(), null);
+                return new LoadResult(false, "Template has no blocks: " + info.templateId(), null, null);
             }
 
             // Validate bounds are valid (not NaN or infinite)
             var bounds = construction.getBounds();
             if (bounds.getMinX() == Integer.MAX_VALUE || bounds.getMaxX() == Integer.MIN_VALUE) {
-                return new LoadResult(false, "Template has invalid bounds: " + info.templateId(), null);
+                return new LoadResult(false, "Template has invalid bounds: " + info.templateId(), null, null);
             }
+
+            // Build the snapshot carrying block states, NBT and entity data from the template
+            ConstructionSnapshot snapshot = ConstructionSnapshot.fromDeserialized(
+                snapshotBlocks, snapshotBlockEntityNbt, snapshotEntities, new HashMap<>()
+            );
 
             String message = String.format("Loaded %d blocks, %d entities (skipped loot in %d chests)",
                 blocksAdded, entitiesAdded, chestsSkipped);
 
             Architect.LOGGER.info("Loaded vanilla structure {}: {}", info.constructionId(), message);
 
-            return new LoadResult(true, message, construction);
+            return new LoadResult(true, message, construction, snapshot);
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to load vanilla structure: " + info.templateId(), e);
-            return new LoadResult(false, "Error: " + e.getMessage(), null);
+            return new LoadResult(false, "Error: " + e.getMessage(), null, null);
         }
     }
 

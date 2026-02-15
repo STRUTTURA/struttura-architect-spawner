@@ -2,37 +2,34 @@ package it.magius.struttura.architect.validation;
 
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.model.Construction;
-import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.Room;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.Vec3;
 
-import java.util.List;
-import java.util.Map;
+import java.util.UUID;
 
 /**
- * Utility class to validate coherence between registry data and world state.
+ * Utility class to validate coherence between tracked positions/entities and world state.
  * Used to detect bugs where blocks/entities are not properly synchronized.
+ *
+ * Since Construction uses reference-only storage (tracked positions and UUIDs instead of
+ * copies of BlockState/EntityData), coherence checks verify that tracked references are
+ * valid and within bounds.
  */
 public class CoherenceChecker {
 
-    private static final double ENTITY_POSITION_TOLERANCE = 0.5;
-
     /**
      * Checks coherence of a single block in a construction.
+     * Verifies the position is within construction bounds and is tracked.
      * @param level The server level
      * @param construction The construction containing the block
      * @param pos The block position (absolute world coordinates)
-     * @param expectedState The expected block state from registry
-     * @param checkInWorld If true, also verify the block exists in the world
+     * @param checkInWorld If true, also verify the block exists in the world (unused in reference-only mode)
      * @return true if coherent, false if there's a mismatch
      */
     public static boolean checkBlockCoherence(ServerLevel level, Construction construction,
-                                               BlockPos pos, BlockState expectedState, boolean checkInWorld) {
+                                               BlockPos pos, boolean checkInWorld) {
         // Check if block position is within construction bounds
         var bounds = construction.getBounds();
         if (bounds.isValid()) {
@@ -47,28 +44,11 @@ public class CoherenceChecker {
             }
         }
 
-        // Check if block exists in construction registry
-        BlockState registryState = construction.getBlocks().get(pos);
-
-        if (registryState == null) {
-            Architect.LOGGER.error("COHERENCE ERROR: Block at {} not found in construction {} registry",
+        // Check if block is tracked
+        if (!construction.getTrackedBlocks().contains(pos)) {
+            Architect.LOGGER.error("COHERENCE ERROR: Block at {} not found in construction {} tracked blocks",
                 pos, construction.getId());
             return false;
-        }
-
-        if (!registryState.equals(expectedState)) {
-            Architect.LOGGER.error("COHERENCE ERROR: Block at {} in construction {} has wrong state. Expected: {}, Got: {}",
-                pos, construction.getId(), expectedState, registryState);
-            return false;
-        }
-
-        if (checkInWorld) {
-            BlockState worldState = level.getBlockState(pos);
-            if (!worldState.equals(expectedState)) {
-                Architect.LOGGER.error("COHERENCE ERROR: Block at {} in world doesn't match registry. World: {}, Registry: {}",
-                    pos, worldState, expectedState);
-                return false;
-            }
         }
 
         return true;
@@ -76,16 +56,16 @@ public class CoherenceChecker {
 
     /**
      * Checks coherence of a single block in a room.
+     * Verifies the position is within construction bounds and is in the room's changed blocks.
      * @param level The server level
      * @param construction The parent construction
      * @param room The room containing the block change
      * @param pos The block position (absolute world coordinates)
-     * @param expectedState The expected block state from room's block changes
-     * @param checkInWorld If true, also verify the block exists in the world
+     * @param checkInWorld If true, also verify the block exists in the world (unused in reference-only mode)
      * @return true if coherent, false if there's a mismatch
      */
     public static boolean checkRoomBlockCoherence(ServerLevel level, Construction construction, Room room,
-                                                   BlockPos pos, BlockState expectedState, boolean checkInWorld) {
+                                                   BlockPos pos, boolean checkInWorld) {
         // Check if block position is within construction bounds
         var bounds = construction.getBounds();
         if (bounds.isValid()) {
@@ -100,28 +80,11 @@ public class CoherenceChecker {
             }
         }
 
-        // Check if block exists in room's block changes
-        BlockState roomState = room.getBlockChange(pos);
-
-        if (roomState == null) {
+        // Check if block is in room's changed blocks
+        if (!room.getChangedBlocks().contains(pos)) {
             Architect.LOGGER.error("COHERENCE ERROR: Block at {} not found in room {} of construction {}",
                 pos, room.getId(), construction.getId());
             return false;
-        }
-
-        if (!roomState.equals(expectedState)) {
-            Architect.LOGGER.error("COHERENCE ERROR: Block at {} in room {} has wrong state. Expected: {}, Got: {}",
-                pos, room.getId(), expectedState, roomState);
-            return false;
-        }
-
-        if (checkInWorld) {
-            BlockState worldState = level.getBlockState(pos);
-            if (!worldState.equals(expectedState)) {
-                Architect.LOGGER.error("COHERENCE ERROR: Block at {} in world doesn't match room {}. World: {}, Room: {}",
-                    pos, room.getId(), worldState, expectedState);
-                return false;
-            }
         }
 
         return true;
@@ -129,56 +92,26 @@ public class CoherenceChecker {
 
     /**
      * Checks coherence of a single entity in a construction.
+     * Verifies the UUID is tracked and optionally exists in the world.
      * @param level The server level
      * @param construction The construction containing the entity
-     * @param entityIndex The index of the entity in the construction's entity list
-     * @param checkInWorld If true, also verify an entity exists at the expected position in the world
+     * @param entityUuid The UUID of the entity to check
+     * @param checkInWorld If true, also verify the entity exists in the world
      * @return true if coherent, false if there's a mismatch
      */
     public static boolean checkEntityCoherence(ServerLevel level, Construction construction,
-                                                int entityIndex, boolean checkInWorld) {
-        List<EntityData> entities = construction.getEntities();
-
-        if (entityIndex < 0 || entityIndex >= entities.size()) {
-            Architect.LOGGER.error("COHERENCE ERROR: Entity index {} out of bounds for construction {} (size: {})",
-                entityIndex, construction.getId(), entities.size());
+                                                UUID entityUuid, boolean checkInWorld) {
+        if (!construction.getTrackedEntities().contains(entityUuid)) {
+            Architect.LOGGER.error("COHERENCE ERROR: Entity {} not tracked in construction {}",
+                entityUuid, construction.getId());
             return false;
         }
 
-        EntityData entityData = entities.get(entityIndex);
-
         if (checkInWorld) {
-            var bounds = construction.getBounds();
-            if (!bounds.isValid()) {
-                Architect.LOGGER.error("COHERENCE ERROR: Construction {} has invalid bounds, cannot check entity in world",
-                    construction.getId());
-                return false;
-            }
-
-            // Calculate expected world position
-            double expectedX = bounds.getMinX() + entityData.getRelativePos().x;
-            double expectedY = bounds.getMinY() + entityData.getRelativePos().y;
-            double expectedZ = bounds.getMinZ() + entityData.getRelativePos().z;
-
-            // Search for entity at expected position
-            AABB searchArea = new AABB(
-                expectedX - ENTITY_POSITION_TOLERANCE, expectedY - ENTITY_POSITION_TOLERANCE, expectedZ - ENTITY_POSITION_TOLERANCE,
-                expectedX + ENTITY_POSITION_TOLERANCE, expectedY + ENTITY_POSITION_TOLERANCE, expectedZ + ENTITY_POSITION_TOLERANCE
-            );
-
-            List<Entity> foundEntities = level.getEntities(
-                (Entity) null,
-                searchArea,
-                e -> {
-                    String eType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
-                        .getKey(e.getType()).toString();
-                    return eType.equals(entityData.getEntityType());
-                }
-            );
-
-            if (foundEntities.isEmpty()) {
-                Architect.LOGGER.error("COHERENCE ERROR: Entity {} of type {} not found in world at expected position ({}, {}, {})",
-                    entityIndex, entityData.getEntityType(), expectedX, expectedY, expectedZ);
+            Entity worldEntity = level.getEntity(entityUuid);
+            if (worldEntity == null) {
+                Architect.LOGGER.error("COHERENCE ERROR: Tracked entity {} not found in world for construction {}",
+                    entityUuid, construction.getId());
                 return false;
             }
         }
@@ -188,57 +121,27 @@ public class CoherenceChecker {
 
     /**
      * Checks coherence of a single entity in a room.
+     * Verifies the UUID is in the room's entity set and optionally exists in the world.
      * @param level The server level
      * @param construction The parent construction
      * @param room The room containing the entity
-     * @param entityIndex The index of the entity in the room's entity list
-     * @param checkInWorld If true, also verify an entity exists at the expected position in the world
+     * @param entityUuid The UUID of the entity to check
+     * @param checkInWorld If true, also verify the entity exists in the world
      * @return true if coherent, false if there's a mismatch
      */
     public static boolean checkRoomEntityCoherence(ServerLevel level, Construction construction, Room room,
-                                                    int entityIndex, boolean checkInWorld) {
-        List<EntityData> entities = room.getEntities();
-
-        if (entityIndex < 0 || entityIndex >= entities.size()) {
-            Architect.LOGGER.error("COHERENCE ERROR: Entity index {} out of bounds for room {} (size: {})",
-                entityIndex, room.getId(), entities.size());
+                                                    UUID entityUuid, boolean checkInWorld) {
+        if (!room.getRoomEntities().contains(entityUuid)) {
+            Architect.LOGGER.error("COHERENCE ERROR: Entity {} not found in room {} of construction {}",
+                entityUuid, room.getId(), construction.getId());
             return false;
         }
 
-        EntityData entityData = entities.get(entityIndex);
-
         if (checkInWorld) {
-            var bounds = construction.getBounds();
-            if (!bounds.isValid()) {
-                Architect.LOGGER.error("COHERENCE ERROR: Construction {} has invalid bounds, cannot check room entity in world",
-                    construction.getId());
-                return false;
-            }
-
-            // Calculate expected world position
-            double expectedX = bounds.getMinX() + entityData.getRelativePos().x;
-            double expectedY = bounds.getMinY() + entityData.getRelativePos().y;
-            double expectedZ = bounds.getMinZ() + entityData.getRelativePos().z;
-
-            // Search for entity at expected position
-            AABB searchArea = new AABB(
-                expectedX - ENTITY_POSITION_TOLERANCE, expectedY - ENTITY_POSITION_TOLERANCE, expectedZ - ENTITY_POSITION_TOLERANCE,
-                expectedX + ENTITY_POSITION_TOLERANCE, expectedY + ENTITY_POSITION_TOLERANCE, expectedZ + ENTITY_POSITION_TOLERANCE
-            );
-
-            List<Entity> foundEntities = level.getEntities(
-                (Entity) null,
-                searchArea,
-                e -> {
-                    String eType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
-                        .getKey(e.getType()).toString();
-                    return eType.equals(entityData.getEntityType());
-                }
-            );
-
-            if (foundEntities.isEmpty()) {
-                Architect.LOGGER.error("COHERENCE ERROR: Room {} entity {} of type {} not found in world at expected position ({}, {}, {})",
-                    room.getId(), entityIndex, entityData.getEntityType(), expectedX, expectedY, expectedZ);
+            Entity worldEntity = level.getEntity(entityUuid);
+            if (worldEntity == null) {
+                Architect.LOGGER.error("COHERENCE ERROR: Room {} entity {} not found in world for construction {}",
+                    room.getId(), entityUuid, construction.getId());
                 return false;
             }
         }
@@ -247,7 +150,7 @@ public class CoherenceChecker {
     }
 
     /**
-     * Validates all blocks in a construction against the registry.
+     * Validates all blocks in a construction.
      * @param level The server level
      * @param construction The construction to validate
      * @param checkInWorld If true, also verify blocks exist in the world
@@ -258,7 +161,7 @@ public class CoherenceChecker {
     }
 
     /**
-     * Validates all blocks in a construction against the registry.
+     * Validates all blocks in a construction.
      * @param level The server level
      * @param construction The construction to validate
      * @param checkInWorld If true, also verify blocks exist in the world
@@ -269,15 +172,13 @@ public class CoherenceChecker {
         boolean allCoherent = true;
         int errorCount = 0;
 
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
-            BlockPos pos = entry.getKey();
-
+        for (BlockPos pos : construction.getTrackedBlocks()) {
             // If there's an active room and this position is overridden by it, skip world check
             // (the room block is in the world, not the base block)
             boolean skipWorldCheck = activeRoom != null && activeRoom.hasBlockChange(pos);
             boolean doCheckInWorld = checkInWorld && !skipWorldCheck;
 
-            if (!checkBlockCoherence(level, construction, pos, entry.getValue(), doCheckInWorld)) {
+            if (!checkBlockCoherence(level, construction, pos, doCheckInWorld)) {
                 allCoherent = false;
                 errorCount++;
                 if (errorCount >= 10) {
@@ -307,9 +208,8 @@ public class CoherenceChecker {
         boolean allCoherent = true;
         int errorCount = 0;
 
-        List<EntityData> entities = construction.getEntities();
-        for (int i = 0; i < entities.size(); i++) {
-            if (!checkEntityCoherence(level, construction, i, checkInWorld)) {
+        for (UUID entityUuid : construction.getTrackedEntities()) {
+            if (!checkEntityCoherence(level, construction, entityUuid, checkInWorld)) {
                 allCoherent = false;
                 errorCount++;
                 if (errorCount >= 10) {
@@ -340,8 +240,8 @@ public class CoherenceChecker {
         boolean allCoherent = true;
         int errorCount = 0;
 
-        for (Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
-            if (!checkRoomBlockCoherence(level, construction, room, entry.getKey(), entry.getValue(), checkInWorld)) {
+        for (BlockPos pos : room.getChangedBlocks()) {
+            if (!checkRoomBlockCoherence(level, construction, room, pos, checkInWorld)) {
                 allCoherent = false;
                 errorCount++;
                 if (errorCount >= 10) {
@@ -372,9 +272,8 @@ public class CoherenceChecker {
         boolean allCoherent = true;
         int errorCount = 0;
 
-        List<EntityData> entities = room.getEntities();
-        for (int i = 0; i < entities.size(); i++) {
-            if (!checkRoomEntityCoherence(level, construction, room, i, checkInWorld)) {
+        for (UUID entityUuid : room.getRoomEntities()) {
+            if (!checkRoomEntityCoherence(level, construction, room, entityUuid, checkInWorld)) {
                 allCoherent = false;
                 errorCount++;
                 if (errorCount >= 10) {

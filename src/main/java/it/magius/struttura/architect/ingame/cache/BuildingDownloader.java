@@ -128,6 +128,9 @@ public class BuildingDownloader {
         ApiClient.downloadConstruction(rdns, response -> {
             if (response.success() && response.construction() != null) {
                 BuildingCache.getInstance().put(rdns, response.construction(), hash);
+                if (response.snapshot() != null) {
+                    BuildingCache.getInstance().putSnapshot(rdns, response.snapshot());
+                }
                 int done = downloadedCount.incrementAndGet();
                 ChatMessages.broadcastRaw(server, ChatMessages.Level.INFO, "Downloaded " + done + "/" + totalBuildings + ": " + rdns);
             } else {

@@ -100,8 +100,9 @@ public class ConstructionHammerItem extends Item {
 
         var currentConstruction = session.getConstruction();
         boolean isInRoom = session.isInRoom();
+        net.minecraft.server.level.ServerLevel serverLevel = (net.minecraft.server.level.ServerLevel) level;
 
-        // Determina se il blocco è nel target corrente (room o construction)
+        // Determine if the block is in the current target (room or construction)
         boolean isInTarget;
         if (isInRoom) {
             var room = session.getCurrentRoomObject();
@@ -111,7 +112,7 @@ public class ConstructionHammerItem extends Item {
         }
 
         if (isInTarget) {
-            // Blocco IN target corrente: RIMUOVI
+            // Block IN current target: REMOVE
             // Get all positions for multi-block structures (doors, beds, tall plants, etc.)
             List<BlockPos> allPositions = BlockUtils.getMultiBlockPositions(level, clickedPos);
             int removedCount = 0;
@@ -125,14 +126,13 @@ public class ConstructionHammerItem extends Item {
                     }
                 } else {
                     if (currentConstruction.containsBlock(pos)) {
-                        net.minecraft.server.level.ServerLevel serverLevel = (net.minecraft.server.level.ServerLevel) level;
                         currentConstruction.removeBlock(pos, serverLevel);
                         removedCount++;
                     }
                 }
             }
 
-            // Messaggio con nome edificio/room, coordinate e totale
+            // Message with building/room name, coordinates and total
             int totalBlocks = isInRoom && session.getCurrentRoomObject() != null
                 ? session.getCurrentRoomObject().getChangedBlockCount()
                 : currentConstruction.getBlockCount();
@@ -146,13 +146,13 @@ public class ConstructionHammerItem extends Item {
             NetworkHandler.sendEditingInfo(player);
             NetworkHandler.sendBlockPositions(player);
         } else {
-            // Controlla se il blocco appartiene a un'altra costruzione
+            // Check if block belongs to another construction
             var registry = ConstructionRegistry.getInstance();
             String otherConstructionId = null;
 
             for (String id : registry.getAllIds()) {
                 if (id.equals(currentConstruction.getId())) {
-                    continue; // Salta la costruzione corrente
+                    continue;
                 }
                 var otherConstruction = registry.get(id);
                 if (otherConstruction != null && otherConstruction.containsBlock(clickedPos)) {
@@ -162,10 +162,10 @@ public class ConstructionHammerItem extends Item {
             }
 
             if (otherConstructionId != null) {
-                // Blocco appartiene a un'altra costruzione: esci dalla corrente e entra nell'altra
+                // Block belongs to another construction: exit current and enter the other
                 exitAndEnterConstruction(player, session, otherConstructionId);
             } else {
-                // Blocco NON in nessuna costruzione: AGGIUNGI al target corrente
+                // Block NOT in any construction: ADD to current target
                 if (!clickedState.isAir()) {
                     // Get all positions for multi-block structures (doors, beds, tall plants, etc.)
                     List<BlockPos> allPositions = BlockUtils.getMultiBlockPositions(level, clickedPos);
@@ -177,18 +177,18 @@ public class ConstructionHammerItem extends Item {
                             if (isInRoom) {
                                 var room = session.getCurrentRoomObject();
                                 if (room != null) {
-                                    room.setBlockChange(pos, state);
-                                    // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
+                                    room.setBlockChange(pos);
+                                    // Expand construction bounds if block is outside current bounds
                                     currentConstruction.getBounds().expandToInclude(pos);
                                 }
                             } else {
-                                currentConstruction.addBlock(pos, state);
+                                currentConstruction.addBlock(pos, serverLevel);
                             }
                             addedCount++;
                         }
                     }
 
-                    // Messaggio con nome edificio/room, coordinate e totale
+                    // Message with building/room name, coordinates and total
                     int totalBlocks = isInRoom && session.getCurrentRoomObject() != null
                         ? session.getCurrentRoomObject().getChangedBlockCount()
                         : currentConstruction.getBlockCount();

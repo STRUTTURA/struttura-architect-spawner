@@ -7,14 +7,13 @@ import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.placement.ConstructionOperations;
+import it.magius.struttura.architect.registry.ConstructionRegistry;
+import it.magius.struttura.architect.storage.ConstructionStorage;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.entity.projectile.Projectile;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 
@@ -22,38 +21,43 @@ import it.magius.struttura.architect.entity.EntitySpawnHandler;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
- * Rappresenta una sessione di editing attiva per un giocatore.
- * Tiene traccia della costruzione corrente, della modalita' e dei blocchi modificati.
+ * Represents an active editing session for a player.
+ * Tracks the current construction, mode, and entity state.
  */
 public class EditingSession {
 
-    // Sessioni attive per giocatore
+    // Active sessions per player
     private static final Map<UUID, EditingSession> ACTIVE_SESSIONS = new HashMap<>();
 
-    // Giocatore proprietario della sessione
+    // Player owning this session
     private final ServerPlayer player;
 
-    // Costruzione in editing (può essere sostituita durante rename)
+    // Construction being edited (can be replaced during rename)
     private Construction construction;
 
-    // Modalita' corrente (ADD o REMOVE)
+    // Current mode (ADD or REMOVE)
     private EditMode mode = EditMode.ADD;
 
-    // Stanza corrente (null = costruzione base)
+    // Current room (null = base construction)
     private String currentRoom = null;
-
-    // Maps active entity UUID (in world) -> index in the room/construction entity list
-    // Used to track spawned entities and find the correct data when removing
-    private final Map<UUID, Integer> activeEntityToIndex = new HashMap<>();
 
     // Hidden base entities during room editing (temporarily removed when entering a room)
     // Stores the EntityData so we can respawn them when exiting the room
     private final List<EntityData> hiddenBaseEntities = new ArrayList<>();
+
+    // UUIDs of entities spawned for the current room (to remove when exiting)
+    private final Set<UUID> spawnedRoomEntityUuids = new HashSet<>();
+
+    // Saved base blocks before room application (for restoring when exiting room)
+    private Map<BlockPos, BlockState> savedBaseBlocks = new HashMap<>();
+    private Map<BlockPos, CompoundTag> savedBaseNbt = new HashMap<>();
 
     public EditingSession(ServerPlayer player, Construction construction) {
         this.player = player;
@@ -61,28 +65,28 @@ public class EditingSession {
     }
 
     /**
-     * Ottiene la sessione attiva per un giocatore.
+     * Gets the active session for a player.
      */
     public static EditingSession getSession(ServerPlayer player) {
         return ACTIVE_SESSIONS.get(player.getUUID());
     }
 
     /**
-     * Ottiene la sessione attiva per UUID.
+     * Gets the active session for a UUID.
      */
     public static EditingSession getSession(UUID playerId) {
         return ACTIVE_SESSIONS.get(playerId);
     }
 
     /**
-     * Verifica se un giocatore ha una sessione attiva.
+     * Checks if a player has an active session.
      */
     public static boolean hasSession(ServerPlayer player) {
         return ACTIVE_SESSIONS.containsKey(player.getUUID());
     }
 
     /**
-     * Inizia una nuova sessione per un giocatore.
+     * Starts a new session for a player.
      * Automatically tracks existing entities in the construction bounds.
      */
     public static EditingSession startSession(ServerPlayer player, Construction construction) {
@@ -94,250 +98,115 @@ public class EditingSession {
     }
 
     /**
-     * Termina la sessione per un giocatore.
-     * Cattura gli NBT dei block entities prima di terminare.
-     * Se si era in una room, ripristina i blocchi base prima di uscire.
-     * NOTA: Le entità NON vengono catturate automaticamente.
-     * Devono essere aggiunte manualmente con il martello (click destro su entità).
-     * NOTA: Le entità rimangono freezate nei bounds anche dopo l'uscita dall'editing.
+     * Ends the session for a player.
+     * If in a room, restores base blocks before exiting.
+     * Note: Entities remain frozen in bounds even after exiting editing.
      */
     public static EditingSession endSession(ServerPlayer player) {
         EditingSession session = ACTIVE_SESSIONS.remove(player.getUUID());
         if (session != null) {
-            // Se si era in una room, ripristina i blocchi base
+            // If in a room, restore base blocks
             if (session.currentRoom != null) {
                 session.exitRoom();
             }
-            // Refresh block states from world (capture current state of doors, levers, etc.)
-            session.refreshBlockStatesFromWorld();
-            // Cattura NBT dei block entities (casse, furnace, etc.)
-            session.captureBlockEntityNbt();
-            // NOTA: Non catturiamo più le entità automaticamente
-            // Le entità devono essere aggiunte manualmente con il martello
-            // NOTA: Non sblocchiamo le entità - rimangono freezate nei bounds
+            // Update cached stats from world (captures final state)
+            ServerLevel level = (ServerLevel) player.level();
+            session.construction.updateCachedStats(level);
         }
         return session;
     }
 
     /**
-     * Ottiene tutte le sessioni attive.
+     * Gets all active sessions.
      */
     public static java.util.Collection<EditingSession> getAllSessions() {
         return ACTIVE_SESSIONS.values();
     }
 
     /**
-     * Gestisce il piazzamento di un blocco.
-     * Se in una stanza, salva nella room (NON differenziale); altrimenti nella costruzione base.
+     * Handles block placement.
+     * If in a room, saves in the room; otherwise in the base construction.
      */
-    public void onBlockPlaced(BlockPos pos, BlockState state) {
+    public void onBlockPlaced(BlockPos pos) {
         if (mode == EditMode.ADD) {
+            ServerLevel level = (ServerLevel) player.level();
             if (isInRoom()) {
-                // Stiamo editando una stanza: salva nella room
-                // NON differenziale: salva tutti i blocchi, anche se uguali a quelli base
+                // Editing a room: save in the room
                 Room room = construction.getRoom(currentRoom);
                 if (room != null) {
-                    room.setBlockChange(pos, state);
-                    // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
+                    room.setBlockChange(pos);
+                    // Expand construction bounds if block is outside current bounds
                     construction.getBounds().expandToInclude(pos);
                 }
             } else {
-                // Editing costruzione base
-                construction.addBlock(pos, state);
+                // Editing base construction
+                construction.addBlock(pos, level);
             }
-            // Aggiorna il wireframe (i bounds potrebbero essere cambiati)
+            // Update wireframe (bounds may have changed)
             NetworkHandler.sendWireframeSync(player);
-            // Aggiorna info editing per la GUI
+            // Update editing info for GUI
             NetworkHandler.sendEditingInfo(player);
-            // Aggiorna le posizioni dei blocchi
+            // Update block positions
             NetworkHandler.sendBlockPositions(player);
         }
-        // In mode REMOVE il piazzamento non fa nulla di speciale
+        // In REMOVE mode, placement does nothing special
     }
 
     /**
-     * Gestisce la rottura di un blocco.
-     * Se in una stanza, salva aria nella room (NON differenziale); altrimenti la costruzione base.
+     * Handles block breaking.
+     * If in a room, saves air in the room; otherwise in the base construction.
      */
-    public void onBlockBroken(BlockPos pos, BlockState previousState) {
+    public void onBlockBroken(BlockPos pos) {
         if (mode == EditMode.ADD) {
+            ServerLevel level = (ServerLevel) player.level();
             if (isInRoom()) {
-                // Stiamo editando una stanza: aria nella room
-                // NON differenziale: salva aria anche se la base era già aria
+                // Editing a room: air in the room
                 Room room = construction.getRoom(currentRoom);
                 if (room != null) {
-                    BlockState airState = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
-                    room.setBlockChange(pos, airState);
-                    // Espandi i bounds della costruzione se il blocco è fuori dai bounds attuali
+                    room.setBlockChange(pos);
+                    // Expand construction bounds if block is outside current bounds
                     construction.getBounds().expandToInclude(pos);
                 }
             } else {
-                // Editing costruzione base: rompere un blocco aggiunge aria
-                construction.addBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+                // Editing base construction: breaking a block adds air
+                construction.addBlock(pos, level);
             }
-            // Aggiorna il wireframe (i bounds potrebbero essere cambiati)
+            // Update wireframe (bounds may have changed)
             NetworkHandler.sendWireframeSync(player);
-            // Aggiorna info editing per la GUI
+            // Update editing info for GUI
             NetworkHandler.sendEditingInfo(player);
-            // Aggiorna le posizioni dei blocchi
+            // Update block positions
             NetworkHandler.sendBlockPositions(player);
         } else {
+            ServerLevel level = (ServerLevel) player.level();
             if (isInRoom()) {
-                // In REMOVE in una stanza: rimuovi dalla room
-                // NOTA: non ricalcoliamo i bounds perché la room potrebbe avere altri blocchi
-                // e i bounds della costruzione devono comunque includere tutti i blocchi base + room
+                // In REMOVE in a room: remove from the room
                 Room room = construction.getRoom(currentRoom);
                 if (room != null) {
                     room.removeBlockChange(pos);
                 }
             } else {
-                // In REMOVE nella base: rimuovi dalla costruzione
-                ServerLevel level = (ServerLevel) player.level();
+                // In REMOVE on base: remove from construction
                 construction.removeBlock(pos, level);
             }
-            // Aggiorna il wireframe (i bounds sono stati ricalcolati)
+            // Update wireframe (bounds have been recalculated)
             NetworkHandler.sendWireframeSync(player);
-            // Aggiorna info editing per la GUI
+            // Update editing info for GUI
             NetworkHandler.sendEditingInfo(player);
-            // Aggiorna le posizioni dei blocchi
+            // Update block positions
             NetworkHandler.sendBlockPositions(player);
-        }
-    }
-
-    /**
-     * Captures all entities in the construction bounds area.
-     * Excludes Player and Projectile (as defined in EntityData.shouldSaveEntity).
-     * Called automatically during save/exit.
-     */
-    public void captureEntities() {
-        var bounds = construction.getBounds();
-
-        // Cannot capture entities without valid bounds
-        if (!bounds.isValid()) {
-            Architect.LOGGER.debug("Cannot capture entities: bounds not valid for {}", construction.getId());
-            return;
-        }
-
-        // Get ServerLevel from player (MC 1.21: player.level() instead of player.serverLevel())
-        ServerLevel world = (ServerLevel) player.level();
-
-        // Create AABB from bounds (add 1 to include the full block)
-        AABB area = new AABB(
-            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
-            bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
-        );
-
-        // Capture all entities in the area that pass the filter
-        List<Entity> worldEntities = world.getEntities(
-            (Entity) null,
-            area,
-            EntityData::shouldSaveEntity
-        );
-
-        // Clear previous entities
-        construction.clearEntities();
-
-        // Add each captured entity
-        // Pass registryAccess to properly serialize ItemStacks (armor stand equipment, etc.)
-        for (Entity entity : worldEntities) {
-            EntityData data = EntityData.fromEntity(entity, bounds, world.registryAccess());
-            construction.addEntity(data);
-        }
-
-        Architect.LOGGER.info("Captured {} entities for construction {}",
-            worldEntities.size(), construction.getId());
-    }
-
-    /**
-     * Cattura gli NBT di tutti i block entities nella costruzione.
-     * Salva il contenuto di casse, furnace, hoppers, etc.
-     * Chiamato automaticamente durante il save/exit.
-     */
-    public void captureBlockEntityNbt() {
-        // Ottieni il ServerLevel dal player
-        ServerLevel world = (ServerLevel) player.level();
-
-        int capturedCount = 0;
-
-        // Itera su tutti i blocchi della costruzione
-        for (BlockPos pos : construction.getBlocks().keySet()) {
-            BlockEntity blockEntity = world.getBlockEntity(pos);
-            if (blockEntity != null) {
-                // Salva l'NBT del block entity
-                CompoundTag nbt = blockEntity.saveWithoutMetadata(world.registryAccess());
-
-                // Rimuovi tag che non dovrebbero essere copiati
-                nbt.remove("x");
-                nbt.remove("y");
-                nbt.remove("z");
-                nbt.remove("id");  // Il tipo del block entity sarà dedotto dal blocco
-
-                // Salva solo se l'NBT contiene dati utili
-                if (!nbt.isEmpty()) {
-                    construction.setBlockEntityNbt(pos, nbt);
-                    capturedCount++;
-                }
-            }
-        }
-
-        Architect.LOGGER.info("Captured {} block entity NBTs for construction {}",
-            capturedCount, construction.getId());
-    }
-
-    /**
-     * Refreshes all block states from the world.
-     * This updates the construction's saved block states to match the current world state,
-     * capturing any changes like doors being opened/closed, levers being toggled, etc.
-     * Called automatically during save/exit.
-     */
-    public void refreshBlockStatesFromWorld() {
-        ServerLevel world = (ServerLevel) player.level();
-
-        int updatedCount = 0;
-
-        // Update base construction blocks
-        Map<BlockPos, BlockState> blocks = construction.getBlocks();
-        for (BlockPos pos : new ArrayList<>(blocks.keySet())) {
-            BlockState worldState = world.getBlockState(pos);
-            BlockState savedState = blocks.get(pos);
-
-            // Update if the state changed (comparing by identity is fine for BlockState)
-            if (worldState != savedState) {
-                blocks.put(pos, worldState);
-                updatedCount++;
-            }
-        }
-
-        // Update room blocks as well
-        for (Room room : construction.getRooms().values()) {
-            Map<BlockPos, BlockState> roomBlocks = room.getBlockChanges();
-            for (BlockPos pos : new ArrayList<>(roomBlocks.keySet())) {
-                BlockState worldState = world.getBlockState(pos);
-                BlockState savedState = roomBlocks.get(pos);
-
-                if (worldState != savedState) {
-                    roomBlocks.put(pos, worldState);
-                    updatedCount++;
-                }
-            }
-        }
-
-        if (updatedCount > 0) {
-            Architect.LOGGER.info("Refreshed {} block states from world for construction {}",
-                updatedCount, construction.getId());
         }
     }
 
     // ===== Room management =====
 
     /**
-     * Entra in una stanza esistente per editarla.
-     * Applica i blocchi della room nel mondo e gestisce le entità:
-     * - Nasconde i mob della costruzione base (senza trigger)
-     * - Nasconde le entità statiche base che si sovrappongono con quelle della room
-     * - Spawna tutte le entità della room (inclusi mob)
-     * @param roomId l'ID della stanza
-     * @return true se l'entrata ha avuto successo
+     * Enters an existing room for editing.
+     * Applies room blocks in the world and manages entities:
+     * - Hides base construction entities (without triggers)
+     * - Spawns room entities from disk
+     * @param roomId the room ID
+     * @return true if entry was successful
      */
     public boolean enterRoom(String roomId) {
         Room room = construction.getRoom(roomId);
@@ -349,36 +218,32 @@ public class EditingSession {
 
         ServerLevel world = (ServerLevel) player.level();
 
-        // Se eravamo già in una room, cattura dati e ripristina prima
+        // If we were already in a room, capture data and restore first
         if (currentRoom != null) {
             Room previousRoom = construction.getRoom(currentRoom);
             if (previousRoom != null) {
-                // Cattura gli NBT prima di ripristinare
-                captureRoomBlockEntityNbt(world, previousRoom);
-                // NOTA: Non catturiamo più le entità automaticamente
-                // Le entità devono essere aggiunte manualmente con il martello
-                // Rimuovi le entità della room precedente
+                // Remove spawned room entities
                 removeSpawnedRoomEntities(world);
                 restoreBaseBlocks(world, previousRoom);
-                // Ripristina le entità base nascoste
+                // Respawn hidden base entities
                 respawnHiddenBaseEntities(world);
             }
         }
 
-        // Nascondi le entità della costruzione base
+        // Hide base construction entities
         hideBaseEntities(world);
 
-        // Applica i blocchi della nuova room
+        // Apply room blocks in the world
         applyRoomBlocks(world, room);
 
-        // Spawna le entità della nuova room
+        // Spawn room entities from disk
         spawnRoomEntities(world, room);
 
         this.currentRoom = roomId;
         Architect.LOGGER.info("Player {} entered room '{}' ({}) in construction {}",
             player.getName().getString(), room.getName(), roomId, construction.getId());
 
-        // Aggiorna UI
+        // Update UI
         NetworkHandler.sendWireframeSync(player);
         NetworkHandler.sendEditingInfo(player);
         NetworkHandler.sendBlockPositions(player);
@@ -387,10 +252,8 @@ public class EditingSession {
     }
 
     /**
-     * Esce dalla stanza corrente e torna all'editing base.
-     * Cattura gli NBT dei block entity, poi rimuove entità room e ripristina blocchi e entità base.
-     * NOTA: Le entità NON vengono catturate automaticamente.
-     * Devono essere aggiunte manualmente con il martello (click destro su entità).
+     * Exits the current room and returns to base editing.
+     * Removes room entities, restores base blocks and respawns base entities.
      */
     public void exitRoom() {
         if (currentRoom == null) {
@@ -401,23 +264,13 @@ public class EditingSession {
         Room room = construction.getRoom(currentRoom);
 
         if (room != null) {
-            // Refresh block states from world (capture current state of doors, levers, etc.)
-            refreshRoomBlockStatesFromWorld(world, room);
-
-            // Cattura gli NBT dei block entity della room
-            captureRoomBlockEntityNbt(world, room);
-
-            // Refresh entity NBT data from world (e.g., item frame contents)
-            // This captures changes made to entities while editing the room
-            refreshRoomEntitiesFromWorld(world, room);
-
-            // Rimuovi le entità spawnate dalla room
+            // Remove spawned room entities
             removeSpawnedRoomEntities(world);
 
-            // Ripristina i blocchi base dove la room aveva modifiche
+            // Restore base blocks where the room had modifications
             restoreBaseBlocks(world, room);
 
-            // Ripristina le entità base che erano state nascoste
+            // Respawn base entities that were hidden
             respawnHiddenBaseEntities(world);
         }
 
@@ -427,151 +280,15 @@ public class EditingSession {
         Architect.LOGGER.info("Player {} exited room '{}' in construction {}",
             player.getName().getString(), previousRoom, construction.getId());
 
-        // Aggiorna UI
+        // Update UI
         NetworkHandler.sendWireframeSync(player);
         NetworkHandler.sendEditingInfo(player);
         NetworkHandler.sendBlockPositions(player);
     }
 
     /**
-     * Cattura gli NBT dei block entity di una room.
-     * Salva il contenuto di casse, furnace, hoppers, etc. nel delta della room.
-     */
-    private void captureRoomBlockEntityNbt(ServerLevel world, Room room) {
-        int capturedCount = 0;
-
-        for (BlockPos pos : room.getBlockChanges().keySet()) {
-            BlockState state = room.getBlockChange(pos);
-            // Cattura solo se il blocco delta non è aria
-            if (state != null && !state.isAir()) {
-                BlockEntity blockEntity = world.getBlockEntity(pos);
-                if (blockEntity != null) {
-                    CompoundTag nbt = blockEntity.saveWithoutMetadata(world.registryAccess());
-
-                    // Rimuovi tag che non dovrebbero essere copiati
-                    nbt.remove("x");
-                    nbt.remove("y");
-                    nbt.remove("z");
-                    nbt.remove("id");
-
-                    // Salva solo se l'NBT contiene dati utili
-                    if (!nbt.isEmpty()) {
-                        room.setBlockEntityNbt(pos, nbt);
-                        capturedCount++;
-                    }
-                }
-            }
-        }
-
-        Architect.LOGGER.debug("Captured {} block entity NBTs for room '{}'", capturedCount, room.getId());
-    }
-
-    /**
-     * Refreshes room block states from the world.
-     * This updates the saved block states to match the current world state,
-     * capturing any changes like doors being opened/closed, levers being toggled, etc.
-     */
-    private void refreshRoomBlockStatesFromWorld(ServerLevel world, Room room) {
-        int updatedCount = 0;
-
-        Map<BlockPos, BlockState> roomBlocks = room.getBlockChanges();
-        for (BlockPos pos : new ArrayList<>(roomBlocks.keySet())) {
-            BlockState worldState = world.getBlockState(pos);
-            BlockState savedState = roomBlocks.get(pos);
-
-            if (worldState != savedState) {
-                roomBlocks.put(pos, worldState);
-                updatedCount++;
-            }
-        }
-
-        if (updatedCount > 0) {
-            Architect.LOGGER.debug("Refreshed {} block states from world for room '{}'",
-                updatedCount, room.getId());
-        }
-    }
-
-    /**
-     * Refreshes room entity data from the world.
-     * This updates the NBT of tracked entities (e.g., item frame contents) before saving.
-     * Uses activeEntityToIndex to map world entities to their room entity list indices.
-     */
-    private void refreshRoomEntitiesFromWorld(ServerLevel world, Room room) {
-        if (activeEntityToIndex.isEmpty()) {
-            return;
-        }
-
-        var bounds = construction.getBounds();
-        if (!bounds.isValid()) {
-            return;
-        }
-
-        int refreshed = 0;
-
-        for (Map.Entry<UUID, Integer> entry : activeEntityToIndex.entrySet()) {
-            UUID entityUuid = entry.getKey();
-            int listIndex = entry.getValue();
-
-            Entity worldEntity = world.getEntity(entityUuid);
-            if (worldEntity != null && EntityData.shouldSaveEntity(worldEntity)) {
-                // Create fresh EntityData from the world entity
-                EntityData newData = EntityData.fromEntity(worldEntity, bounds, world.registryAccess());
-
-                // Update the room's entity list at the correct index
-                if (listIndex >= 0 && listIndex < room.getEntityCount()) {
-                    room.updateEntity(listIndex, newData);
-                    refreshed++;
-                }
-            }
-        }
-
-        Architect.LOGGER.debug("Refreshed {} room entities from world for room '{}'", refreshed, room.getId());
-    }
-
-    /**
-     * Captures ALL entities in the construction bounds area and saves them to the room.
-     * This includes all entities present (not just those spawned from the room).
-     * Not differential: saves everything.
-     */
-    private void captureRoomEntitiesFullBounds(ServerLevel world, Room room) {
-        var bounds = construction.getBounds();
-
-        // Cannot capture entities without valid bounds
-        if (!bounds.isValid()) {
-            Architect.LOGGER.debug("Cannot capture room entities: bounds not valid for {}", construction.getId());
-            return;
-        }
-
-        // Create AABB from bounds (add 1 to include the full block)
-        AABB area = new AABB(
-            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
-            bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
-        );
-
-        // Capture all entities in the area that pass the filter
-        List<Entity> worldEntities = world.getEntities(
-            (Entity) null,
-            area,
-            EntityData::shouldSaveEntity
-        );
-
-        // Clear previous room entities
-        room.clearEntities();
-
-        // Add each captured entity
-        for (Entity entity : worldEntities) {
-            EntityData data = EntityData.fromEntity(entity, bounds, world.registryAccess());
-            room.addEntity(data);
-        }
-
-        Architect.LOGGER.info("Captured {} entities for room '{}' (full bounds capture)",
-            worldEntities.size(), room.getId());
-    }
-
-    /**
      * Hides base construction entities when entering a room.
-     * All mobs are hidden. Static entities are hidden only if they overlap
-     * with block positions in the room.
+     * All tracked entities are hidden. EntityData is captured for respawning later.
      */
     private void hideBaseEntities(ServerLevel world) {
         var bounds = construction.getBounds();
@@ -580,30 +297,21 @@ public class EditingSession {
             return;
         }
 
-        // Create AABB from construction bounds
-        AABB area = new AABB(
-            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
-            bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
-        );
-
-        // Get all entities in the construction area
-        List<Entity> worldEntities = world.getEntities(
-            (Entity) null,
-            area,
-            EntityData::shouldSaveEntity
-        );
-
         hiddenBaseEntities.clear();
         int hiddenCount = 0;
 
-        for (Entity entity : worldEntities) {
-            // Save entity data before hiding
-            EntityData data = EntityData.fromEntity(entity, bounds, world.registryAccess());
-            hiddenBaseEntities.add(data);
+        // Hide all tracked entities
+        for (UUID entityUuid : construction.getTrackedEntities()) {
+            Entity entity = world.getEntity(entityUuid);
+            if (entity != null && EntityData.shouldSaveEntity(entity)) {
+                // Save entity data before hiding
+                EntityData data = EntityData.fromEntity(entity, bounds, world.registryAccess());
+                hiddenBaseEntities.add(data);
 
-            // Remove entity without triggers (discard)
-            entity.discard();
-            hiddenCount++;
+                // Remove entity without triggers (discard)
+                entity.discard();
+                hiddenCount++;
+            }
         }
 
         Architect.LOGGER.debug("Hidden {} base entities for room editing", hiddenCount);
@@ -626,6 +334,9 @@ public class EditingSession {
         int originX = bounds.getMinX();
         int originY = bounds.getMinY();
         int originZ = bounds.getMinZ();
+
+        // Clear tracked entities - they'll be re-populated with new UUIDs
+        construction.clearTrackedEntities();
 
         int respawnedCount = 0;
 
@@ -677,6 +388,9 @@ public class EditingSession {
                     EntitySpawnHandler.getInstance().ignoreEntity(newUuid);
 
                     world.addFreshEntity(entity);
+
+                    // Track the new UUID in construction
+                    construction.addEntity(newUuid, world);
                     respawnedCount++;
                 }
             } catch (Exception e) {
@@ -687,18 +401,22 @@ public class EditingSession {
 
         hiddenBaseEntities.clear();
         Architect.LOGGER.debug("Respawned {} hidden base entities", respawnedCount);
-
-        // Re-track the respawned entities so they are recognized as part of the construction
-        trackExistingEntitiesInWorld();
     }
 
     /**
      * Spawns room entities into the world.
-     * Uses the same spawn logic as base construction.
+     * Loads entity data from disk via ConstructionStorage, spawns them, and tracks UUIDs.
      */
     private void spawnRoomEntities(ServerLevel world, Room room) {
-        List<EntityData> roomEntities = room.getEntities();
-        if (roomEntities.isEmpty()) {
+        // Load room entity data from disk via the registry's storage
+        ConstructionStorage storage = ConstructionRegistry.getInstance().getStorage();
+        if (storage == null) {
+            Architect.LOGGER.warn("Cannot spawn room entities: storage not initialized");
+            return;
+        }
+        List<EntityData> roomEntityData = storage.loadRoomEntities(construction, room.getId());
+
+        if (roomEntityData.isEmpty()) {
             return;
         }
 
@@ -713,10 +431,9 @@ public class EditingSession {
         int originZ = bounds.getMinZ();
 
         int spawnedCount = 0;
+        spawnedRoomEntityUuids.clear();
 
-        for (int index = 0; index < roomEntities.size(); index++) {
-            EntityData data = roomEntities.get(index);
-
+        for (EntityData data : roomEntityData) {
             try {
                 // Calculate world position
                 double worldX = originX + data.getRelativePos().x;
@@ -764,8 +481,10 @@ public class EditingSession {
                     EntitySpawnHandler.getInstance().ignoreEntity(newUuid);
 
                     world.addFreshEntity(entity);
-                    // Map new UUID to list index for later removal
-                    activeEntityToIndex.put(newUuid, index);
+
+                    // Track the new UUID in the room
+                    room.addEntity(newUuid);
+                    spawnedRoomEntityUuids.add(newUuid);
                     spawnedCount++;
                 }
             } catch (Exception e) {
@@ -781,12 +500,11 @@ public class EditingSession {
      * Removes entities spawned for the current room.
      */
     private void removeSpawnedRoomEntities(ServerLevel world) {
-        Architect.LOGGER.info("removeSpawnedRoomEntities: {} entities to remove", activeEntityToIndex.size());
+        Architect.LOGGER.debug("removeSpawnedRoomEntities: {} entities to remove", spawnedRoomEntityUuids.size());
         int removedCount = 0;
 
-        for (UUID activeUuid : activeEntityToIndex.keySet()) {
+        for (UUID activeUuid : spawnedRoomEntityUuids) {
             Entity entity = world.getEntity(activeUuid);
-            Architect.LOGGER.info("  Entity UUID {}: found={}", activeUuid, entity != null);
             if (entity != null) {
                 // Unfreeze entity before removing
                 it.magius.struttura.architect.entity.EntityFreezeHandler.getInstance().unfreezeEntity(activeUuid);
@@ -798,49 +516,95 @@ public class EditingSession {
             }
         }
 
-        activeEntityToIndex.clear();
-        Architect.LOGGER.info("Removed {} room entities", removedCount);
+        // Also remove the room entity UUIDs from the room's tracking
+        // (they were spawned entities, not permanent)
+        Room room = currentRoom != null ? construction.getRoom(currentRoom) : null;
+        if (room != null) {
+            for (UUID uuid : spawnedRoomEntityUuids) {
+                room.removeEntity(uuid);
+            }
+        }
+
+        spawnedRoomEntityUuids.clear();
+        Architect.LOGGER.debug("Removed {} room entities", removedCount);
     }
 
     /**
      * Applies room delta blocks in the world.
-     * Delegates to centralized ConstructionOperations.placeRoomBlocks.
+     * Saves base blocks first (for restoration on exit), then loads room snapshot from disk
+     * and delegates to ConstructionOperations.placeRoomBlocks.
      */
     private void applyRoomBlocks(ServerLevel world, Room room) {
-        int appliedCount = ConstructionOperations.placeRoomBlocks(world, room, construction);
+        // Save base blocks at room positions BEFORE overwriting them
+        savedBaseBlocks.clear();
+        savedBaseNbt.clear();
+        for (BlockPos pos : room.getChangedBlocks()) {
+            savedBaseBlocks.put(pos, world.getBlockState(pos));
+            net.minecraft.world.level.block.entity.BlockEntity be = world.getBlockEntity(pos);
+            if (be != null) {
+                CompoundTag nbt = be.saveWithoutMetadata(world.registryAccess());
+                nbt.remove("x");
+                nbt.remove("y");
+                nbt.remove("z");
+                nbt.remove("id");
+                if (!nbt.isEmpty()) {
+                    savedBaseNbt.put(pos, nbt);
+                }
+            }
+        }
+
+        // Load room snapshot from disk
+        ConstructionStorage storage = ConstructionRegistry.getInstance().getStorage();
+        if (storage == null) {
+            Architect.LOGGER.error("Cannot apply room blocks: storage not initialized");
+            return;
+        }
+        it.magius.struttura.architect.model.ConstructionSnapshot fullSnapshot =
+            storage.loadNbtOnly(construction.getId(), construction.getBounds());
+        if (fullSnapshot == null || !fullSnapshot.rooms().containsKey(room.getId())) {
+            Architect.LOGGER.warn("No saved room snapshot for room '{}', skipping block application", room.getId());
+            return;
+        }
+        it.magius.struttura.architect.model.ConstructionSnapshot.RoomSnapshot roomSnapshot =
+            fullSnapshot.rooms().get(room.getId());
+
+        int appliedCount = ConstructionOperations.placeRoomBlocks(world, roomSnapshot);
         Architect.LOGGER.debug("Applied {} room blocks for room '{}' in construction {}",
             appliedCount, room.getId(), construction.getId());
     }
 
     /**
      * Restores base construction blocks where the room had modifications.
-     * Delegates to centralized ConstructionOperations.restoreBaseBlocks.
+     * Uses the saved base blocks captured before room application.
      */
     private void restoreBaseBlocks(ServerLevel world, Room room) {
-        int restoredCount = ConstructionOperations.restoreBaseBlocks(world, room, construction);
+        int restoredCount = ConstructionOperations.restoreBaseBlocks(
+            world, room.getChangedBlocks(), savedBaseBlocks, savedBaseNbt);
+        savedBaseBlocks.clear();
+        savedBaseNbt.clear();
         Architect.LOGGER.debug("Restored {} base blocks after exiting room '{}' in construction {}",
             restoredCount, room.getId(), construction.getId());
     }
 
     /**
-     * Crea una nuova stanza e ci entra.
-     * @param name il nome della stanza
-     * @return la stanza creata, o null se non e' stato possibile crearla
+     * Creates a new room and enters it.
+     * @param name the room name
+     * @return the created room, or null if it couldn't be created
      */
     public Room createRoom(String name) {
-        // Verifica limiti
+        // Check limits
         if (construction.getRoomCount() >= 50) {
             Architect.LOGGER.warn("Cannot create room: max rooms (50) reached for construction {}",
                 construction.getId());
             return null;
         }
 
-        // Crea la stanza
+        // Create the room
         Room room = new Room(name);
 
-        // Verifica ID univoco
+        // Verify unique ID
         if (construction.hasRoom(room.getId())) {
-            // Aggiungi suffisso numerico
+            // Add numeric suffix
             int suffix = 2;
             String baseId = room.getId();
             while (construction.hasRoom(baseId + "_" + suffix)) {
@@ -854,20 +618,20 @@ public class EditingSession {
         Architect.LOGGER.info("Player {} created room '{}' ({}) in construction {}",
             player.getName().getString(), name, room.getId(), construction.getId());
 
-        // Entra nella stanza appena creata
+        // Enter the newly created room
         enterRoom(room.getId());
 
         return room;
     }
 
     /**
-     * Elimina una stanza.
-     * Se si sta editando quella stanza, esce prima.
-     * @param roomId l'ID della stanza da eliminare
-     * @return true se la stanza e' stata eliminata
+     * Deletes a room.
+     * If currently editing that room, exits first.
+     * @param roomId the ID of the room to delete
+     * @return true if the room was deleted
      */
     public boolean deleteRoom(String roomId) {
-        // Se stiamo editando questa stanza, esci prima
+        // If editing this room, exit first
         if (roomId.equals(currentRoom)) {
             exitRoom();
         }
@@ -878,7 +642,7 @@ public class EditingSession {
             Architect.LOGGER.info("Player {} deleted room '{}' from construction {}",
                 player.getName().getString(), roomId, construction.getId());
 
-            // Aggiorna UI
+            // Update UI
             NetworkHandler.sendEditingInfo(player);
         }
 
@@ -886,25 +650,25 @@ public class EditingSession {
     }
 
     /**
-     * Rinomina una stanza. Questo cambia sia il nome che l'ID (derivato dal nome).
-     * @param roomId ID attuale della stanza
-     * @param newName nuovo nome
-     * @return il nuovo ID della stanza, o null se fallisce
+     * Renames a room. Changes both name and ID (derived from name).
+     * @param roomId current room ID
+     * @param newName new name
+     * @return the new room ID, or null if it fails
      */
     public String renameRoom(String roomId, String newName) {
-        // Genera il nuovo ID dal nome e delega al metodo completo
+        // Generate the new ID from name and delegate
         String newId = Room.generateId(newName);
         return renameRoomWithId(roomId, newId, newName);
     }
 
     /**
-     * Rinomina una stanza specificando sia il nuovo ID che il nuovo nome.
-     * Usato dalla GUI quando si vuole impostare un ID personalizzato.
+     * Renames a room specifying both new ID and name.
+     * Used by GUI when setting a custom ID.
      *
-     * @param roomId ID attuale della stanza
-     * @param newId nuovo ID (può essere diverso dal nome)
-     * @param newName nuovo nome
-     * @return il nuovo ID della stanza, o null se fallisce (ID già esistente)
+     * @param roomId current room ID
+     * @param newId new ID (can differ from name)
+     * @param newName new name
+     * @return the new room ID, or null if it fails (ID already exists)
      */
     public String renameRoomWithId(String roomId, String newId, String newName) {
         Room oldRoom = construction.getRoom(roomId);
@@ -912,7 +676,7 @@ public class EditingSession {
             return null;
         }
 
-        // Se l'ID non cambia, aggiorna solo il nome
+        // If the ID doesn't change, update only the name
         if (newId.equals(roomId)) {
             oldRoom.setName(newName);
             Architect.LOGGER.info("Player {} renamed room '{}' (same ID) in construction {}",
@@ -921,48 +685,36 @@ public class EditingSession {
             return newId;
         }
 
-        // Verifica che il nuovo ID non esista già
+        // Verify new ID doesn't already exist
         if (construction.hasRoom(newId)) {
             Architect.LOGGER.warn("Cannot rename room '{}' to '{}': ID already exists",
                 roomId, newId);
             return null;
         }
 
-        // Crea una nuova stanza con ID e nome specificati, copiando i dati
-        Room newRoom = new Room(newId, newName, oldRoom.getCreatedAt());
-        // Copia tutti i blocchi
-        for (var entry : oldRoom.getBlockChanges().entrySet()) {
-            newRoom.setBlockChange(entry.getKey(), entry.getValue());
-        }
-        // Copia tutti i block entity NBT
-        for (var entry : oldRoom.getBlockEntityNbtMap().entrySet()) {
-            newRoom.setBlockEntityNbt(entry.getKey(), entry.getValue().copy());
-        }
-        // Copy all entities
-        for (EntityData data : oldRoom.getEntities()) {
-            newRoom.addEntity(data);
-        }
+        // Create a new room with the new ID/name, copying data
+        Room newRoom = oldRoom.copyWithNewName(newName);
 
-        // Rimuovi la vecchia room e aggiungi la nuova
+        // Remove old room and add new one
         construction.removeRoom(roomId);
         construction.addRoom(newRoom);
 
-        // Se l'utente era in questa room, aggiorna il riferimento
+        // If user was in this room, update the reference
         if (roomId.equals(currentRoom)) {
-            currentRoom = newId;
+            currentRoom = newRoom.getId();
         }
 
         Architect.LOGGER.info("Player {} renamed room '{}' to '{}' (new ID: '{}') in construction {}",
-            player.getName().getString(), roomId, newName, newId, construction.getId());
+            player.getName().getString(), roomId, newName, newRoom.getId(), construction.getId());
 
-        // Aggiorna UI
+        // Update UI
         NetworkHandler.sendEditingInfo(player);
 
-        return newId;
+        return newRoom.getId();
     }
 
     /**
-     * Ottiene la stanza corrente in editing, o null se non in una stanza.
+     * Gets the current room being edited, or null if not in a room.
      */
     public Room getCurrentRoomObject() {
         if (currentRoom == null) {
@@ -972,8 +724,8 @@ public class EditingSession {
     }
 
     /**
-     * Ottiene il conteggio blocchi effettivo per la visualizzazione.
-     * Se in una stanza, somma i blocchi base + le modifiche delta.
+     * Gets the effective block count for display.
+     * If in a room, sums base blocks + delta changes.
      */
     public int getEffectiveBlockCount() {
         if (!isInRoom()) {
@@ -985,11 +737,11 @@ public class EditingSession {
             return construction.getBlockCount();
         }
 
-        // Base blocks + delta changes (approssimativo)
+        // Base blocks + delta changes (approximate)
         return construction.getBlockCount() + room.getChangedBlockCount();
     }
 
-    // Getters e Setters
+    // Getters and Setters
     public ServerPlayer getPlayer() { return player; }
     public Construction getConstruction() { return construction; }
     public void setConstruction(Construction construction) { this.construction = construction; }
@@ -1003,89 +755,38 @@ public class EditingSession {
     public boolean isInRoom() { return currentRoom != null; }
 
     /**
-     * Tracks an entity added to the current room/construction.
-     * @param activeUuid The UUID of the entity currently in the world
-     * @param listIndex The index of this entity in the room/construction entity list
+     * Checks if an entity is tracked in the current context.
+     * Delegates to construction or room entity tracking.
      */
-    public void trackEntity(UUID activeUuid, int listIndex) {
-        Architect.LOGGER.debug("trackEntity: activeUuid={}, listIndex={}, isInRoom={}, currentRoom={}",
-            activeUuid, listIndex, isInRoom(), currentRoom);
-        activeEntityToIndex.put(activeUuid, listIndex);
-    }
-
-    /**
-     * Removes an entity from tracking.
-     * @param activeUuid The UUID of the entity in the world
-     * @return The list index of the entity, or -1 if not tracked
-     */
-    public int untrackEntity(UUID activeUuid) {
-        Integer index = activeEntityToIndex.remove(activeUuid);
-        return index != null ? index : -1;
-    }
-
-    /**
-     * Checks if an entity is tracked.
-     * @param activeUuid The UUID of the entity in the world
-     * @return true if the entity is tracked
-     */
-    public boolean isEntityTracked(UUID activeUuid) {
-        return activeEntityToIndex.containsKey(activeUuid);
-    }
-
-    /**
-     * Gets the list index for a tracked entity.
-     * @param activeUuid The UUID of the entity in the world
-     * @return The list index, or -1 if not tracked
-     */
-    public int getEntityIndex(UUID activeUuid) {
-        Integer index = activeEntityToIndex.get(activeUuid);
-        return index != null ? index : -1;
-    }
-
-    /**
-     * Updates tracking indices after an entity is removed from the list.
-     * When an entity at index N is removed, all entities with index > N need to be decremented.
-     * @param removedIndex The index of the removed entity
-     */
-    public void updateTrackingAfterRemoval(int removedIndex) {
-        Map<UUID, Integer> updated = new HashMap<>();
-        for (Map.Entry<UUID, Integer> entry : activeEntityToIndex.entrySet()) {
-            int idx = entry.getValue();
-            if (idx > removedIndex) {
-                updated.put(entry.getKey(), idx - 1);
-            } else {
-                updated.put(entry.getKey(), idx);
+    public boolean isEntityTracked(UUID entityUuid) {
+        if (isInRoom()) {
+            Room room = getCurrentRoomObject();
+            if (room != null) {
+                return room.getRoomEntities().contains(entityUuid);
             }
         }
-        activeEntityToIndex.clear();
-        activeEntityToIndex.putAll(updated);
+        return construction.isEntityTracked(entityUuid);
     }
 
     /**
      * Scans the world for existing entities in the construction bounds and tracks them.
-     * This is called when starting an edit session to protect entities that were
+     * Called when starting an edit session to protect entities that were
      * spawned before the session started (e.g., after a pull).
-     * Matches world entities to EntityData in the construction by type and approximate position.
+     * Simply adds UUIDs to trackedEntities directly.
      */
     public void trackExistingEntitiesInWorld() {
         var bounds = construction.getBounds();
         if (!bounds.isValid()) {
-            Architect.LOGGER.info("trackExistingEntitiesInWorld: bounds not valid, skipping");
             return;
         }
 
         ServerLevel world = (ServerLevel) player.level();
 
-        // Create AABB from bounds (original size, no expansion)
-        // TODO: verify if expansion is needed
+        // Create AABB from bounds
         AABB area = new AABB(
             bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
             bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1
         );
-
-        Architect.LOGGER.info("trackExistingEntitiesInWorld: bounds=({},{},{}) to ({},{},{}), search area={}",
-            bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(),
-            bounds.getMaxX(), bounds.getMaxY(), bounds.getMaxZ(), area);
 
         // Get all entities in the area
         List<Entity> worldEntities = world.getEntities(
@@ -1094,87 +795,18 @@ public class EditingSession {
             EntityData::shouldSaveEntity
         );
 
-        Architect.LOGGER.info("trackExistingEntitiesInWorld: found {} world entities in area", worldEntities.size());
-
-        List<EntityData> constructionEntities = construction.getEntities();
-        if (constructionEntities.isEmpty()) {
-            Architect.LOGGER.info("trackExistingEntitiesInWorld: no construction entities, skipping");
-            return;
-        }
-
-        Architect.LOGGER.info("trackExistingEntitiesInWorld: {} construction entities to match",
-            constructionEntities.size());
-
-        int originX = bounds.getMinX();
-        int originY = bounds.getMinY();
-        int originZ = bounds.getMinZ();
-
         int trackedCount = 0;
 
-        // For each entity in the world, try to find a matching EntityData
+        // Add all eligible entities to tracked set
         for (Entity worldEntity : worldEntities) {
-            if (isEntityTracked(worldEntity.getUUID())) {
-                continue; // Already tracked
-            }
-
-            String entityType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
-                .getKey(worldEntity.getType()).toString();
-            double worldX = worldEntity.getX();
-            double worldY = worldEntity.getY();
-            double worldZ = worldEntity.getZ();
-
-            Architect.LOGGER.info("trackExistingEntitiesInWorld: checking world entity {} type={} pos=({},{},{})",
-                worldEntity.getUUID(), entityType, worldX, worldY, worldZ);
-
-            // Find matching EntityData by type and approximate position
-            boolean matched = false;
-            for (int i = 0; i < constructionEntities.size(); i++) {
-                EntityData data = constructionEntities.get(i);
-
-                // Check type match
-                if (!data.getEntityType().equals(entityType)) {
-                    continue;
-                }
-
-                // Calculate expected world position from EntityData
-                double expectedX = originX + data.getRelativePos().x;
-                double expectedY = originY + data.getRelativePos().y;
-                double expectedZ = originZ + data.getRelativePos().z;
-
-                // Check position match (within 1 block tolerance)
-                double dx = Math.abs(worldX - expectedX);
-                double dy = Math.abs(worldY - expectedY);
-                double dz = Math.abs(worldZ - expectedZ);
-
-                Architect.LOGGER.info("  comparing with EntityData[{}] type={} relPos=({},{},{}) " +
-                    "expectedWorldPos=({},{},{}) distance=({},{},{})",
-                    i, data.getEntityType(),
-                    data.getRelativePos().x, data.getRelativePos().y, data.getRelativePos().z,
-                    expectedX, expectedY, expectedZ, dx, dy, dz);
-
-                if (dx < 1.0 && dy < 1.0 && dz < 1.0) {
-                    // Check if this index is already used by another entity
-                    boolean indexAlreadyUsed = activeEntityToIndex.containsValue(i);
-                    if (!indexAlreadyUsed) {
-                        trackEntity(worldEntity.getUUID(), i);
-                        // Also track in construction for refreshEntitiesFromWorld before push
-                        construction.trackSpawnedEntity(worldEntity.getUUID());
-                        trackedCount++;
-                        matched = true;
-                        Architect.LOGGER.info("  MATCHED! Tracked entity {} -> index {}", worldEntity.getUUID(), i);
-                        break; // Move to next world entity
-                    } else {
-                        Architect.LOGGER.info("  Position matched but index {} already used", i);
-                    }
-                }
-            }
-
-            if (!matched) {
-                Architect.LOGGER.info("  NO MATCH found for world entity {}", worldEntity.getUUID());
+            UUID entityUuid = worldEntity.getUUID();
+            if (!construction.isEntityTracked(entityUuid)) {
+                construction.addEntity(entityUuid, world);
+                trackedCount++;
             }
         }
 
-        Architect.LOGGER.info("trackExistingEntitiesInWorld: tracked {} entities for construction {}",
+        Architect.LOGGER.debug("trackExistingEntitiesInWorld: tracked {} new entities for construction {}",
             trackedCount, construction.getId());
     }
 }

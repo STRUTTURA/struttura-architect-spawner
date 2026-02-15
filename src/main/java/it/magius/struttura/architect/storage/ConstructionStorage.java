@@ -8,6 +8,8 @@ import com.google.gson.JsonElement;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.i18n.LanguageUtils;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ConstructionBounds;
+import it.magius.struttura.architect.model.ConstructionSnapshot;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.ModInfo;
 import it.magius.struttura.architect.model.Room;
@@ -17,7 +19,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtAccounter;
-import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
@@ -67,27 +69,52 @@ public class ConstructionStorage {
     }
 
     /**
-     * Salva una costruzione su disco.
+     * Saves construction metadata only (no blocks/entities NBT).
+     * Used by ConstructionRegistry auto-save when no ServerLevel is available.
+     * Block/entity data is persisted separately via save(Construction, ConstructionSnapshot).
      *
-     * @param construction la costruzione da salvare
-     * @return true se il salvataggio ha avuto successo
+     * @param construction the construction to save
+     * @return true if save was successful
      */
     public boolean save(Construction construction) {
         try {
             Path constructionDir = getConstructionDirectory(construction.getId());
             ensureDirectoryExists(constructionDir);
 
-            // Calcola i mod richiesti dai blocchi prima di salvare
-            construction.computeRequiredMods();
-
-            // Salva metadata
+            // Save metadata only (no blocks/entities NBT)
             saveMetadata(construction, constructionDir);
 
-            // Salva blocchi
-            saveBlocks(construction, constructionDir);
+            Architect.LOGGER.info("Saved construction metadata: {} ({} blocks, {} entities, {} rooms)",
+                construction.getId(), construction.getBlockCount(), construction.getEntityCount(), construction.getRoomCount());
+            return true;
 
-            // Salva entità
-            saveEntities(construction, constructionDir);
+        } catch (Exception e) {
+            Architect.LOGGER.error("Failed to save construction metadata: {}", construction.getId(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Full save: metadata + blocks.nbt + entities.nbt from a world snapshot.
+     * Used when the player explicitly saves (endSession, push, etc.) and we have world access.
+     *
+     * @param construction the construction to save
+     * @param snapshot the snapshot containing block states, NBT, and entity data from the world
+     * @return true if save was successful
+     */
+    public boolean save(Construction construction, ConstructionSnapshot snapshot) {
+        try {
+            Path constructionDir = getConstructionDirectory(construction.getId());
+            ensureDirectoryExists(constructionDir);
+
+            // Save metadata
+            saveMetadata(construction, constructionDir);
+
+            // Save blocks from snapshot
+            saveBlocks(snapshot, construction.getBounds(), construction.getRooms(), constructionDir);
+
+            // Save entities from snapshot
+            saveEntities(snapshot, construction.getRooms(), constructionDir);
 
             Architect.LOGGER.info("Saved construction: {} ({} blocks, {} entities, {} rooms)",
                 construction.getId(), construction.getBlockCount(), construction.getEntityCount(), construction.getRoomCount());
@@ -100,25 +127,51 @@ public class ConstructionStorage {
     }
 
     /**
-     * Saves only NBT files (blocks.nbt and entities.nbt), no metadata.json.
-     * Used by InGame spawner cache - metadata comes from the list export.
+     * Full save with world access: creates a snapshot and saves everything.
+     * Convenience method that combines snapshot creation and save.
      *
      * @param construction the construction to save
+     * @param level the server level to read block/entity data from
      * @return true if save was successful
      */
-    public boolean saveNbtOnly(Construction construction) {
+    public boolean save(Construction construction, ServerLevel level) {
+        try {
+            // Compute required mods from world before saving
+            construction.computeRequiredMods(level);
+
+            // Create snapshot from world
+            ConstructionSnapshot snapshot = ConstructionSnapshot.fromWorld(construction, level);
+
+            return save(construction, snapshot);
+
+        } catch (Exception e) {
+            Architect.LOGGER.error("Failed to save construction with level: {}", construction.getId(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Saves only NBT files (blocks.nbt and entities.nbt), no metadata.json.
+     * Used by InGame spawner cache - metadata comes from the list export.
+     * Accepts a ConstructionSnapshot containing the deserialized cloud data.
+     *
+     * @param construction the construction (for ID, bounds, rooms)
+     * @param snapshot the snapshot containing block states, NBT, and entity data
+     * @return true if save was successful
+     */
+    public boolean saveNbtOnly(Construction construction, ConstructionSnapshot snapshot) {
         try {
             Path constructionDir = getConstructionDirectory(construction.getId());
             ensureDirectoryExists(constructionDir);
 
-            // Save blocks only
-            saveBlocks(construction, constructionDir);
+            // Save blocks from snapshot
+            saveBlocks(snapshot, construction.getBounds(), construction.getRooms(), constructionDir);
 
-            // Save entities only
-            saveEntities(construction, constructionDir);
+            // Save entities from snapshot
+            saveEntities(snapshot, construction.getRooms(), constructionDir);
 
             Architect.LOGGER.debug("Saved NBT cache: {} ({} blocks, {} entities)",
-                construction.getId(), construction.getBlockCount(), construction.getEntityCount());
+                construction.getId(), snapshot.blocks().size(), snapshot.entities().size());
             return true;
 
         } catch (Exception e) {
@@ -128,13 +181,14 @@ public class ConstructionStorage {
     }
 
     /**
-     * Loads only NBT files (blocks.nbt and entities.nbt) into an existing construction.
-     * Used by InGame spawner cache - metadata comes from the list export.
+     * Loads only NBT files (blocks.nbt and entities.nbt) as a ConstructionSnapshot.
+     * Used by InGame spawner cache - the spawner needs full block state data for placement.
      *
      * @param id the construction ID (RDNS)
-     * @return the construction with loaded blocks/entities, or null if not found
+     * @param bounds the construction bounds (for denormalization), or null if not available
+     * @return the snapshot with loaded blocks/entities, or null if not found
      */
-    public Construction loadNbtOnly(String id) {
+    public ConstructionSnapshot loadNbtOnly(String id, ConstructionBounds bounds) {
         try {
             Path constructionDir = getConstructionDirectory(id);
 
@@ -147,21 +201,30 @@ public class ConstructionStorage {
                 return null;
             }
 
-            // Create minimal construction (metadata not needed for InGame)
-            Construction construction = new Construction(id, new UUID(0, 0), "ingame");
+            // Load blocks and entities as snapshot data
+            ConstructionSnapshot snapshot = loadBlocksAsSnapshot(constructionDir, bounds);
 
-            // Load blocks
-            loadBlocks(construction, constructionDir);
+            // Merge entity data
+            List<EntityData> entities = loadEntitiesAsSnapshot(constructionDir);
+            Map<String, ConstructionSnapshot.RoomSnapshot> roomSnapshots = snapshot.rooms();
 
-            // Load entities
-            loadEntities(construction, constructionDir);
+            // Load room entities and merge with room block snapshots
+            Map<String, ConstructionSnapshot.RoomSnapshot> mergedRooms = new HashMap<>();
+            for (var entry : roomSnapshots.entrySet()) {
+                List<EntityData> roomEntities = loadRoomEntitiesAsSnapshot(constructionDir, entry.getKey());
+                mergedRooms.put(entry.getKey(), new ConstructionSnapshot.RoomSnapshot(
+                    entry.getValue().blocks(),
+                    entry.getValue().blockEntityNbt(),
+                    roomEntities
+                ));
+            }
 
-            // Note: Bounds are NOT set here - they come from SpawnableBuilding metadata
-            // and will be applied in InGameBuildingSpawner.doSpawn before architectSpawn
+            ConstructionSnapshot result = ConstructionSnapshot.fromDeserialized(
+                snapshot.blocks(), snapshot.blockEntityNbt(), entities, mergedRooms);
 
             Architect.LOGGER.debug("Loaded NBT cache: {} ({} blocks, {} entities)",
-                construction.getId(), construction.getBlockCount(), construction.getEntityCount());
-            return construction;
+                id, result.blocks().size(), result.entities().size());
+            return result;
 
         } catch (Exception e) {
             Architect.LOGGER.error("Failed to load NBT cache: {}", id, e);
@@ -189,11 +252,8 @@ public class ConstructionStorage {
                 return null;
             }
 
-            // Carica blocchi
+            // Load blocks (reference-only: positions only, blocks already in world from Minecraft save)
             loadBlocks(construction, constructionDir);
-
-            // Carica entità
-            loadEntities(construction, constructionDir);
 
             Architect.LOGGER.info("Loaded construction: {} ({} blocks, {} entities, {} rooms)",
                 construction.getId(), construction.getBlockCount(), construction.getEntityCount(), construction.getRoomCount());
@@ -434,14 +494,14 @@ public class ConstructionStorage {
             json.add("anchors", anchorsObj);
         }
 
-        // Spawned entity UUIDs (runtime tracking for entity removal)
-        Set<UUID> spawnedUuids = construction.getSpawnedEntityUuids();
-        if (!spawnedUuids.isEmpty()) {
+        // Tracked entity UUIDs (persisted for re-tracking on load)
+        Set<UUID> trackedUuids = construction.getTrackedEntities();
+        if (!trackedUuids.isEmpty()) {
             com.google.gson.JsonArray uuidsArray = new com.google.gson.JsonArray();
-            for (UUID uuid : spawnedUuids) {
+            for (UUID uuid : trackedUuids) {
                 uuidsArray.add(uuid.toString());
             }
-            json.add("spawnedEntityUuids", uuidsArray);
+            json.add("trackedEntityUuids", uuidsArray);
         }
 
         // Versione del mod Struttura
@@ -562,6 +622,12 @@ public class ConstructionStorage {
                         : Instant.now();
 
                     Room room = new Room(roomId, roomName, roomCreatedAt);
+
+                    // Load cached entity count (room entities are not in the world at load time)
+                    if (roomJson.has("entitiesCount")) {
+                        room.setCachedEntityCount(roomJson.get("entitiesCount").getAsInt());
+                    }
+
                     construction.addRoom(room);
                 }
             }
@@ -579,15 +645,16 @@ public class ConstructionStorage {
                 }
             }
 
-            // Load spawned entity UUIDs
-            if (json.has("spawnedEntityUuids") && json.get("spawnedEntityUuids").isJsonArray()) {
-                com.google.gson.JsonArray uuidsArray = json.getAsJsonArray("spawnedEntityUuids");
+            // Load tracked entity UUIDs (supports both old "spawnedEntityUuids" and new "trackedEntityUuids" keys)
+            String uuidsKey = json.has("trackedEntityUuids") ? "trackedEntityUuids" : "spawnedEntityUuids";
+            if (json.has(uuidsKey) && json.get(uuidsKey).isJsonArray()) {
+                com.google.gson.JsonArray uuidsArray = json.getAsJsonArray(uuidsKey);
                 for (JsonElement element : uuidsArray) {
                     try {
                         UUID uuid = UUID.fromString(element.getAsString());
-                        construction.trackSpawnedEntity(uuid);
+                        construction.addEntityRaw(uuid);
                     } catch (IllegalArgumentException e) {
-                        Architect.LOGGER.warn("Invalid UUID in spawnedEntityUuids: {}", element.getAsString());
+                        Architect.LOGGER.warn("Invalid UUID in {}: {}", uuidsKey, element.getAsString());
                     }
                 }
             }
@@ -598,30 +665,31 @@ public class ConstructionStorage {
 
     // ===== Blocks serialization (NBT) =====
 
-    private void saveBlocks(Construction construction, Path directory) throws IOException {
+    /**
+     * Saves block data from a snapshot to blocks.nbt.
+     * Uses the snapshot's block states and block entity NBT (not from Construction).
+     */
+    private void saveBlocks(ConstructionSnapshot snapshot, ConstructionBounds bounds, Map<String, Room> rooms, Path directory) throws IOException {
         CompoundTag root = new CompoundTag();
 
-        // Ottieni i bounds per normalizzare le coordinate
-        var bounds = construction.getBounds();
+        // Get bounds offsets for coordinate normalization
         int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
         int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
         int offsetZ = bounds.isValid() ? bounds.getMinZ() : 0;
 
-        // Palette: mappa blockState -> index
+        // Palette: blockState string -> index
         Map<String, Integer> palette = new LinkedHashMap<>();
         ListTag paletteList = new ListTag();
 
-        // Blocchi
+        // Base blocks from snapshot
         ListTag blocksList = new ListTag();
 
-        for (Map.Entry<BlockPos, BlockState> entry : construction.getBlocks().entrySet()) {
+        for (Map.Entry<BlockPos, BlockState> entry : snapshot.blocks().entrySet()) {
             BlockPos pos = entry.getKey();
             BlockState state = entry.getValue();
 
-            // Serializza lo stato del blocco
             String stateString = serializeBlockState(state);
 
-            // Aggiungi alla palette se non esiste
             int paletteIndex = palette.computeIfAbsent(stateString, s -> {
                 CompoundTag paletteEntry = new CompoundTag();
                 paletteEntry.putString("state", s);
@@ -629,15 +697,15 @@ public class ConstructionStorage {
                 return palette.size();
             });
 
-            // Aggiungi il blocco con coordinate NORMALIZZATE (relative a 0,0,0)
+            // Normalized coordinates (relative to 0,0,0)
             CompoundTag blockTag = new CompoundTag();
             blockTag.putInt("x", pos.getX() - offsetX);
             blockTag.putInt("y", pos.getY() - offsetY);
             blockTag.putInt("z", pos.getZ() - offsetZ);
-            blockTag.putInt("p", paletteIndex); // palette index
+            blockTag.putInt("p", paletteIndex);
 
-            // Se il blocco ha un NBT associato (block entity), includilo
-            CompoundTag blockEntityNbt = construction.getBlockEntityNbt(pos);
+            // Block entity NBT from snapshot
+            CompoundTag blockEntityNbt = snapshot.blockEntityNbt().get(pos);
             if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
                 blockTag.put("nbt", blockEntityNbt);
             }
@@ -649,20 +717,21 @@ public class ConstructionStorage {
         root.put("blocks", blocksList);
         root.putInt("version", 1); // NBT format version
 
-        // Salva i delta delle stanze (sempre con coordinate normalizzate)
+        // Room deltas (always with normalized coordinates)
         CompoundTag roomsTag = new CompoundTag();
-        for (Room room : construction.getRooms().values()) {
-            if (room.getChangedBlockCount() > 0) {
+        for (Room room : rooms.values()) {
+            ConstructionSnapshot.RoomSnapshot roomSnapshot = snapshot.rooms().get(room.getId());
+            if (roomSnapshot != null && !roomSnapshot.blocks().isEmpty()) {
                 CompoundTag roomTag = new CompoundTag();
                 ListTag roomBlocksList = new ListTag();
 
-                for (Map.Entry<BlockPos, BlockState> entry : room.getBlockChanges().entrySet()) {
+                for (Map.Entry<BlockPos, BlockState> entry : roomSnapshot.blocks().entrySet()) {
                     BlockPos pos = entry.getKey();
                     BlockState state = entry.getValue();
 
                     String stateString = serializeBlockState(state);
 
-                    // Aggiungi alla palette condivisa se non esiste
+                    // Add to shared palette if not present
                     int paletteIndex = palette.computeIfAbsent(stateString, s -> {
                         CompoundTag paletteEntry = new CompoundTag();
                         paletteEntry.putString("state", s);
@@ -671,14 +740,13 @@ public class ConstructionStorage {
                     });
 
                     CompoundTag blockTag = new CompoundTag();
-                    // Coordinate normalizzate (relative a 0,0,0)
                     blockTag.putInt("x", pos.getX() - offsetX);
                     blockTag.putInt("y", pos.getY() - offsetY);
                     blockTag.putInt("z", pos.getZ() - offsetZ);
                     blockTag.putInt("p", paletteIndex);
 
-                    // NBT del block entity se presente
-                    CompoundTag blockEntityNbt = room.getBlockEntityNbt(pos);
+                    // Block entity NBT from room snapshot
+                    CompoundTag blockEntityNbt = roomSnapshot.blockEntityNbt().get(pos);
                     if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
                         blockTag.put("nbt", blockEntityNbt);
                     }
@@ -700,6 +768,11 @@ public class ConstructionStorage {
         }
     }
 
+    /**
+     * Loads block positions from blocks.nbt into the construction (reference-only).
+     * Block states and NBT are NOT stored in Construction - they exist only in the world.
+     * Only the BlockPos positions are tracked.
+     */
     private void loadBlocks(Construction construction, Path directory) throws IOException {
         Path blocksFile = directory.resolve("blocks.nbt");
 
@@ -708,7 +781,7 @@ public class ConstructionStorage {
             return;
         }
 
-        // Ottieni i bounds per denormalizzare le coordinate (caricati da loadMetadata)
+        // Get bounds for denormalizing coordinates (loaded from loadMetadata)
         var bounds = construction.getBounds();
         int offsetX = bounds.isValid() ? bounds.getMinX() : 0;
         int offsetY = bounds.isValid() ? bounds.getMinY() : 0;
@@ -719,18 +792,7 @@ public class ConstructionStorage {
             root = NbtIo.readCompressed(is, NbtAccounter.unlimitedHeap());
         }
 
-        // Carica palette - MC 1.21 API
-        ListTag paletteList = root.getList("palette").orElse(new ListTag());
-        List<BlockState> palette = new ArrayList<>();
-
-        for (int i = 0; i < paletteList.size(); i++) {
-            CompoundTag paletteEntry = paletteList.getCompound(i).orElseThrow();
-            String stateString = paletteEntry.getString("state").orElse("");
-            BlockState state = deserializeBlockState(stateString);
-            palette.add(state);
-        }
-
-        // Carica blocchi (denormalizzando le coordinate)
+        // Load base blocks (only positions, no block state data stored in Construction)
         ListTag blocksList = root.getList("blocks").orElse(new ListTag());
 
         for (int i = 0; i < blocksList.size(); i++) {
@@ -738,22 +800,13 @@ public class ConstructionStorage {
             int x = blockTag.getInt("x").orElse(0) + offsetX;
             int y = blockTag.getInt("y").orElse(0) + offsetY;
             int z = blockTag.getInt("z").orElse(0) + offsetZ;
-            int paletteIndex = blockTag.getInt("p").orElse(0);
 
             BlockPos pos = new BlockPos(x, y, z);
-            BlockState state = palette.get(paletteIndex);
-
-            // Se presente, leggi l'NBT del block entity
-            // Usa addBlockRaw per non alterare i bounds già caricati dal metadata
-            CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
-            if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                construction.addBlockRaw(pos, state, blockEntityNbt);
-            } else {
-                construction.addBlockRaw(pos, state);
-            }
+            // Reference-only: just track the position, no state/NBT stored
+            construction.addBlockRaw(pos);
         }
 
-        // Carica i delta delle stanze (denormalizzando le coordinate)
+        // Load room deltas (only positions)
         CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
         if (roomsTag != null) {
             for (String roomId : roomsTag.keySet()) {
@@ -773,17 +826,10 @@ public class ConstructionStorage {
                     int x = blockTag.getInt("x").orElse(0) + offsetX;
                     int y = blockTag.getInt("y").orElse(0) + offsetY;
                     int z = blockTag.getInt("z").orElse(0) + offsetZ;
-                    int paletteIndex = blockTag.getInt("p").orElse(0);
 
                     BlockPos pos = new BlockPos(x, y, z);
-                    BlockState state = palette.get(paletteIndex);
-
-                    CompoundTag blockEntityNbt = blockTag.getCompound("nbt").orElse(null);
-                    if (blockEntityNbt != null && !blockEntityNbt.isEmpty()) {
-                        room.setBlockChange(pos, state, blockEntityNbt);
-                    } else {
-                        room.setBlockChange(pos, state);
-                    }
+                    // Reference-only: just track the position
+                    room.setBlockChange(pos);
                 }
             }
         }
@@ -881,7 +927,7 @@ public class ConstructionStorage {
     // ===== Entities serialization (NBT) =====
 
     /**
-     * Saves construction entities to entities.nbt.
+     * Saves entity data from a snapshot to entities.nbt.
      * Structure:
      * root {
      *     version: 2
@@ -892,12 +938,13 @@ public class ConstructionStorage {
      * }
      * Note: UUID is NOT stored - it's only a runtime identifier.
      */
-    private void saveEntities(Construction construction, Path directory) throws IOException {
-        // Count all entities (base + rooms)
-        boolean hasAnyEntities = !construction.getEntities().isEmpty();
+    private void saveEntities(ConstructionSnapshot snapshot, Map<String, Room> rooms, Path directory) throws IOException {
+        // Check if there are any entities (base + rooms)
+        boolean hasAnyEntities = !snapshot.entities().isEmpty();
         if (!hasAnyEntities) {
-            for (Room room : construction.getRooms().values()) {
-                if (!room.getEntities().isEmpty()) {
+            for (Room room : rooms.values()) {
+                ConstructionSnapshot.RoomSnapshot roomSnapshot = snapshot.rooms().get(room.getId());
+                if (roomSnapshot != null && !roomSnapshot.entities().isEmpty()) {
                     hasAnyEntities = true;
                     break;
                 }
@@ -916,10 +963,10 @@ public class ConstructionStorage {
         CompoundTag root = new CompoundTag();
         root.putInt("version", 2); // Version 2: no UUID in saved data
 
-        // Base entities
+        // Base entities from snapshot
         ListTag entitiesList = new ListTag();
 
-        for (EntityData data : construction.getEntities()) {
+        for (EntityData data : snapshot.entities()) {
             CompoundTag entityTag = new CompoundTag();
             entityTag.putString("type", data.getEntityType());
             entityTag.putDouble("x", data.getRelativePos().x);
@@ -934,14 +981,15 @@ public class ConstructionStorage {
 
         root.put("entities", entitiesList);
 
-        // Room entities
+        // Room entities from snapshot
         CompoundTag roomsTag = new CompoundTag();
-        for (Room room : construction.getRooms().values()) {
-            if (!room.getEntities().isEmpty()) {
+        for (Room room : rooms.values()) {
+            ConstructionSnapshot.RoomSnapshot roomSnapshot = snapshot.rooms().get(room.getId());
+            if (roomSnapshot != null && !roomSnapshot.entities().isEmpty()) {
                 CompoundTag roomTag = new CompoundTag();
                 ListTag roomEntitiesList = new ListTag();
 
-                for (EntityData data : room.getEntities()) {
+                for (EntityData data : roomSnapshot.entities()) {
                     CompoundTag entityTag = new CompoundTag();
                     entityTag.putString("type", data.getEntityType());
                     entityTag.putDouble("x", data.getRelativePos().x);
@@ -969,16 +1017,168 @@ public class ConstructionStorage {
     }
 
     /**
-     * Loads entities from entities.nbt.
-     * Backwards compatible: if the file doesn't exist, does nothing.
-     * Supports both version 1 (with UUID) and version 2 (without UUID).
+     * Loads room entity data from disk for spawning during room editing.
+     * Returns a list of EntityData that can be used to spawn entities in the world.
+     * @param construction the construction containing the room
+     * @param roomId the room ID to load entities for
+     * @return list of EntityData, empty if no entities or on error
      */
-    private void loadEntities(Construction construction, Path directory) throws IOException {
+    public List<EntityData> loadRoomEntities(Construction construction, String roomId) {
+        List<EntityData> entities = new ArrayList<>();
+        try {
+            Path constructionDir = getConstructionDirectory(construction.getId());
+            Path entitiesFile = constructionDir.resolve("entities.nbt");
+
+            if (!Files.exists(entitiesFile)) {
+                return entities;
+            }
+
+            CompoundTag root;
+            try (InputStream is = Files.newInputStream(entitiesFile)) {
+                root = NbtIo.readCompressed(is, NbtAccounter.unlimitedHeap());
+            }
+
+            CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
+            if (roomsTag == null) {
+                return entities;
+            }
+
+            CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
+            if (roomTag == null) {
+                return entities;
+            }
+
+            ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
+
+            for (int i = 0; i < roomEntitiesList.size(); i++) {
+                CompoundTag entityTag = roomEntitiesList.getCompound(i).orElseThrow();
+
+                String type = entityTag.getString("type").orElse("");
+                double x = entityTag.getDouble("x").orElse(0.0);
+                double y = entityTag.getDouble("y").orElse(0.0);
+                double z = entityTag.getDouble("z").orElse(0.0);
+                float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+                float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+                CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+
+                Vec3 relativePos = new Vec3(x, y, z);
+                EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
+                entities.add(data);
+            }
+
+            Architect.LOGGER.debug("Loaded {} room entities for room '{}' in construction {}",
+                entities.size(), roomId, construction.getId());
+
+        } catch (Exception e) {
+            Architect.LOGGER.error("Failed to load room entities for room '{}' in construction {}: {}",
+                roomId, construction.getId(), e.getMessage());
+        }
+        return entities;
+    }
+
+    // ===== Snapshot loading helpers (for InGame spawner cache) =====
+
+    /**
+     * Loads blocks.nbt as a ConstructionSnapshot (with full block state data).
+     * Used by loadNbtOnly for the InGame spawner which needs block states for placement.
+     */
+    private ConstructionSnapshot loadBlocksAsSnapshot(Path directory, ConstructionBounds bounds) throws IOException {
+        Path blocksFile = directory.resolve("blocks.nbt");
+
+        Map<BlockPos, BlockState> blocks = new HashMap<>();
+        Map<BlockPos, CompoundTag> blockEntityNbt = new HashMap<>();
+        Map<String, ConstructionSnapshot.RoomSnapshot> rooms = new HashMap<>();
+
+        if (!Files.exists(blocksFile)) {
+            return ConstructionSnapshot.fromDeserialized(blocks, blockEntityNbt, new ArrayList<>(), rooms);
+        }
+
+        int offsetX = (bounds != null && bounds.isValid()) ? bounds.getMinX() : 0;
+        int offsetY = (bounds != null && bounds.isValid()) ? bounds.getMinY() : 0;
+        int offsetZ = (bounds != null && bounds.isValid()) ? bounds.getMinZ() : 0;
+
+        CompoundTag root;
+        try (InputStream is = Files.newInputStream(blocksFile)) {
+            root = NbtIo.readCompressed(is, NbtAccounter.unlimitedHeap());
+        }
+
+        // Load palette
+        ListTag paletteList = root.getList("palette").orElse(new ListTag());
+        List<BlockState> palette = new ArrayList<>();
+
+        for (int i = 0; i < paletteList.size(); i++) {
+            CompoundTag paletteEntry = paletteList.getCompound(i).orElseThrow();
+            String stateString = paletteEntry.getString("state").orElse("");
+            BlockState state = deserializeBlockState(stateString);
+            palette.add(state);
+        }
+
+        // Load base blocks
+        ListTag blocksList = root.getList("blocks").orElse(new ListTag());
+
+        for (int i = 0; i < blocksList.size(); i++) {
+            CompoundTag blockTag = blocksList.getCompound(i).orElseThrow();
+            int x = blockTag.getInt("x").orElse(0) + offsetX;
+            int y = blockTag.getInt("y").orElse(0) + offsetY;
+            int z = blockTag.getInt("z").orElse(0) + offsetZ;
+            int paletteIndex = blockTag.getInt("p").orElse(0);
+
+            BlockPos pos = new BlockPos(x, y, z);
+            BlockState state = palette.get(paletteIndex);
+            blocks.put(pos, state);
+
+            CompoundTag nbt = blockTag.getCompound("nbt").orElse(null);
+            if (nbt != null && !nbt.isEmpty()) {
+                blockEntityNbt.put(pos, nbt);
+            }
+        }
+
+        // Load room blocks
+        CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
+        if (roomsTag != null) {
+            for (String roomId : roomsTag.keySet()) {
+                CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
+                if (roomTag == null) continue;
+
+                Map<BlockPos, BlockState> roomBlocks = new HashMap<>();
+                Map<BlockPos, CompoundTag> roomBlockEntityNbt = new HashMap<>();
+
+                ListTag roomBlocksList = roomTag.getList("blocks").orElse(new ListTag());
+                for (int i = 0; i < roomBlocksList.size(); i++) {
+                    CompoundTag blockTag = roomBlocksList.getCompound(i).orElseThrow();
+                    int x = blockTag.getInt("x").orElse(0) + offsetX;
+                    int y = blockTag.getInt("y").orElse(0) + offsetY;
+                    int z = blockTag.getInt("z").orElse(0) + offsetZ;
+                    int paletteIndex = blockTag.getInt("p").orElse(0);
+
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = palette.get(paletteIndex);
+                    roomBlocks.put(pos, state);
+
+                    CompoundTag nbt = blockTag.getCompound("nbt").orElse(null);
+                    if (nbt != null && !nbt.isEmpty()) {
+                        roomBlockEntityNbt.put(pos, nbt);
+                    }
+                }
+
+                rooms.put(roomId, new ConstructionSnapshot.RoomSnapshot(
+                    roomBlocks, roomBlockEntityNbt, new ArrayList<>()));
+            }
+        }
+
+        return ConstructionSnapshot.fromDeserialized(blocks, blockEntityNbt, new ArrayList<>(), rooms);
+    }
+
+    /**
+     * Loads base entities from entities.nbt as a list of EntityData.
+     * Used by loadNbtOnly for the InGame spawner cache.
+     */
+    private List<EntityData> loadEntitiesAsSnapshot(Path directory) throws IOException {
+        List<EntityData> entities = new ArrayList<>();
         Path entitiesFile = directory.resolve("entities.nbt");
 
         if (!Files.exists(entitiesFile)) {
-            // Backwards compatibility: old constructions without entities
-            return;
+            return entities;
         }
 
         CompoundTag root;
@@ -986,7 +1186,6 @@ public class ConstructionStorage {
             root = NbtIo.readCompressed(is, NbtAccounter.unlimitedHeap());
         }
 
-        // Base entities
         ListTag entitiesList = root.getList("entities").orElse(new ListTag());
 
         for (int i = 0; i < entitiesList.size(); i++) {
@@ -1001,46 +1200,53 @@ public class ConstructionStorage {
             CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
 
             Vec3 relativePos = new Vec3(x, y, z);
-            EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
-
-            // No UUID needed - just add to list
-            construction.addEntity(data);
+            entities.add(new EntityData(type, relativePos, yaw, pitch, nbt));
         }
 
-        // Room entities
+        return entities;
+    }
+
+    /**
+     * Loads room entities from entities.nbt for a specific room as a list of EntityData.
+     * Used by loadNbtOnly for the InGame spawner cache.
+     */
+    private List<EntityData> loadRoomEntitiesAsSnapshot(Path directory, String roomId) throws IOException {
+        List<EntityData> entities = new ArrayList<>();
+        Path entitiesFile = directory.resolve("entities.nbt");
+
+        if (!Files.exists(entitiesFile)) {
+            return entities;
+        }
+
+        CompoundTag root;
+        try (InputStream is = Files.newInputStream(entitiesFile)) {
+            root = NbtIo.readCompressed(is, NbtAccounter.unlimitedHeap());
+        }
+
         CompoundTag roomsTag = root.getCompound("rooms").orElse(null);
-        if (roomsTag != null) {
-            for (String roomId : roomsTag.keySet()) {
-                Room room = construction.getRoom(roomId);
-                if (room == null) {
-                    Architect.LOGGER.warn("Room {} not found in metadata, skipping entities", roomId);
-                    continue;
-                }
+        if (roomsTag == null) return entities;
 
-                CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
-                if (roomTag == null) continue;
+        CompoundTag roomTag = roomsTag.getCompound(roomId).orElse(null);
+        if (roomTag == null) return entities;
 
-                ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
+        ListTag roomEntitiesList = roomTag.getList("entities").orElse(new ListTag());
 
-                for (int i = 0; i < roomEntitiesList.size(); i++) {
-                    CompoundTag entityTag = roomEntitiesList.getCompound(i).orElseThrow();
+        for (int i = 0; i < roomEntitiesList.size(); i++) {
+            CompoundTag entityTag = roomEntitiesList.getCompound(i).orElseThrow();
 
-                    String type = entityTag.getString("type").orElse("");
-                    double x = entityTag.getDouble("x").orElse(0.0);
-                    double y = entityTag.getDouble("y").orElse(0.0);
-                    double z = entityTag.getDouble("z").orElse(0.0);
-                    float yaw = entityTag.getFloat("yaw").orElse(0.0f);
-                    float pitch = entityTag.getFloat("pitch").orElse(0.0f);
-                    CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
+            String type = entityTag.getString("type").orElse("");
+            double x = entityTag.getDouble("x").orElse(0.0);
+            double y = entityTag.getDouble("y").orElse(0.0);
+            double z = entityTag.getDouble("z").orElse(0.0);
+            float yaw = entityTag.getFloat("yaw").orElse(0.0f);
+            float pitch = entityTag.getFloat("pitch").orElse(0.0f);
+            CompoundTag nbt = entityTag.getCompound("nbt").orElse(new CompoundTag());
 
-                    Vec3 relativePos = new Vec3(x, y, z);
-                    EntityData data = new EntityData(type, relativePos, yaw, pitch, nbt);
-
-                    // No UUID needed - just add to list
-                    room.addEntity(data);
-                }
-            }
+            Vec3 relativePos = new Vec3(x, y, z);
+            entities.add(new EntityData(type, relativePos, yaw, pitch, nbt));
         }
+
+        return entities;
     }
 
 }

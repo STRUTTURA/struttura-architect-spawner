@@ -5,13 +5,11 @@ import it.magius.struttura.architect.i18n.I18n;
 import it.magius.struttura.architect.item.ConstructionHammerItem;
 import it.magius.struttura.architect.item.MeasuringTapeItem;
 import it.magius.struttura.architect.model.Construction;
-import it.magius.struttura.architect.model.ConstructionBounds;
 import it.magius.struttura.architect.model.EntityData;
 import it.magius.struttura.architect.model.Room;
 import it.magius.struttura.architect.network.NetworkHandler;
 import it.magius.struttura.architect.session.EditingSession;
 import it.magius.struttura.architect.ChatMessages;
-import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -29,18 +27,17 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Mixin per intercettare le interazioni con le entità.
- * Gestisce:
- * - Click destro con hammer: aggiunge/rimuove entità dalla costruzione/room
- * - Click sinistro su entità non inclusa: uccide senza drop
- * - Click sinistro su entità inclusa: impedisce l'uccisione
+ * Mixin to intercept entity interactions.
+ * Handles:
+ * - Right-click with hammer: adds/removes entities from construction/room
+ * - Left-click on non-included entity: kills without drops
+ * - Left-click on included entity: prevents killing
  */
 @Mixin(ServerGamePacketListenerImpl.class)
 public class ServerGamePacketListenerMixin {
@@ -48,7 +45,7 @@ public class ServerGamePacketListenerMixin {
     @Shadow
     public ServerPlayer player;
 
-    // Costanti per tipo di interazione
+    // Interaction type constants
     @Unique
     private static final int INTERACTION_NONE = 0;
     @Unique
@@ -56,14 +53,14 @@ public class ServerGamePacketListenerMixin {
     @Unique
     private static final int INTERACTION_ATTACK = 2;
 
-    // Cooldown per evitare doppi packet - chiave: "playerUUID:entityUUID:type" -> timestamp
+    // Cooldown to prevent duplicate packets - key: "playerUUID:entityUUID:type" -> timestamp
     @Unique
     private static final Map<String, Long> interactionCooldowns = new HashMap<>();
     @Unique
-    private static final long COOLDOWN_MS = 200; // 200ms di cooldown
+    private static final long COOLDOWN_MS = 200;
 
     /**
-     * Intercetta tutte le interazioni con le entità.
+     * Intercepts all entity interactions.
      */
     @Inject(
         method = "handleInteract",
@@ -78,7 +75,7 @@ public class ServerGamePacketListenerMixin {
             return;
         }
 
-        // Non gestire player o proiettili
+        // Don't handle player or projectile interactions
         if (targetEntity instanceof Player || targetEntity instanceof Projectile) {
             return;
         }
@@ -137,15 +134,13 @@ public class ServerGamePacketListenerMixin {
             return;
         }
 
-        // Determina il tipo di interazione usando AtomicInteger
-        // Usa AtomicBoolean per fermarsi alla prima chiamata del dispatch
+        // Determine interaction type
         AtomicInteger interactionType = new AtomicInteger(INTERACTION_NONE);
         AtomicBoolean alreadySet = new AtomicBoolean(false);
 
         packet.dispatch(new ServerboundInteractPacket.Handler() {
             @Override
             public void onInteraction(InteractionHand hand) {
-                // Click destro senza posizione specifica - solo se non già settato
                 if (alreadySet.compareAndSet(false, true)) {
                     interactionType.set(INTERACTION_RIGHT_CLICK);
                 }
@@ -153,7 +148,6 @@ public class ServerGamePacketListenerMixin {
 
             @Override
             public void onInteraction(InteractionHand hand, net.minecraft.world.phys.Vec3 pos) {
-                // Click destro con posizione specifica - solo se non già settato
                 if (alreadySet.compareAndSet(false, true)) {
                     interactionType.set(INTERACTION_RIGHT_CLICK);
                 }
@@ -161,34 +155,33 @@ public class ServerGamePacketListenerMixin {
 
             @Override
             public void onAttack() {
-                // Click sinistro (attacco) - solo se non già settato
                 if (alreadySet.compareAndSet(false, true)) {
                     interactionType.set(INTERACTION_ATTACK);
                 }
             }
         });
 
-        // Esegui l'azione basata sul tipo di interazione
+        // Execute action based on interaction type
         int type = interactionType.get();
         if (type == INTERACTION_NONE) {
             return;
         }
 
-        // Controlla cooldown per evitare doppi packet
+        // Check cooldown to prevent duplicate packets
         String cooldownKey = player.getUUID() + ":" + targetEntity.getUUID() + ":" + type;
         long now = System.currentTimeMillis();
         Long lastInteraction = interactionCooldowns.get(cooldownKey);
 
         if (lastInteraction != null && (now - lastInteraction) < COOLDOWN_MS) {
-            // Ignora questo packet, è un duplicato
+            // Ignore this packet, it's a duplicate
             ci.cancel();
             return;
         }
 
-        // Aggiorna il timestamp
+        // Update timestamp
         interactionCooldowns.put(cooldownKey, now);
 
-        // Pulisci vecchie entries (ogni tanto)
+        // Clean old entries periodically
         if (interactionCooldowns.size() > 100) {
             interactionCooldowns.entrySet().removeIf(e -> (now - e.getValue()) > 5000);
         }
@@ -214,7 +207,7 @@ public class ServerGamePacketListenerMixin {
 
     /**
      * Handles right-click with hammer on an entity.
-     * Adds or removes the entity from the construction/room.
+     * Adds or removes the entity from the construction/room by UUID.
      */
     @Unique
     private void handleHammerRightClick(Entity entity, EditingSession session) {
@@ -225,73 +218,36 @@ public class ServerGamePacketListenerMixin {
         UUID entityId = entity.getUUID();
         ServerLevel level = (ServerLevel) player.level();
 
-        // Check if entity is already tracked (added to room/construction)
+        // Check if entity is already tracked
         boolean isTracked = session.isEntityTracked(entityId);
 
         if (isTracked) {
-            // Remove the entity
-            int listIndex = session.getEntityIndex(entityId);
-            if (listIndex >= 0) {
-                if (inRoom && room != null) {
-                    room.removeEntity(listIndex);
-                } else {
-                    construction.removeEntity(listIndex);
-                }
-                // Remove from tracking and update indices for remaining entities
-                session.untrackEntity(entityId);
-                session.updateTrackingAfterRemoval(listIndex);
-                // Also untrack from construction's spawnedEntityUuids to prevent re-add on push
-                construction.untrackSpawnedEntity(entityId);
+            // Remove the entity from tracking
+            if (inRoom && room != null) {
+                room.removeEntity(entityId);
+            } else {
+                construction.removeEntity(entityId, level);
             }
-
-            // Recalculate bounds including remaining entities from the world
-            construction.recalculateBounds(level);
 
             String targetName = ChatMessages.formatTargetName(player, session);
             int entityCount = inRoom && room != null ? room.getEntityCount() : construction.getEntityCount();
             ChatMessages.sendTarget(player, targetName, ChatMessages.Level.ERROR,
                     I18n.tr(player, "entity.removed") + " §7(" + entityCount + ")");
         } else {
-            // Before adding, check if this entity already exists in the construction's entity list
-            // (can happen after world reload when session tracking is lost)
-            List<EntityData> existingEntities = inRoom && room != null
-                ? room.getEntities() : construction.getEntities();
-            int existingIndex = findMatchingEntityData(entity, existingEntities, construction.getBounds());
+            // Expand bounds BEFORE adding so entity is within bounds
+            EntityData.expandBoundsForEntity(entity, construction.getBounds());
 
-            if (existingIndex >= 0) {
-                // Entity already in the list - just re-track it, don't add a duplicate
-                session.trackEntity(entityId, existingIndex);
-                construction.trackSpawnedEntity(entityId);
-
-                Architect.LOGGER.info("Re-tracked existing entity {} at index {} (was untracked after reload)",
-                    entityId, existingIndex);
-
-                String targetName = ChatMessages.formatTargetName(player, session);
-                ChatMessages.sendTarget(player, targetName, ChatMessages.Level.INFO,
-                        I18n.tr(player, "entity.already_tracked"));
+            // Add entity UUID to construction or room
+            if (inRoom && room != null) {
+                room.addEntity(entityId);
             } else {
-                // Expand bounds BEFORE creating EntityData so relative positions are always >= 0
-                EntityData.expandBoundsForEntity(entity, construction.getBounds());
-
-                // Add the entity
-                EntityData data = EntityData.fromEntity(entity, construction.getBounds(), level.registryAccess());
-
-                int newIndex;
-                if (inRoom && room != null) {
-                    newIndex = room.addEntity(data);
-                } else {
-                    newIndex = construction.addEntity(data);
-                }
-                // Track the entity with its list index
-                session.trackEntity(entityId, newIndex);
-                // Track the entity UUID in construction (for bounds recalculation)
-                construction.trackSpawnedEntity(entityId);
-
-                String targetName = ChatMessages.formatTargetName(player, session);
-                int entityCount = inRoom && room != null ? room.getEntityCount() : construction.getEntityCount();
-                ChatMessages.sendTarget(player, targetName, ChatMessages.Level.INFO,
-                        I18n.tr(player, "entity.added") + " §7(" + entityCount + ")");
+                construction.addEntity(entityId, level);
             }
+
+            String targetName = ChatMessages.formatTargetName(player, session);
+            int entityCount = inRoom && room != null ? room.getEntityCount() : construction.getEntityCount();
+            ChatMessages.sendTarget(player, targetName, ChatMessages.Level.INFO,
+                    I18n.tr(player, "entity.added") + " §7(" + entityCount + ")");
         }
 
         // Update UI
@@ -308,7 +264,6 @@ public class ServerGamePacketListenerMixin {
     private void handleTapeRightClick(Entity entity, EditingSession session) {
         UUID entityId = entity.getUUID();
 
-        // Check if entity is tracked (included in room/construction)
         boolean isTracked = session.isEntityTracked(entityId);
 
         if (!isTracked) {
@@ -329,7 +284,6 @@ public class ServerGamePacketListenerMixin {
     private void handleTapeLeftClick(Entity entity, EditingSession session) {
         UUID entityId = entity.getUUID();
 
-        // Check if entity is tracked (included in room/construction)
         boolean isTracked = session.isEntityTracked(entityId);
 
         if (!isTracked) {
@@ -350,7 +304,6 @@ public class ServerGamePacketListenerMixin {
     private void handleHammerLeftClick(Entity entity, EditingSession session) {
         UUID entityId = entity.getUUID();
 
-        // Check if entity is tracked (included in room/construction)
         boolean isTracked = session.isEntityTracked(entityId);
 
         if (isTracked) {
@@ -358,50 +311,10 @@ public class ServerGamePacketListenerMixin {
             ChatMessages.send(player, ChatMessages.Level.ERROR, "entity.protected");
         } else {
             // Entity not included: kill without drops
-            // Use discard() to remove without effects
             entity.discard();
 
             ChatMessages.send(player, ChatMessages.Level.INFO, "entity.killed");
         }
-    }
-
-    /**
-     * Finds a matching EntityData in the list for a world entity by type and position.
-     * Used to detect entities that are already in the construction but lost their
-     * session tracking (e.g., after world reload).
-     * @return The index of the matching EntityData, or -1 if not found
-     */
-    @Unique
-    private int findMatchingEntityData(Entity worldEntity, List<EntityData> entityList, ConstructionBounds bounds) {
-        String entityType = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE
-            .getKey(worldEntity.getType()).toString();
-        double worldX = worldEntity.getX();
-        double worldY = worldEntity.getY();
-        double worldZ = worldEntity.getZ();
-
-        int originX = bounds.getMinX();
-        int originY = bounds.getMinY();
-        int originZ = bounds.getMinZ();
-
-        for (int i = 0; i < entityList.size(); i++) {
-            EntityData data = entityList.get(i);
-            if (!data.getEntityType().equals(entityType)) {
-                continue;
-            }
-
-            double expectedX = originX + data.getRelativePos().x;
-            double expectedY = originY + data.getRelativePos().y;
-            double expectedZ = originZ + data.getRelativePos().z;
-
-            double dx = Math.abs(worldX - expectedX);
-            double dy = Math.abs(worldY - expectedY);
-            double dz = Math.abs(worldZ - expectedZ);
-
-            if (dx < 1.0 && dy < 1.0 && dz < 1.0) {
-                return i;
-            }
-        }
-        return -1;
     }
 
 }

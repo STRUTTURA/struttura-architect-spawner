@@ -3,6 +3,7 @@ package it.magius.struttura.architect.ingame.cache;
 import com.google.gson.*;
 import it.magius.struttura.architect.Architect;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ConstructionSnapshot;
 import it.magius.struttura.architect.storage.ConstructionStorage;
 
 import java.io.*;
@@ -62,13 +63,22 @@ public class NbtCacheStorage {
             }
 
             // Save each construction using ConstructionStorage (NBT only, no metadata)
+            // TODO: InGame cache needs refactoring to store ConstructionSnapshot instead of Construction
+            //       For now, the save path is disabled since Construction is reference-only
+            //       and no longer contains block state data.
             int saved = 0;
             for (Map.Entry<String, Construction> entry : entries.entrySet()) {
                 String rdns = entry.getKey();
                 Construction construction = entry.getValue();
+                ConstructionSnapshot snapshot = cache.getSnapshot(rdns);
+
+                if (snapshot == null) {
+                    Architect.LOGGER.warn("No snapshot available for NBT cache save: {}", rdns);
+                    continue;
+                }
 
                 try {
-                    if (constructionStorage.saveNbtOnly(construction)) {
+                    if (constructionStorage.saveNbtOnly(construction, snapshot)) {
                         saved++;
                     }
                 } catch (Exception e) {
@@ -121,11 +131,15 @@ public class NbtCacheStorage {
                     continue;
                 }
 
-                // Try to load the construction using ConstructionStorage (NBT only, no metadata)
+                // Load NBT data as a snapshot (full block state data for spawning)
+                // TODO: InGame cache needs refactoring to store ConstructionSnapshot instead of Construction
                 try {
-                    Construction construction = constructionStorage.loadNbtOnly(rdns);
-                    if (construction != null) {
+                    ConstructionSnapshot snapshot = constructionStorage.loadNbtOnly(rdns, null);
+                    if (snapshot != null) {
+                        // Create a minimal Construction for backward compatibility
+                        Construction construction = new Construction(rdns, new java.util.UUID(0, 0), "ingame");
                         cache.put(rdns, construction, cachedHash);
+                        cache.putSnapshot(rdns, snapshot);
                         loaded++;
                     }
                 } catch (Exception e) {

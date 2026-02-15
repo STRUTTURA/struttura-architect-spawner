@@ -9,6 +9,7 @@ import it.magius.struttura.architect.ingame.model.PositionType;
 import it.magius.struttura.architect.ingame.model.SpawnRule;
 import it.magius.struttura.architect.ingame.model.SpawnableBuilding;
 import it.magius.struttura.architect.model.Construction;
+import it.magius.struttura.architect.model.ConstructionSnapshot;
 import it.magius.struttura.architect.placement.ConstructionOperations;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -66,6 +67,9 @@ public class InGameBuildingSpawner {
 
                 if (response.success() && response.construction() != null) {
                     cache.put(rdns, response.construction(), hash);
+                    if (response.snapshot() != null) {
+                        cache.putSnapshot(rdns, response.snapshot());
+                    }
 
                     // Execute spawn on main thread
                     level.getServer().execute(() -> {
@@ -142,10 +146,18 @@ public class InGameBuildingSpawner {
             ^ (long)(entrancePos.getX() * 1000)
             ^ (long)(entrancePos.getZ() * 1000);
 
+        // Get snapshot from cache for placement data
+        ConstructionSnapshot snapshot = BuildingCache.getInstance().getSnapshot(building.getRdns());
+        if (snapshot == null) {
+            Architect.LOGGER.error("No snapshot found in cache for building {}, cannot spawn", building.getRdns());
+            return;
+        }
+
         // Use architectSpawn with specific spawn point (InGame mode)
         var result = ConstructionOperations.architectSpawn(
             level,
             construction,
+            snapshot,
             rotationDegrees,        // yaw in degrees
             null,                   // No forced rooms
             entrancePos,            // Specific spawn point (entrance position)
