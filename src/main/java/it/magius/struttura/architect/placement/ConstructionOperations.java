@@ -11,6 +11,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntArrayTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.ProblemReporter;
 import net.minecraft.world.Clearable;
@@ -47,6 +48,9 @@ public class ConstructionOperations {
     // Flags for silent block removal (no drops, no cascading updates)
     // UPDATE_SUPPRESS_DROPS prevents blocks from dropping items when destroyed
     private static final int SILENT_REMOVE_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
+
+    // Probability (0.0-1.0) that a foundation fill block uses a random block from another column
+    private static final double FOUNDATION_VARIATION_CHANCE = 0.20;
 
     // ============== PLACEMENT OPERATIONS ==============
 
@@ -2150,6 +2154,13 @@ public class ConstructionOperations {
             }
         }
 
+        // Step 5.5: Fill foundation columns (extend ground under building)
+        if (construction.getAnchors().hasEntrance()) {
+            blocksPlaced += fillFoundationColumns(
+                level, construction, snapshot, targetPos, rotationSteps, pivotX, pivotZ
+            );
+        }
+
         // Step 6: Spawn all entities (base + selected rooms) - frozen
         List<Entity> spawnedEntities = spawnEntitiesForArchitectSpawn(
             level, construction, snapshot, roomsToSpawn, targetPos, rotationSteps, pivotX, pivotZ
@@ -2714,6 +2725,179 @@ public class ConstructionOperations {
         }
 
         Architect.LOGGER.info("Unfroze {} entities", spawnedEntities.size());
+    }
+
+    /**
+     * Fills foundation columns below the entrance level to prevent buildings from floating.
+     * For each (X,Z) column that has building blocks below the entrance Y, finds the lowest
+     * building block and fills any non-solid gap between it and the natural ground below
+     * by repeating the ground block found at the bottom of the gap.
+     *
+     * @param level The server level
+     * @param construction The construction being spawned
+     * @param snapshot The construction snapshot (used to identify foundation columns)
+     * @param targetPos The world-space origin of the building
+     * @param rotationSteps Rotation steps (0-3)
+     * @param pivotX Rotation pivot X (normalized)
+     * @param pivotZ Rotation pivot Z (normalized)
+     * @return Number of foundation blocks placed
+     */
+    private static int fillFoundationColumns(
+        ServerLevel level,
+        Construction construction,
+        ConstructionSnapshot snapshot,
+        BlockPos targetPos,
+        int rotationSteps,
+        int pivotX, int pivotZ
+    ) {
+        int entranceNormY = construction.getAnchors().hasEntrance()
+            ? construction.getAnchors().getEntrance().getY()
+            : 0;
+
+        ConstructionBounds bounds = construction.getBounds();
+        int originalMinX = bounds.getMinX();
+        int originalMinY = bounds.getMinY();
+        int originalMinZ = bounds.getMinZ();
+
+        // For each (rotatedWorldX, rotatedWorldZ) column, track the minimum world Y
+        // that has a non-air building block at or below the entrance level
+        // Key: packed (worldX, worldZ), Value: minimum worldY
+        Map<Long, Integer> columnMinWorldY = new HashMap<>();
+        Map<Long, int[]> columnWorldXZ = new HashMap<>();
+
+        for (Map.Entry<BlockPos, BlockState> entry : snapshot.blocks().entrySet()) {
+            BlockPos originalPos = entry.getKey();
+            BlockState state = entry.getValue();
+
+            // Skip air blocks (they are not structural)
+            if (state.isAir()) {
+                continue;
+            }
+
+            int normX = originalPos.getX() - originalMinX;
+            int normY = originalPos.getY() - originalMinY;
+            int normZ = originalPos.getZ() - originalMinZ;
+
+            // Only consider foundation zone (at or below entrance level)
+            if (normY > entranceNormY) {
+                continue;
+            }
+
+            // Rotate to get world position
+            int[] rotatedXZ = rotateXZ(normX, normZ, pivotX, pivotZ, rotationSteps);
+            int worldX = targetPos.getX() + rotatedXZ[0];
+            int worldY = targetPos.getY() + normY;
+            int worldZ = targetPos.getZ() + rotatedXZ[1];
+
+            long key = ((long) worldX << 32) | (worldZ & 0xFFFFFFFFL);
+            Integer currentMin = columnMinWorldY.get(key);
+            if (currentMin == null || worldY < currentMin) {
+                columnMinWorldY.put(key, worldY);
+                columnWorldXZ.put(key, new int[]{worldX, worldZ});
+            }
+        }
+
+        if (columnMinWorldY.isEmpty()) {
+            return 0;
+        }
+
+        int maxScanDepth = 64;
+        BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
+
+        // Pass 1: Scan ground for each column and collect fill data
+        // Stores: key -> [groundY, groundStateIndex]
+        Map<Long, int[]> columnFillData = new HashMap<>();
+        List<BlockState> allGroundStates = new ArrayList<>();
+
+        for (Map.Entry<Long, Integer> entry : columnMinWorldY.entrySet()) {
+            long key = entry.getKey();
+            int minWorldY = entry.getValue();
+            int[] xz = columnWorldXZ.get(key);
+            int worldX = xz[0];
+            int worldZ = xz[1];
+
+            // Check the block just below the lowest building block
+            scanPos.set(worldX, minWorldY - 1, worldZ);
+            BlockState blockBelow = level.getBlockState(scanPos);
+
+            // If block below is already natural ground, no fill needed
+            if (isNaturalGround(blockBelow)) {
+                continue;
+            }
+
+            // Scan downward to find the first natural ground block (dirt or stone only)
+            int fillTopY = minWorldY - 1;
+            int groundY = -1;
+            BlockState groundState = null;
+
+            for (int y = fillTopY; y >= fillTopY - maxScanDepth && y >= level.getMinY(); y--) {
+                scanPos.set(worldX, y, worldZ);
+                BlockState state = level.getBlockState(scanPos);
+                if (isNaturalGround(state)) {
+                    groundY = y;
+                    // Use plain dirt instead of grass_block variants (grass shouldn't be underground)
+                    groundState = state.is(BlockTags.DIRT) ? Blocks.DIRT.defaultBlockState() : state;
+                    break;
+                }
+            }
+
+            // Fallback if no natural ground found within scan depth
+            if (groundState == null) {
+                groundState = Blocks.COBBLESTONE.defaultBlockState();
+                groundY = fillTopY - maxScanDepth;
+            }
+
+            int stateIndex = allGroundStates.size();
+            allGroundStates.add(groundState);
+            columnFillData.put(key, new int[]{groundY, stateIndex});
+        }
+
+        if (columnFillData.isEmpty()) {
+            return 0;
+        }
+
+        // Pass 2: Place blocks with variation
+        Random random = new Random();
+        int placedCount = 0;
+
+        for (Map.Entry<Long, int[]> entry : columnFillData.entrySet()) {
+            long key = entry.getKey();
+            int[] fillData = entry.getValue();
+            int groundY = fillData[0];
+            BlockState primaryState = allGroundStates.get(fillData[1]);
+
+            int minWorldY = columnMinWorldY.get(key);
+            int[] xz = columnWorldXZ.get(key);
+            int worldX = xz[0];
+            int worldZ = xz[1];
+            int fillTopY = minWorldY - 1;
+
+            for (int y = groundY + 1; y <= fillTopY; y++) {
+                BlockState blockToPlace = primaryState;
+                // Randomly pick a block from another column for variation
+                if (allGroundStates.size() > 1 && random.nextDouble() < FOUNDATION_VARIATION_CHANCE) {
+                    blockToPlace = allGroundStates.get(random.nextInt(allGroundStates.size()));
+                }
+                scanPos.set(worldX, y, worldZ);
+                level.setBlock(scanPos, blockToPlace, SILENT_PLACE_FLAGS);
+                placedCount++;
+            }
+        }
+
+        if (placedCount > 0) {
+            Architect.LOGGER.info("Foundation fill: {} blocks placed under {} columns",
+                placedCount, columnMinWorldY.size());
+        }
+
+        return placedCount;
+    }
+
+    /**
+     * Checks if a block is natural ground (dirt or stone variants).
+     * Used by foundation fill to skip non-terrain blocks like wood, leaves, plants.
+     */
+    private static boolean isNaturalGround(BlockState state) {
+        return state.is(BlockTags.DIRT) || state.is(BlockTags.BASE_STONE_OVERWORLD);
     }
 
     /**
