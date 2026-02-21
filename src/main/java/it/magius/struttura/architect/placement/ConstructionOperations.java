@@ -2688,6 +2688,8 @@ public class ConstructionOperations {
                 if (entity instanceof Mob mob) {
                     EntityUtils.nudgeEntityOutOfBlocks(level, mob);
                     mob.setNoAi(defaultNoAI);
+                    // Prevent hostile mobs from despawning (they would be removed by MC otherwise)
+                    mob.setPersistenceRequired();
                 }
 
                 // Discard the temporary default entity
@@ -2703,6 +2705,7 @@ public class ConstructionOperations {
                 if (entity instanceof Mob mob) {
                     EntityUtils.nudgeEntityOutOfBlocks(level, mob);
                     mob.setNoAi(false);
+                    mob.setPersistenceRequired();
                 }
             }
 
