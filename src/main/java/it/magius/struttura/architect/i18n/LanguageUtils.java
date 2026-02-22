@@ -23,7 +23,7 @@ public class LanguageUtils {
     public static final String LANG_PL = "pl-PL";
     public static final String LANG_RU = "ru-RU";
     public static final String LANG_UK = "uk-UA";
-    public static final String LANG_ZH = "zh-Hans";  // Simplified Chinese
+    public static final String LANG_ZH = "zh-CN";  // Simplified Chinese
     public static final String LANG_JA = "ja-JP";    // Japanese
     public static final String LANG_KO = "ko-KR";    // Korean
 
@@ -125,7 +125,7 @@ public class LanguageUtils {
             case "pl_pl" -> LANG_PL;
             case "ru_ru" -> LANG_RU;
             case "uk_ua" -> LANG_UK;
-            case "zh_cn", "zh_tw" -> LANG_ZH;  // Simplified and Traditional Chinese map to zh-Hans
+            case "zh_cn", "zh_tw" -> LANG_ZH;  // Simplified and Traditional Chinese map to zh-CN
             case "ja_jp" -> LANG_JA;
             case "ko_kr" -> LANG_KO;
             default -> {

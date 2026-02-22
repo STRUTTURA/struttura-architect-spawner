@@ -33,6 +33,11 @@ public class I18n {
         // Load translation files using simple codes
         loadLanguage("en");
         loadLanguage("it");
+        loadLanguage("es");
+        loadLanguage("pt");
+        loadLanguage("fr");
+        loadLanguage("de");
+        loadLanguage("zh");
 
         initialized = true;
         Architect.LOGGER.info("I18n initialized with languages: {} (default: {})",
